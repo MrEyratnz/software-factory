@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.2](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.1...dark-software-factory-v0.1.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ci:** gate the release tag on a pre-tag artifact smoke and pin the validator ([#5](https://github.com/MrEyratnz/software-factory/issues/5)) ([167648e](https://github.com/MrEyratnz/software-factory/commit/167648ef518f09dd061a9a1e35ce169104ba5e87))
+* **hooks:** enforce least-privilege for reviewer/release-captain/tech-debt-clerk ([#3](https://github.com/MrEyratnz/software-factory/issues/3)) ([37b26f9](https://github.com/MrEyratnz/software-factory/commit/37b26f9e28a0b99c4fc2c85b2020d64729b209ac))
+* **hooks:** fail-conservative commit detection — close alias/newline/indirect evasions ([#6](https://github.com/MrEyratnz/software-factory/issues/6)) ([60d51f5](https://github.com/MrEyratnz/software-factory/commit/60d51f5ca91a3009234d8c7a6848a870a0a7720a))
+* **hooks:** gate the github-MCP write path so commits can't bypass guard-commit ([#4](https://github.com/MrEyratnz/software-factory/issues/4)) ([9f3e890](https://github.com/MrEyratnz/software-factory/commit/9f3e890d2a01bd0e464060bdb38b9c14a0c7d917))
+
 ## [0.1.1](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.0...dark-software-factory-v0.1.1) (2026-07-06)
 
 
