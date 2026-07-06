@@ -17,8 +17,12 @@ maxi="$(REC="$loop" node -e 'const fs=require("fs");try{const o=JSON.parse(fs.re
 # Roadmap complete? Then the loop is done — deactivate and allow the stop.
 roadmap="$PROJECT_DIR/$(config_get roadmapPath 'docs/ROADMAP.md')"
 if [ -f "$roadmap" ]; then
-  nexttxt="$(printf '{"markdown":%s}' "$(json_str "$(cat "$roadmap")")" | fc roadmap-next \
+  md="$(cat "$roadmap")"
+  nexttxt="$(printf '{"markdown":%s}' "$(json_str "$md")" | fc roadmap-next \
     | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const n=JSON.parse(s).next;process.stdout.write(n?n.text:"")}catch(e){process.stdout.write("")}})')"
+  pct="$(printf '{"markdown":%s}' "$(json_str "$md")" | fc roadmap-status \
+    | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).totals.percent))}catch(e){process.stdout.write("")}})')"
+  otel_emit factory_roadmap_percent_complete gauge "$pct" '{}'
   if [ -z "$nexttxt" ]; then
     LOOP="$loop" node -e 'const fs=require("fs");try{const o=JSON.parse(fs.readFileSync(process.env.LOOP,"utf8"));o.active=false;fs.writeFileSync(process.env.LOOP,JSON.stringify(o))}catch(e){}'
     allow
@@ -33,4 +37,5 @@ fi
 
 # Otherwise advance: increment the counter and re-block the stop.
 LOOP="$loop" node -e 'const fs=require("fs");try{const o=JSON.parse(fs.readFileSync(process.env.LOOP,"utf8"));o.iterations=(o.iterations||0)+1;fs.writeFileSync(process.env.LOOP,JSON.stringify(o))}catch(e){}'
+otel_emit factory_loop_iterations_total sum "$((iters+1))" '{}'
 block_stop "factory-run active (iteration $((iters+1))/$maxi): next roadmap item is \"${nexttxt:-unknown}\". Continue the loop: /next → /review → (file tech-debt), and /ship at each milestone close."

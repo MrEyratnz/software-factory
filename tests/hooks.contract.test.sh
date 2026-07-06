@@ -285,6 +285,79 @@ EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: a\""}' ',"tool_respons
 assert_exit 0 "ledger-record exits 0"
 if [ -s "$R/.factory/ledger.jsonl" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - ledger line appended"; fi
 
+echo "# otel (opt-in metrics: off by default, never blocks/changes a gate decision when on)"
+# assert_exit_fast <expected> <label> [maxMs] — like assert_exit, but also
+# asserts the hook returned within maxMs. Used to prove that an ENABLED emit
+# against an unreachable collector cannot block a gate: the emit is
+# backgrounded+disowned with its own hard timeout in otel-emit.mjs, so the
+# hook itself must return promptly regardless of that timeout.
+assert_exit_fast() {
+  local expected="$1" label="$2" maxms="${3:-3000}" got start end elapsed
+  start="$(date +%s%N)"
+  printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+  got=$?
+  end="$(date +%s%N)"
+  elapsed=$(( (end - start) / 1000000 ))
+  if [ "$got" = "$expected" ] && [ "$elapsed" -le "$maxms" ]; then PASS=$((PASS+1));
+  else FAIL=$((FAIL+1)); echo "FAIL - $label (expected exit $expected within ${maxms}ms, got exit $got in ${elapsed}ms)"; fi
+}
+
+# Disabled (the default): otel_emit must return before forking anything at
+# all, not merely "fast" — proven directly by an empty job table right after
+# calling it (no `&`), sourcing common.sh the same way every hook does.
+cat > "$TMPROOT/otel-harness.sh" <<EOF
+#!/usr/bin/env bash
+. "$ROOT/hooks/lib/common.sh"
+otel_emit test.metric sum 1 '{}'
+rc=\$?
+echo "JOBS:\$(jobs -p | wc -l) RC:\$rc"
+exit 0
+EOF
+chmod +x "$TMPROOT/otel-harness.sh"
+R="$(mkrepo)"
+out="$(printf '{}' | HOOK_INPUT="" CLAUDE_PROJECT_DIR="$R" bash "$TMPROOT/otel-harness.sh" 2>/dev/null)"
+if [ "$out" = "JOBS:0 RC:0" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - otel_emit disabled (no otel block): expected a clean, non-forking return (got: $out)"; fi
+
+# Disabled must be transparent to gate behavior: a hook's decision is
+# identical whether the config carries no otel block at all, or an explicit
+# otel.enabled=false (both are "the default").
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"feat: x\""}')"
+assert_exit 2 "otel: no otel block in config — bypass flag still blocked (baseline)"
+
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.|\\.spec\\.|/tests?/|\\.feature$)",
+  "testCommandRegex": "(npm ((run|-s) )?test|node --test)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [], "otel": { "enabled": false } }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"feat: x\""}')"
+out="$(printf '{}' | HOOK_INPUT="" CLAUDE_PROJECT_DIR="$R" bash "$TMPROOT/otel-harness.sh" 2>/dev/null)"
+if [ "$out" = "JOBS:0 RC:0" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - otel_emit disabled (otel.enabled=false): expected a clean, non-forking return (got: $out)"; fi
+assert_exit 2 "otel: otel.enabled=false explicit — bypass flag still blocked (unchanged)"
+
+# Enabled but the collector is unreachable (bogus endpoint, nothing
+# listening): the gating hook must STILL return the correct exit code
+# promptly, for both a deny and an allow decision — proving the backgrounded
+# emit + its hard client-side timeout never blocks or changes the gate.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.|\\.spec\\.|/tests?/|\\.feature$)",
+  "testCommandRegex": "(npm ((run|-s) )?test|node --test)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [],
+  "otel": { "enabled": true, "endpoint": "http://127.0.0.1:1" } }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"feat: x\""}')"
+assert_exit_fast 2 "otel enabled + unreachable endpoint: deny still returns exit 2 promptly" 3000
+echo x > "$R/src/a.ts"; echo x > "$R/src/a.test.ts"; ( cd "$R" && git add -A )
+TH="$(repo_tree_hash "$R")"
+printf '{"tree":"%s","ok":true,"stages":[{"name":"suite","ok":true}]}' "$TH" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: add a\""}')"
+assert_exit_fast 0 "otel enabled + unreachable endpoint: allow still returns exit 0 promptly" 3000
+
 echo "# check-drift & orientation"
 SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generators → allow"

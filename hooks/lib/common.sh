@@ -58,13 +58,17 @@ fc() {
 json_str() { HOOK_S="$1" node -e 'process.stdout.write(JSON.stringify(process.env.HOOK_S||""))'; }
 
 # --- config ----------------------------------------------------------------
-# config_get <key> [default] — read a top-level key from .factory/config.json.
+# config_get <key> [default] — read a key from .factory/config.json. <key> may
+# be a dotted path (e.g. "otel.enabled") to reach into a nested object, same
+# convention as field() above.
 config_get() {
   local key="$1" def="${2:-}"
   [ -f "$CONFIG_FILE" ] || { printf '%s' "$def"; return; }
   CFG_FILE="$CONFIG_FILE" node -e '
     const fs=require("fs");let o={};try{o=JSON.parse(fs.readFileSync(process.env.CFG_FILE,"utf8"))}catch(e){}
-    const v=o[process.argv[1]];process.stdout.write(v==null?process.argv[2]:(typeof v==="object"?JSON.stringify(v):String(v)));
+    let v=o;
+    for (const k of String(process.argv[1]).split(".")) v = (v && typeof v==="object") ? v[k] : undefined;
+    process.stdout.write(v==null?process.argv[2]:(typeof v==="object"?JSON.stringify(v):String(v)));
   ' "$key" "$def" 2>/dev/null || printf '%s' "$def"
 }
 
@@ -86,6 +90,27 @@ tree_hash() {
 }
 
 staged_files() { ( cd "$PROJECT_DIR" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
+
+# --- otel (optional, opt-in, push-based metrics) ----------------------------
+# otel_emit <name> <type:sum|gauge> <value> [attrsJson] — fire-and-forget push
+# of ONE metric datapoint to an OTEL collector. OFF BY DEFAULT: the very first
+# thing this does is check otel.enabled, and it returns immediately (no fork,
+# no network) unless that is exactly "true" — so a repo that never sets it
+# pays no cost beyond the one config read every hook already does for its own
+# settings. When enabled, the actual POST happens in otel-emit.mjs, run fully
+# backgrounded and disowned with its own hard client-side timeout, so this
+# call can never add latency to — or change the exit code of — the gate that
+# invoked it. Callers must invoke this BEFORE their allow/deny so the emit is
+# never skipped by an early exit, and must never let its (irrelevant) return
+# value influence $?.
+otel_emit() {
+  [ "$(config_get otel.enabled false)" = "true" ] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+  local name="$1" type="$2" value="$3" attrs="${4:-{}}"
+  local endpoint; endpoint="$(config_get otel.endpoint 'http://localhost:4318')"
+  ( OTEL_ENDPOINT="$endpoint" node "$PLUGIN_ROOT/hooks/lib/otel-emit.mjs" "$name" "$type" "$value" "$attrs" >/dev/null 2>&1 & disown ) 2>/dev/null
+  return 0
+}
 
 # --- decisions -------------------------------------------------------------
 deny()  { printf '%s\n' "dark-software-factory: $1" >&2; exit 2; }
