@@ -114,6 +114,12 @@ EVENT="$(evt "$R" Write '{"file_path":".factory/state/gate-receipt.json"}')"; as
 echo architect > "$R/.factory/active-agent"
 EVENT="$(evt "$R" Write '{"file_path":"docs/ADR.md"}')"; assert_exit 0 "architect can write docs"
 EVENT="$(evt "$R" Write '{"file_path":"src/x.ts"}')"; assert_exit 2 "architect cannot write src"
+echo release-captain > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":"src/x.ts"}')"; assert_exit 2 "release-captain cannot write src"
+EVENT="$(evt "$R" Write '{"file_path":"docs/x.md"}')"; assert_exit 0 "release-captain can write docs"
+echo tech-debt-clerk > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":"src/x.ts"}')"; assert_exit 2 "tech-debt-clerk cannot write src"
+EVENT="$(evt "$R" Write '{"file_path":".factory/review/x.json"}')"; assert_exit 0 "tech-debt-clerk can write its review status"
 
 echo "# guard-roadmap"
 SCRIPT="$S/guard-roadmap.sh"
@@ -169,6 +175,23 @@ EVENT="$(evt "$R" Bash '{"command":"sed -i s/a/b/ .factory/config.json"}')"; ass
 EVENT="$(evt "$R" Bash '{"command":"echo hi > .factory/review/x.json"}')"; assert_exit 2 "shell write to review dir blocked"
 EVENT="$(evt "$R" Bash '{"command":"cat .factory/config.json"}')"; assert_exit 0 "reading config is fine"
 EVENT="$(evt "$R" Bash '{"command":"echo hi > src/a.ts"}')"; assert_exit 0 "writing normal source is fine"
+# read-only role (reviewer): ANY tree-mutating bash write is denied, regardless
+# of target path — this is what makes "read-only by construction" true for
+# Bash, not just prose.
+echo reviewer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Bash '{"command":"echo x > src/evil.ts"}')"; assert_exit 2 "reviewer: bash write to arbitrary source blocked"
+EVENT="$(evt "$R" Bash '{"command":"sed -i s/a/b/ src/a.ts"}')"; assert_exit 2 "reviewer: sed -i blocked"
+EVENT="$(evt "$R" Bash '{"command":"git checkout -- ."}')"; assert_exit 2 "reviewer: git checkout blocked"
+# guard-rails: read-only inspection commands must still pass for the reviewer.
+EVENT="$(evt "$R" Bash '{"command":"git diff"}')"; assert_exit 0 "reviewer: git diff allowed"
+EVENT="$(evt "$R" Bash '{"command":"node --test \"test/**/*.test.mjs\""}')"; assert_exit 0 "reviewer: node --test allowed"
+EVENT="$(evt "$R" Bash '{"command":"grep -r foo ."}')"; assert_exit 0 "reviewer: grep allowed"
+# a non-read-only role (implementer) is unaffected: it may still write source,
+# but the trust-root protection is unchanged.
+echo implementer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Bash '{"command":"echo x > src/ok.ts"}')"; assert_exit 0 "implementer: bash write to source still allowed"
+EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "implementer: trust-root write still blocked"
+rm -f "$R/.factory/active-agent"
 
 echo "# record-green"
 SCRIPT="$S/record-green.sh"

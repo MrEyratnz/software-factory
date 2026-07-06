@@ -62,8 +62,13 @@ loop is a single session working the roadmap top-to-bottom.
 
 `guard-commit` (TDD / never commit red, via a `git write-tree`-bound green
 receipt) · `guard-scope` (path least-privilege — closes receipt-forgery and
-config-poisoning) · `guard-roadmap` (a box flips only with merged-green proof) ·
-`guard-release` (Bash + github-MCP) · `guard-mcp-commit` (denies
+config-poisoning, and per-role fences: `architect`/`design-lead` docs-only,
+`release-captain` docs-only, `tech-debt-clerk` `.factory/review/` only,
+`reviewer` denied all writes) · `guard-bash-writes` (denies Bash writes to the
+factory's trust roots for every role, and denies ANY tree-mutating Bash for the
+read-only `reviewer` role) · `guard-roadmap` (a box flips only with
+merged-green proof) · `guard-release` (Bash + github-MCP) · `guard-mcp-commit`
+(denies
 `create_or_update_file` / `push_files` / `delete_file` over github-MCP —
 commits must go through local `git commit`, which `guard-commit` already
 gates — except while a release is in progress, when it steps aside and
