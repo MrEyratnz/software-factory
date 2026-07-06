@@ -20,6 +20,13 @@ on:
   push:
     branches: [main]
 
+# Never let two overlapping pushes to main race the release: serialize runs
+# per ref, and let an in-flight release finish rather than cancelling it
+# mid-tag (a half-finished release-please/smoke run must not be killed).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write
@@ -63,6 +70,23 @@ jobs:
       #       pull-requests:write) — used automatically if present.
       # Without one of these, the default GITHUB_TOKEN cannot create the PR
       # ("GitHub Actions is not permitted to create or approve pull requests").
+      #
+      # SHA-resolution spike (issue #17): confirmed release-please tags the
+      # merged release PR's OWN recorded commit, not a dynamically-resolved
+      # live tip of main. `buildRelease()` in release-please's
+      # src/strategies/base.ts sets the release object's `sha` field to
+      # `mergedPullRequest.sha`, and that `mergedPullRequest` is discovered in
+      # src/manifest.ts's `findMergedReleasePullRequests()` by iterating
+      # merged PRs against `targetBranch` looking for the release-please
+      # label/branch, reading that PR's own recorded merge commit — it never
+      # re-queries "whatever main's tip is right now". Because this job only
+      # runs inside the single workflow run that the release PR's merge
+      # itself triggered (on: push: branches: [main]), that recorded merge
+      # commit IS this run's `github.sha` — the same commit `verify` (above)
+      # already validated and smoke-tested. Source: googleapis/release-please
+      # src/strategies/base.ts (buildRelease: `sha: mergedPullRequest.sha`)
+      # and src/manifest.ts (findMergedReleasePullRequests via
+      # this.github.pullRequestIterator(this.targetBranch, ...)).
       - uses: googleapis/release-please-action@v4
         id: release
         with:

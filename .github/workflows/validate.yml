@@ -59,13 +59,38 @@ jobs:
       # exercised by this PR-CI workflow — a YAML syntax error in it would
       # otherwise only surface after merge. Parse every workflow file here so
       # a broken release-plugin.yml (or any other workflow) fails the PR.
-      - name: every .github/workflows/*.yml file parses as valid YAML
+      # Matches *.yml AND *.yaml, and uses a custom loader that raises on
+      # duplicate mapping keys (top-level or nested) — plain yaml.safe_load
+      # silently accepts duplicates (last one wins), which would hide the
+      # exact failure class this lint exists to catch.
+      - name: every .github/workflows/*.yml(+.yaml) file parses as valid, duplicate-key-free YAML
         run: |
           python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
-          python3 -c 'import yaml, glob
-          for f in glob.glob(".github/workflows/*.yml"):
-              yaml.safe_load(open(f))
-              print("ok  " + f)'
+          python3 -c '
+          import glob
+          import yaml
+
+          class DuplicateKeyError(Exception):
+              pass
+
+          class UniqueKeyLoader(yaml.SafeLoader):
+              def construct_mapping(self, node, deep=False):
+                  seen = set()
+                  for key_node, _ in node.value:
+                      key = self.construct_object(key_node, deep=deep)
+                      if key in seen:
+                          raise DuplicateKeyError(
+                              f"duplicate key {key!r} at line {key_node.start_mark.line + 1}"
+                          )
+                      seen.add(key)
+                  return super().construct_mapping(node, deep=deep)
+
+          files = sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+          for f in files:
+              with open(f) as fh:
+                  yaml.load(fh, Loader=UniqueKeyLoader)
+              print("ok  " + f)
+          '
       - name: all JSON manifests/schemas parse
         run: |
           for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json .mcp.json \
