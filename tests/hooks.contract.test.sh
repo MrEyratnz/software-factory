@@ -53,7 +53,7 @@ repo_tree_hash() {
   local d="$1" idx out
   idx="$(mktemp)"; rm -f "$idx"
   out="$( cd "$d" && GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1; GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null )"
-  rm -f "$idx"; printf '%s' "$d"
+  rm -f "$idx"; printf '%s' "$out"
 }
 
 evt() { # helper builds an event JSON: evt <tool_name> <tool_input_json> [extra]
@@ -343,7 +343,7 @@ EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: add a\""}')"
 assert_exit_fast 0 "otel enabled + unreachable endpoint: allow still returns exit 0 promptly" 3000
 
 echo "# check-drift & orientation"
-SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; export CLAUDE_PROJECT_DIR="$R"
+SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generators → allow"
 SCRIPT="$S/bootstrap.sh"; EVENT='{"hook_event_name":"SessionStart","cwd":"'"$R"'"}'; assert_exit 0 "bootstrap exits 0"
 SCRIPT="$S/inject-status.sh"; EVENT='{"hook_event_name":"UserPromptSubmit","cwd":"'"$R"'"}'; assert_exit 0 "inject-status exits 0"
