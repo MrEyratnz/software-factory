@@ -238,8 +238,9 @@ const TOOLS = {
   ledger_read: {
     description:
       'Read the append-only factory run ledger (.factory/ledger.jsonl) — one ' +
-      'JSON object per line ({station, sha, item, gate, ts}) — for the status ' +
-      'dashboard and post-resume recovery.',
+      'JSON object per line ({station, sha, subject}) — for the status ' +
+      'dashboard and post-resume recovery. Only successful commits are ' +
+      'recorded, so the ledger is survivor-biased.',
     inputSchema: {
       type: 'object',
       properties: {
