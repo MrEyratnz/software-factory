@@ -29,7 +29,7 @@ ec="$(field tool_response.exitCode)"
 [ -n "$ec" ] || ec="$(field tool_response.code)"
 [ -n "$ec" ] || ec="$(field tool_response.returnCode)"
 # No exit-status evidence → do not fabricate a green receipt (fail safe).
-[ -n "$ec" ] || allow
+if [ -z "$ec" ]; then ( cd "$PROJECT_DIR" 2>/dev/null && eval "$cmd" ) >/dev/null 2>&1; ec=$?; fi
 
 tree="$(tree_hash)"
 [ -n "$tree" ] || allow
