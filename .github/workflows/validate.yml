@@ -1,0 +1,79 @@
+name: validate
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  connector:
+    name: connector (unit + stdio protocol)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: connector tests (zero-dep, node --test)
+        run: cd connector && node --test "test/**/*.test.mjs"
+
+  hooks:
+    name: hooks contract + shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: shellcheck the hook scripts and lib
+        run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/hooks.contract.test.sh
+      - name: hermetic hook contract tests (synthetic stdin, throwaway repos, gh shim)
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          bash tests/hooks.contract.test.sh
+
+  manifests:
+    name: manifest + component validation (claude plugin validate --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: validate plugin components (commands/agents/skills/hooks frontmatter)
+        run: npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/plugin.json --strict
+      - name: validate marketplace manifest
+        run: npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/marketplace.json --strict
+
+  structural:
+    name: structural checks (JSON + frontmatter presence)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: all JSON manifests/schemas parse
+        run: |
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json .mcp.json \
+                   schemas/*.json connector/package.json templates/factory/config.json.tmpl; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" && echo "ok  $f"
+          done
+      - name: every command/agent/skill begins with YAML frontmatter
+        run: |
+          fail=0
+          for f in commands/*.md agents/*.md skills/*/SKILL.md; do
+            if [ "$(head -1 "$f")" != "---" ]; then echo "MISSING frontmatter: $f"; fail=1; fi
+          done
+          exit $fail
+      - name: every hooks.json script exists and is executable
+        run: |
+          node -e '
+            const fs=require("fs");
+            const h=JSON.parse(fs.readFileSync("hooks/hooks.json","utf8")).hooks;
+            let bad=0;
+            for(const ev of Object.keys(h)) for(const m of h[ev]) for(const hk of (m.hooks||[])){
+              const p=(hk.command||"").replace("${CLAUDE_PLUGIN_ROOT}/","");
+              if(!p) continue;
+              if(!fs.existsSync(p)){console.log("missing",p);bad=1;continue;}
+              if(!(fs.statSync(p).mode & 0o111)){console.log("not executable",p);bad=1;}
+            }
+            process.exit(bad);
+          '

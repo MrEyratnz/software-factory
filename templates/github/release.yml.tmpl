@@ -1,0 +1,48 @@
+# Release for a Dark Software Factory repo. On every push to {{RELEASE_BRANCH}},
+# release-please maintains a release PR batching Conventional-Commit changes.
+# Merging it cuts a vX.Y.Z tag + Release — GATED on a full green run and a smoke
+# test of the ACTUAL built artifact, so a release is never cut from red code.
+name: Release
+
+on:
+  push:
+    branches: [{{RELEASE_BRANCH}}]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      # Gate: source is green.
+      - run: npm test
+      # Smoke-test the ACTUAL built/packaged artifact — the packaged closure
+      # differs from source, so only booting the built thing catches a runtime
+      # dependency left in devDependencies.
+      - name: Build and smoke-test the artifact
+        run: |
+          {{BUILD_ARTIFACT_CMD}}
+          {{SMOKE_TEST_CMD}}
+      # Only a green artifact publishes.
+      - name: Publish
+        run: {{PUBLISH_CMD}}

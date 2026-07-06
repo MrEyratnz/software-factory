@@ -1,0 +1,44 @@
+# Architecture — {{PROJECT}}
+
+## Shape: modular monolith, built to shear apart
+
+One deployable. Inside: strictly bounded modules that communicate only through
+**public module APIs** and **domain events**. Every module owns its persistence
+behind a repository **port**; nothing reaches into another module's internals.
+Cheap to run day one; clean extraction path to services later.
+
+```
+app/      composition root: HTTP, DI wiring, config
+modules/  bounded contexts, each with a single public API (index)
+kernel/   dependency-free primitives (ids, clock, errors, event bus)
+```
+
+## Module responsibilities & allowed dependencies
+
+| Module | Owns | May depend on |
+|---|---|---|
+| `kernel` | primitives | nothing |
+| `{{module}}` | {{responsibility}} | kernel |
+
+Rules (enforced by `check:boundaries` in CI):
+
+1. Modules import **only** another module's public API (`index`) — never internals.
+2. Cross-module interaction is a public call or a domain event — never shared state.
+3. `kernel` is dependency-free; `app` is the only place that knows concrete adapters.
+
+## Structural safety invariants
+
+- {{e.g. every repository method takes the tenant id first — the unscoped query does not exist.}}
+- {{e.g. validation/accessibility runs as a publish GATE that blocks, not a warning.}}
+
+## Persistence strategy
+
+Repository ports per module; adapters are swappable (in-memory → real DB) and
+verified by a shared **contract-test-suite per port**, so swapping storage is a
+config change, not a re-verification project.
+
+## Testing strategy
+
+TDD unit tests against public APIs and ports; BDD journeys through the composed
+app; conformance/golden tests for any generated artifact. `npm test` (typecheck
+→ boundaries → unit → BDD → build → drift) is green at every commit.

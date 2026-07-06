@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/MrEyratnz/software-factory/schemas/finding.schema.json",
+  "title": "Dark Software Factory — review finding",
+  "description": "One adversarial-review finding, written to .factory/review/<ref>.json (as an array). Unfixed findings become tracked tech-debt issues.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["location", "impact", "provenance", "suggestedFix", "severity"],
+  "properties": {
+    "location": { "type": "string", "description": "file:line", "pattern": ".+:[0-9]+" },
+    "impact": { "type": "string", "description": "a concrete failure or cost, not 'could be better'" },
+    "provenance": { "type": "string", "enum": ["pre-existing", "introduced"] },
+    "suggestedFix": { "type": "string" },
+    "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+    "verdict": { "type": "string", "enum": ["CONFIRMED", "PLAUSIBLE"] },
+    "status": { "type": "string", "enum": ["open", "fixed"], "default": "open" },
+    "title": { "type": "string" }
+  }
+}

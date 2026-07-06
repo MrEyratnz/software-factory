@@ -1,0 +1,18 @@
+# Node/TypeScript stack adapter — the map /factory-init resolves into
+# .factory/config.json. Edit to match your repo's real scripts.
+stack: node
+roadmapPath: docs/ROADMAP.md
+adrDir: docs/adr
+releaseBranch: main
+sourceRegex: "^src/"
+testRegex: "(\\.test\\.|\\.spec\\.|_test\\.|/tests?/|\\.feature$)"
+testCommandRegex: "(npm ((run|-s) )?test|node --test|vitest)"
+releaseVerbRegex: "(git tag|gh release create|npm publish|npm version |release-please)"
+maxIterations: 10
+gates:
+  typecheck: "npm run typecheck"
+  boundaries: "npm run check:boundaries"
+  unit: "npm run test:unit"
+  bdd: "npm run test:bdd"
+  build: "npm run build"
+generators: []

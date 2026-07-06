@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/MrEyratnz/software-factory/schemas/factory.config.schema.json",
+  "title": "Dark Software Factory — .factory/config.json",
+  "description": "Per-repo factory configuration. Hooks resolve commands and paths ONLY from this validated file (a command allowlist), never by blind-evaluating arbitrary strings. The autonomous agent is fenced out of writing it (guard-scope).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["stack", "roadmapPath", "releaseBranch", "gates"],
+  "properties": {
+    "stack": { "type": "string", "enum": ["node", "python", "go", "custom"] },
+    "roadmapPath": { "type": "string", "default": "docs/ROADMAP.md" },
+    "adrDir": { "type": "string", "default": "docs/adr" },
+    "releaseBranch": { "type": "string", "default": "main" },
+    "sourceRegex": { "type": "string", "description": "regex matching source paths (for tests-first)", "default": "^src/" },
+    "testRegex": { "type": "string", "description": "regex matching test paths", "default": "(\\.test\\.|\\.spec\\.|_test\\.|/tests?/|\\.feature$)" },
+    "testCommandRegex": { "type": "string", "description": "regex matching the full-suite command (triggers record-green)" },
+    "releaseVerbRegex": { "type": "string", "description": "regex matching release verbs (gated by guard-release)" },
+    "designDir": { "type": "string", "description": "root of design-system sources (fenced to design-lead)" },
+    "maxIterations": { "type": "integer", "minimum": 1, "default": 10, "description": "hard cap for a /factory-run lights-out loop" },
+    "gates": {
+      "type": "object",
+      "description": "the per-stage 'green' commands, run in order; empty stages are skipped",
+      "additionalProperties": false,
+      "properties": {
+        "typecheck": { "type": "string" },
+        "boundaries": { "type": "string" },
+        "unit": { "type": "string" },
+        "bdd": { "type": "string" },
+        "build": { "type": "string" },
+        "drift": { "type": "string" }
+      }
+    },
+    "generators": {
+      "type": "array",
+      "description": "generated-artifact sources → regenerate + diff at edit time (check-drift) and in CI",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceRegex", "command", "output"],
+        "properties": {
+          "sourceRegex": { "type": "string" },
+          "command": { "type": "string" },
+          "output": { "type": "string" }
+        }
+      },
+      "default": []
+    }
+  }
+}

@@ -1,0 +1,16 @@
+---
+description: Create the next sequentially-numbered ADR in house format (Status/Context/Decision/Consequences/Date) for a settled decision, and link it from ARCHITECTURE.md.
+argument-hint: "<decision title>"
+---
+
+Record the decision: `$ARGUMENTS`
+
+Dispatch the **architect** (load `docs-spine`). Get the next ADR number from the
+connector (`adr_index`) — never hand-pick it. Write
+`docs/adr/NNNN-<slug>.md` in the exact house shape: `# ADR NNNN — <title>`, then
+`Status: accepted · Date: <today>`, then `## Context`, `## Decision`,
+`## Consequences`. Link it from `docs/ARCHITECTURE.md`.
+
+Use this for a decision that is already settled. If the decision is *contested*
+and needs to be argued out, use `/judge-panel` instead — that produces an ADR
+by adversarial synthesis.
