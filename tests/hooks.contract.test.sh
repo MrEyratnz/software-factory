@@ -91,6 +91,16 @@ EVENT="$(evt "$R" Bash '{"command":"git status"}')"; assert_exit 0 "git status a
 EVENT="$(evt "$R" Bash '{"command":"git diff"}')"; assert_exit 0 "git diff allowed"
 EVENT="$(evt "$R" Bash '{"command":"git log"}')"; assert_exit 0 "git log allowed"
 EVENT="$(evt "$R" Bash '{"command":"git add ."}')"; assert_exit 0 "git add allowed"
+# fail-conservative on bare/indirect git invocations (#6 round 2): a bare
+# `git` whose subcommand is supplied indirectly (xargs feeding the final
+# arg, or the whole invocation hidden inside a `sh -c`/`bash -c` string)
+# cannot be confidently parsed as non-commit, so it must still engage the
+# gate even though no literal "commit" token sits next to the "git" token.
+EVENT="$(evt "$R" Bash '{"command":"printf \"%s\" \"commit -am x\" | xargs git"}')"; assert_exit 2 "commit via xargs-supplied subcommand blocked (evasion)"
+EVENT="$(evt "$R" Bash '{"command":"sh -c '"'"'git commit -m \"feat: x\"'"'"'"}')"; assert_exit 2 "commit hidden inside sh -c string blocked (evasion)"
+# guard-rail: a genuinely safe indirect command (no commit anywhere) must not
+# be over-blocked just because it mentions xargs alongside git.
+EVENT="$(evt "$R" Bash '{"command":"echo hello | xargs git status"}')"; assert_exit 0 "safe indirect git status via xargs still allowed"
 
 echo "# guard-scope"
 SCRIPT="$S/guard-scope.sh"
