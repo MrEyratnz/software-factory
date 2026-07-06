@@ -148,6 +148,34 @@ export function indexAdrs(entries) {
 const PROVENANCE = new Set(['pre-existing', 'introduced']);
 
 /**
+ * Deterministic 32-bit FNV-1a hash → 8 hex chars. Zero-dependency and stable
+ * across runs/machines, so a finding always fingerprints to the same value.
+ */
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * A finding's identity is its location + the invariant substance of the
+ * problem (impact), NOT its wording of a title (which a re-review may reword).
+ * That keeps the fingerprint stable so the same defect never double-files.
+ * @param {{location?:string, impact?:string, title?:string}} finding
+ * @returns {string} 8-hex fingerprint
+ */
+export function fingerprintFinding(finding) {
+  const f = finding && typeof finding === 'object' ? finding : {};
+  const key = `${norm(f.location)}|${norm(f.impact) || norm(f.title)}`;
+  return fnv1a(key);
+}
+
+/**
  * @param {{location?:string, impact?:string, provenance?:string,
  *          suggestedFix?:string, title?:string}} finding
  * @returns {{ok:boolean, missing:string[], warnings:string[], normalized:object}}
@@ -181,8 +209,115 @@ export function lintTechDebt(finding) {
       provenance: has(f.provenance) ? String(f.provenance).trim().toLowerCase() : '',
       suggestedFix: has(f.suggestedFix) ? f.suggestedFix.trim() : '',
       label: 'tech-debt',
+      fingerprint: fingerprintFinding(f),
     },
   };
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * 3b. Tech-debt audit — the idempotency spine of the review→tech-debt
+ *     convention. Given this session's findings and the currently-open
+ *     tech-debt issues, return which are already filed and which are missing.
+ *     Pure set-diff by fingerprint — powers the Stop debt-reconcile hook so a
+ *     finding is never dropped and never double-filed.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Pull a fingerprint out of an issue (explicit field or a body/title marker). */
+export function extractFingerprint(issue) {
+  const i = issue && typeof issue === 'object' ? issue : {};
+  if (typeof i.fingerprint === 'string' && /^[0-9a-f]{8}$/.test(i.fingerprint)) {
+    return i.fingerprint;
+  }
+  const hay = `${i.title ?? ''}\n${i.body ?? ''}`;
+  const m = hay.match(/fingerprint:\s*([0-9a-f]{8})/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * @param {Array<object>} findings  this session's review findings
+ * @param {Array<{title?:string, body?:string, fingerprint?:string}>} openIssues
+ * @returns {{filed:string[], missing:Array<{fingerprint:string, finding:object}>,
+ *            all:Array<{fingerprint:string, filed:boolean}>, ok:boolean}}
+ */
+export function techdebtAudit(findings, openIssues) {
+  const list = Array.isArray(findings) ? findings : [];
+  const issues = Array.isArray(openIssues) ? openIssues : [];
+  const filedSet = new Set(issues.map(extractFingerprint).filter(Boolean));
+
+  const all = [];
+  const missing = [];
+  const seen = new Set();
+  for (const finding of list) {
+    const fp = fingerprintFinding(finding);
+    const isFiled = filedSet.has(fp);
+    if (!seen.has(fp)) {
+      all.push({ fingerprint: fp, filed: isFiled });
+      seen.add(fp);
+      if (!isFiled) missing.push({ fingerprint: fp, finding });
+    }
+  }
+  return {
+    filed: [...filedSet],
+    missing,
+    all,
+    ok: missing.length === 0,
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * 3c. Roadmap check — a `- [ ]` → `- [x]` flip is honest only with proof the
+ *     item's work merged green. This pure verdict refuses the flip without a
+ *     merged-green SHA proof (which comes from CI, never the local tree). The
+ *     actual file write is done by the command layer using this verdict.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * @param {string} item  roadmap item text being checked off
+ * @param {{mergedGreenSha?:string, item?:string}} proof
+ * @returns {{mayFlip:boolean, reason:string, sha:string|null}}
+ */
+export function roadmapCheck(item, proof) {
+  const p = proof && typeof proof === 'object' ? proof : {};
+  const sha = typeof p.mergedGreenSha === 'string' && /^[0-9a-f]{7,40}$/.test(p.mergedGreenSha)
+    ? p.mergedGreenSha
+    : null;
+  if (!sha) {
+    return { mayFlip: false, reason: 'no merged-green SHA proof for this item', sha: null };
+  }
+  if (p.item && norm(p.item) !== norm(item)) {
+    return { mayFlip: false, reason: 'proof is for a different item', sha };
+  }
+  return { mayFlip: true, reason: 'merged-green proof present', sha };
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * 3d. Gate evaluate — the operational definition of "green". Given per-stage
+ *     suite results and the `git write-tree` hash of the tested tree, return
+ *     the verdict and the receipt the commit gate later verifies. Binding the
+ *     receipt to the tree hash (not a timestamp) means any later source edit
+ *     changes the tree and silently invalidates the receipt.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Canonical order of the green pipeline (informational; missing stages are ok). */
+export const GATE_STAGES = ['typecheck', 'boundaries', 'unit', 'bdd', 'build', 'drift'];
+
+/**
+ * @param {Array<{name:string, ok?:boolean, exitCode?:number}>} stages
+ * @param {string} treeHash  output of `git write-tree`
+ * @returns {{ok:boolean, failed:string[], stages:Array<{name:string, ok:boolean}>,
+ *            receipt:{tree:string|null, ok:boolean,
+ *                     stages:Array<{name:string, ok:boolean}>}}}
+ */
+export function gateEvaluate(stages, treeHash) {
+  const norml = (Array.isArray(stages) ? stages : []).map((s) => ({
+    name: String(s?.name ?? '').trim(),
+    ok: s?.ok === true || s?.exitCode === 0,
+  }));
+  const failed = norml.filter((s) => !s.ok).map((s) => s.name);
+  const tree = typeof treeHash === 'string' && treeHash.trim() ? treeHash.trim() : null;
+  // A receipt with no tree hash is unverifiable → never "green".
+  const ok = failed.length === 0 && norml.length > 0 && tree !== null;
+  return { ok, failed, stages: norml, receipt: { tree, ok, stages: norml } };
 }
 
 /* ────────────────────────────────────────────────────────────────────────

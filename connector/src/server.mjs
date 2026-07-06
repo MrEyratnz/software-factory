@@ -17,11 +17,12 @@
  *   node ${CLAUDE_PLUGIN_ROOT}/connector/src/server.mjs
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   parseRoadmap, indexAdrs, lintTechDebt, lintCommit, planRelease,
+  roadmapCheck, gateEvaluate, techdebtAudit,
 } from './factory-core.mjs';
 
 const SERVER_NAME = 'dark-software-factory';
@@ -38,6 +39,12 @@ function safePath(p) {
     throw new Error(`path escapes project directory: ${p}`);
   }
   return abs;
+}
+
+function readRoadmap(args) {
+  return typeof args.markdown === 'string'
+    ? args.markdown
+    : readFileSync(safePath(args.path || 'docs/ROADMAP.md'), 'utf8');
 }
 
 function readAdrDir(dir) {
@@ -71,12 +78,45 @@ const TOOLS = {
         markdown: { type: 'string', description: 'raw roadmap text (overrides path)' },
       },
     },
-    handler: (args) => {
-      const md = typeof args.markdown === 'string'
-        ? args.markdown
-        : readFileSync(safePath(args.path || 'docs/ROADMAP.md'), 'utf8');
-      return parseRoadmap(md);
+    handler: (args) => parseRoadmap(readRoadmap(args)),
+  },
+
+  roadmap_next: {
+    description:
+      'Return only the next unchecked roadmap item {milestone, text, line} — ' +
+      'the single work unit the autonomous loop picks up. null when the ' +
+      'roadmap is complete.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        markdown: { type: 'string' },
+      },
     },
+    handler: (args) => ({ next: parseRoadmap(readRoadmap(args)).next }),
+  },
+
+  roadmap_check: {
+    description:
+      'Verdict on whether a roadmap item may be checked off. Refuses unless ' +
+      'handed a merged-green SHA proof (from CI, not the local tree) — enforces ' +
+      '"a box is checked only when merged with green tests". The write itself ' +
+      'is done by the command layer.',
+    inputSchema: {
+      type: 'object',
+      required: ['item'],
+      properties: {
+        item: { type: 'string', description: 'roadmap item text being flipped' },
+        proof: {
+          type: 'object',
+          properties: {
+            mergedGreenSha: { type: 'string' },
+            item: { type: 'string' },
+          },
+        },
+      },
+    },
+    handler: (args) => roadmapCheck(args.item, args.proof),
   },
 
   adr_index: {
@@ -152,6 +192,75 @@ const TOOLS = {
     },
     handler: (args) =>
       planRelease(args.commits, args.currentVersion, { preMajor: args.preMajor }),
+  },
+
+  techdebt_audit: {
+    description:
+      'Given this session\'s review findings and the open `tech-debt` issues, ' +
+      'return which findings are already filed and which are missing — a pure ' +
+      'fingerprint set-diff that makes filing idempotent and drop-proof.',
+    inputSchema: {
+      type: 'object',
+      required: ['findings'],
+      properties: {
+        findings: { type: 'array', items: { type: 'object' } },
+        openIssues: {
+          type: 'array',
+          items: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } } },
+        },
+      },
+    },
+    handler: (args) => techdebtAudit(args.findings, args.openIssues || []),
+  },
+
+  gate_evaluate: {
+    description:
+      'Given per-stage suite results and the `git write-tree` hash of the ' +
+      'tested tree, return the green/red verdict and the tree-bound receipt the ' +
+      'commit gate later verifies. A receipt with no tree hash is never green.',
+    inputSchema: {
+      type: 'object',
+      required: ['stages', 'treeHash'],
+      properties: {
+        stages: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { name: { type: 'string' }, ok: { type: 'boolean' }, exitCode: { type: 'number' } },
+          },
+        },
+        treeHash: { type: 'string' },
+      },
+    },
+    handler: (args) => gateEvaluate(args.stages, args.treeHash),
+  },
+
+  ledger_read: {
+    description:
+      'Read the append-only factory run ledger (.factory/ledger.jsonl) — one ' +
+      'JSON object per line ({station, sha, item, gate, ts}) — for the status ' +
+      'dashboard and post-resume recovery.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'ledger path (default .factory/ledger.jsonl)' },
+        limit: { type: 'number', description: 'return only the last N entries' },
+      },
+    },
+    handler: (args) => {
+      let text = '';
+      try {
+        text = readFileSync(safePath(args.path || '.factory/ledger.jsonl'), 'utf8');
+      } catch {
+        return { entries: [], count: 0 };
+      }
+      const entries = text.split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => { try { return JSON.parse(l); } catch { return { malformed: l }; } });
+      const limited = typeof args.limit === 'number' ? entries.slice(-args.limit) : entries;
+      return { entries: limited, count: entries.length };
+    },
   },
 };
 

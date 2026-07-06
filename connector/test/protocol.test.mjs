@@ -56,11 +56,12 @@ test('initialize returns protocol version and server info', async () => {
   assert.ok(res.result.capabilities.tools);
 });
 
-test('tools/list advertises all five factory tools', async () => {
+test('tools/list advertises the full factory tool set', async () => {
   const [res] = await rpc([{ jsonrpc: '2.0', id: 2, method: 'tools/list' }]);
   const names = res.result.tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
-    'adr_index', 'commit_lint', 'release_plan', 'roadmap_status', 'techdebt_lint',
+    'adr_index', 'commit_lint', 'gate_evaluate', 'ledger_read', 'release_plan',
+    'roadmap_check', 'roadmap_next', 'roadmap_status', 'techdebt_audit', 'techdebt_lint',
   ]);
   for (const t of res.result.tools) {
     assert.ok(t.description && t.inputSchema, `${t.name} missing description/schema`);

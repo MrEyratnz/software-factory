@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseRoadmap, indexAdrs, lintTechDebt, lintCommit, planRelease, COMMIT_TYPES,
+  fingerprintFinding, techdebtAudit, extractFingerprint, roadmapCheck,
+  gateEvaluate, GATE_STAGES,
 } from '../src/factory-core.mjs';
 
 /* ── parseRoadmap ──────────────────────────────────────────────────────── */
@@ -196,4 +198,94 @@ test('planRelease: no releasable commits → no release', () => {
 
 test('planRelease: rejects invalid version', () => {
   assert.throws(() => planRelease(['feat: a'], 'not-a-version'));
+});
+
+/* ── fingerprintFinding / techdebtAudit ────────────────────────────────── */
+
+test('fingerprintFinding: stable, and independent of title wording', () => {
+  const a = fingerprintFinding({ location: 'src/x.ts:10', impact: 'leaks memory', title: 'Leak' });
+  const b = fingerprintFinding({ location: 'src/x.ts:10', impact: 'leaks memory', title: 'Memory leak!' });
+  assert.equal(a, b); // title reword does not change identity
+  assert.match(a, /^[0-9a-f]{8}$/);
+  const c = fingerprintFinding({ location: 'src/y.ts:10', impact: 'leaks memory' });
+  assert.notEqual(a, c); // different location → different fingerprint
+});
+
+test('lintTechDebt: normalized output carries a fingerprint', () => {
+  const r = lintTechDebt({ location: 'a.ts:1', impact: 'x', provenance: 'introduced', suggestedFix: 'y' });
+  assert.match(r.normalized.fingerprint, /^[0-9a-f]{8}$/);
+});
+
+test('extractFingerprint: from explicit field and from body marker', () => {
+  assert.equal(extractFingerprint({ fingerprint: 'abcd1234' }), 'abcd1234');
+  assert.equal(extractFingerprint({ body: 'blah\nfingerprint: DEADBEEF\nmore' }), 'deadbeef');
+  assert.equal(extractFingerprint({ body: 'no marker here' }), null);
+});
+
+test('techdebtAudit: splits findings into filed vs missing, dedup by fingerprint', () => {
+  const f1 = { location: 'a.ts:1', impact: 'bug one' };
+  const f2 = { location: 'b.ts:2', impact: 'bug two' };
+  const fp1 = fingerprintFinding(f1);
+  const audit = techdebtAudit([f1, f2, { ...f1 }], [{ body: `fingerprint: ${fp1}` }]);
+  assert.equal(audit.ok, false);
+  assert.equal(audit.missing.length, 1); // only f2 missing; f1 filed; dup f1 collapsed
+  assert.equal(audit.missing[0].finding.location, 'b.ts:2');
+  assert.ok(audit.filed.includes(fp1));
+});
+
+test('techdebtAudit: all filed → ok', () => {
+  const f = { location: 'a.ts:1', impact: 'x' };
+  const audit = techdebtAudit([f], [{ fingerprint: fingerprintFinding(f) }]);
+  assert.equal(audit.ok, true);
+  assert.equal(audit.missing.length, 0);
+});
+
+/* ── roadmapCheck ──────────────────────────────────────────────────────── */
+
+test('roadmapCheck: refuses without a merged-green SHA proof', () => {
+  const r = roadmapCheck('build the thing', {});
+  assert.equal(r.mayFlip, false);
+  assert.match(r.reason, /no merged-green/i);
+});
+
+test('roadmapCheck: allows with valid proof; rejects proof for another item', () => {
+  const sha = 'a1b2c3d4e5f6';
+  assert.equal(roadmapCheck('item x', { mergedGreenSha: sha }).mayFlip, true);
+  assert.equal(roadmapCheck('item x', { mergedGreenSha: sha, item: 'item y' }).mayFlip, false);
+});
+
+/* ── gateEvaluate ──────────────────────────────────────────────────────── */
+
+test('gateEvaluate: all stages green with a tree hash → green receipt', () => {
+  const r = gateEvaluate(
+    [{ name: 'typecheck', exitCode: 0 }, { name: 'unit', ok: true }],
+    'deadbeefcafe',
+  );
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.failed, []);
+  assert.equal(r.receipt.tree, 'deadbeefcafe');
+  assert.equal(r.receipt.ok, true);
+});
+
+test('gateEvaluate: any failing stage → red, names the failures', () => {
+  const r = gateEvaluate(
+    [{ name: 'typecheck', exitCode: 0 }, { name: 'unit', exitCode: 1 }],
+    'abc123',
+  );
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.failed, ['unit']);
+});
+
+test('gateEvaluate: no tree hash is never green (unverifiable receipt)', () => {
+  const r = gateEvaluate([{ name: 'unit', ok: true }], '');
+  assert.equal(r.ok, false);
+  assert.equal(r.receipt.tree, null);
+});
+
+test('gateEvaluate: empty stage list is not green', () => {
+  assert.equal(gateEvaluate([], 'abc').ok, false);
+});
+
+test('GATE_STAGES lists the canonical pipeline order', () => {
+  assert.deepEqual(GATE_STAGES, ['typecheck', 'boundaries', 'unit', 'bdd', 'build', 'drift']);
 });
