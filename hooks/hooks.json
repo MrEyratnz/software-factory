@@ -24,9 +24,15 @@
         ]
       },
       {
-        "matcher": "Bash|mcp__github__push_files|mcp__github__create_or_update_file|mcp__github__merge_pull_request",
+        "matcher": "Bash|mcp__github__push_files|mcp__github__create_or_update_file|mcp__github__delete_file|mcp__github__merge_pull_request",
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-release.sh", "timeout": 30 }
+        ]
+      },
+      {
+        "matcher": "mcp__github__create_or_update_file|mcp__github__push_files|mcp__github__delete_file",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-mcp-commit.sh", "timeout": 20 }
         ]
       },
       {

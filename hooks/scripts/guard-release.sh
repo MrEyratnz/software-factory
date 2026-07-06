@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # guard-release — never release from red / smoke the real artifact / no bypass.
 # Gates release verbs on BOTH substrates: Bash (git tag, gh release create,
-# npm publish, docker push, release-please) and the github-MCP push/merge paths
-# (while a release is in progress), so a release can't route around a Bash-only
-# matcher. Requires a release-gate proof: green on the BUILT artifact + clean
-# Conventional-Commit history + on the configured release branch.
+# npm publish, docker push, release-please) and the github-MCP
+# push/create-or-update/delete/merge paths (while a release is in progress),
+# so a release can't route around a Bash-only matcher. Requires a release-gate
+# proof: green on the BUILT artifact + clean Conventional-Commit history + on
+# the configured release branch.
 . "$(dirname "$0")/../lib/common.sh"
 
 tn="$(field tool_name)"
@@ -14,7 +15,7 @@ rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|do
 is_release=no
 case "$tn" in
   Bash) printf '%s' "$cmd" | grep -Eq "$rel_re" && is_release=yes ;;
-  mcp__github__merge_pull_request|mcp__github__push_files|mcp__github__create_or_update_file)
+  mcp__github__merge_pull_request|mcp__github__push_files|mcp__github__create_or_update_file|mcp__github__delete_file)
     [ -f "$STATE_DIR/release-intent.json" ] && is_release=yes ;;
 esac
 [ "$is_release" = "yes" ] || allow
