@@ -46,6 +46,10 @@ case "$active" in
     case "$rel" in .factory/panel/*) allow ;; *) deny "a proposer writes only under .factory/panel/ (attempted: $rel)" ;; esac ;;
   design-lead)
     case "$rel" in "$design_dir"*|docs/*) allow ;; *) deny "the design-lead writes only under the design dirs (attempted: $rel)" ;; esac ;;
+  release-captain)
+    case "$rel" in docs/*) allow ;; *) deny "the release-captain does not edit source (high blast radius) — it cuts releases via the gated release path (attempted: $rel)" ;; esac ;;
+  tech-debt-clerk)
+    case "$rel" in .factory/review/*) allow ;; *) deny "the tech-debt clerk touches no source — it files issues; findings/status go under .factory/review/ (attempted: $rel)" ;; esac ;;
   implementer|"")
     # implementer + conductor: source/tests are fine; the universal .factory
     # guard above already blocks the dangerous paths.
