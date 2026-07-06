@@ -1,6 +1,6 @@
 {
   "name": "dark-software-factory-connector",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zero-dependency MCP connector exposing the Dark Software Factory rule engine (roadmap, ADRs, tech-debt, conventional commits, release planning) as deterministic tools",
   "type": "module",
   "private": true,
