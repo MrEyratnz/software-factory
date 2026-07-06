@@ -24,8 +24,11 @@ valid="$(DIR="$dir" REQ="$required" node -e '
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith(".json")) continue;
       let d; try { d=JSON.parse(fs.readFileSync(path.join(dir,f),"utf8")); } catch { continue; }
+      // An explicit clean sentinel is a valid handoff (an honest empty review
+      // or an abstaining panelist must be able to terminate).
+      if (d && typeof d==="object" && !Array.isArray(d) && d.clean===true) { ok=true; break; }
       const items = Array.isArray(d) ? d : (Array.isArray(d.findings)? d.findings : [d]);
-      // At least one item in at least one file must carry every required field.
+      // …otherwise at least one item must carry every required field.
       if (items.some(it => it && typeof it==="object" && req.every(k => it[k]!=null && it[k]!==""))) { ok=true; break; }
     }
   } catch {}

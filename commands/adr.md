@@ -5,7 +5,8 @@ argument-hint: "<decision title>"
 
 Record the decision: `$ARGUMENTS`
 
-Dispatch the **architect** (load `docs-spine`). Get the next ADR number from the
+Set the write-fence (`echo architect > .factory/active-agent`), then dispatch
+the **architect** (load `docs-spine`). Get the next ADR number from the
 connector (`adr_index`) — never hand-pick it. Write
 `docs/adr/NNNN-<slug>.md` in the exact house shape: `# ADR NNNN — <title>`, then
 `Status: accepted · Date: <today>`, then `## Context`, `## Decision`,

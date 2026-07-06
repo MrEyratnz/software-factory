@@ -37,6 +37,12 @@ src_re="$(config_get sourceRegex '^src/')"
 test_re="$(config_get testRegex '(\.test\.|\.spec\.|_test\.|/tests?/|\.feature$)')"
 if [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; then
   files="$(staged_files)"
+  # `git commit -a/-am` stages tracked modifications AT commit time, so nothing
+  # is staged yet at PreToolUse — evaluate the tracked changeset instead, or the
+  # TDD check would be silently skipped.
+  if printf '%s' "$cmd" | grep -Eq 'commit[^|&;]*[[:space:]]-[A-Za-z]*a'; then
+    files="$( cd "$PROJECT_DIR" 2>/dev/null && git diff --name-only HEAD 2>/dev/null )"
+  fi
   if [ -n "$files" ]; then
     has_src="$(printf '%s\n' "$files" | grep -Eq "$src_re" && echo yes || echo no)"
     has_test="$(printf '%s\n' "$files" | grep -Eq "$test_re" && echo yes || echo no)"
@@ -51,9 +57,10 @@ receipt="$STATE_DIR/gate-receipt.json"
 rok="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
 rtree="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
 [ "$rok" = "true" ] || deny "the last gate run was red — fix it to green before committing"
+# Fail closed: if we cannot compute the current tree hash, we cannot certify the
+# receipt still matches, so refuse rather than allow.
 cur="$(tree_hash)"
-if [ -n "$cur" ] && [ "$cur" != "$rtree" ]; then
-  deny "the tree changed since tests last passed — re-run the suite to refresh the green receipt"
-fi
+[ -n "$cur" ] || deny "cannot compute the working-tree hash — refusing to certify green"
+[ "$cur" = "$rtree" ] || deny "the tree changed since tests last passed — re-run the suite to refresh the green receipt"
 
 allow

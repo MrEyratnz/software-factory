@@ -98,9 +98,15 @@ R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] build the thing","new_string":"- [x] build the thing"}')"
 assert_exit 2 "checkbox flip blocked without merged-green proof"
 printf '{"mergedGreenSha":"a1b2c3d4e5f6"}' > "$R/.factory/state/roadmap-proof.json"
-assert_exit 0 "checkbox flip allowed with proof"
+assert_exit 2 "checkbox flip still blocked with an item-unbound proof (skeleton key)"
+printf '{"mergedGreenSha":"a1b2c3d4e5f6","item":"build the thing"}' > "$R/.factory/state/roadmap-proof.json"
+assert_exit 0 "checkbox flip allowed with an item-bound proof"
 EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"some text","new_string":"other text"}')"
 assert_exit 0 "non-flip roadmap edit allowed"
+# MultiEdit carrying a flip must also be gated (findings: MultiEdit bypass)
+rm -f "$R/.factory/state/roadmap-proof.json"
+EVENT="$(evt "$R" MultiEdit '{"file_path":"docs/ROADMAP.md","edits":[{"old_string":"- [ ] a","new_string":"- [x] a"}]}')"
+assert_exit 2 "MultiEdit checkbox flip blocked without proof"
 
 echo "# guard-release"
 SCRIPT="$S/guard-release.sh"
@@ -108,7 +114,18 @@ R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Bash '{"command":"echo hi"}')"; assert_exit 0 "non-release bash allowed"
 EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"; assert_exit 2 "release verb blocked without proof"
 printf '{"ok":true}' > "$R/.factory/state/release-proof.json"
-EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"; assert_exit 0 "release verb allowed with proof on release branch"
+EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"; assert_exit 2 "release still blocked without a fresh green gate-receipt"
+THrel="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$THrel" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"; assert_exit 0 "release allowed with proof + fresh green receipt on release branch"
+
+echo "# guard-bash-writes"
+SCRIPT="$S/guard-bash-writes.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "shell write to gate-receipt blocked"
+EVENT="$(evt "$R" Bash '{"command":"sed -i s/a/b/ .factory/config.json"}')"; assert_exit 2 "shell sed -i of config blocked"
+EVENT="$(evt "$R" Bash '{"command":"echo hi > .factory/review/x.json"}')"; assert_exit 2 "shell write to review dir blocked"
+EVENT="$(evt "$R" Bash '{"command":"cat .factory/config.json"}')"; assert_exit 0 "reading config is fine"
+EVENT="$(evt "$R" Bash '{"command":"echo hi > src/a.ts"}')"; assert_exit 0 "writing normal source is fine"
 
 echo "# record-green"
 SCRIPT="$S/record-green.sh"
@@ -118,6 +135,12 @@ assert_exit 0 "record-green exits 0"
 if [ -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - record-green wrote a receipt"; fi
 ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))')"
 if [ "$ROK" = "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - receipt ok=true"; fi
+# Hardening: a forged/neutralized "suite" must NOT mint a receipt.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"echo npm test"}' ',"tool_response":{"exitCode":0}')"; assert_exit 0 "record-green tolerant of echo"
+if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - 'echo npm test' must NOT mint a receipt"; fi
+EVENT="$(evt "$R" Bash '{"command":"npm test || true"}' ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - 'npm test || true' must NOT mint a receipt"; fi
 
 echo "# debt-reconcile"
 SCRIPT="$S/debt-reconcile.sh"

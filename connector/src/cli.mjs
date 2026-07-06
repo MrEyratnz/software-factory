@@ -29,6 +29,7 @@ function readStdin() {
 
 const COMMANDS = {
   'parse-roadmap': (a) => parseRoadmap(a.markdown ?? ''),
+  'roadmap-status': (a) => parseRoadmap(a.markdown ?? ''),
   'roadmap-next': (a) => ({ next: parseRoadmap(a.markdown ?? '').next }),
   'roadmap-check': (a) => roadmapCheck(a.item ?? '', a.proof ?? {}),
   'adr-index': (a) => indexAdrs(a.entries ?? []),

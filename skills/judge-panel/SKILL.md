@@ -28,7 +28,7 @@ synthesize one design that **resolves** every confirmed flaw instead of inheriti
 
 Pick N attack axes / stances that genuinely pull against each other for THIS decision, e.g.
 `contract-first`, `security-first`, `dx-first` (or `simplicity` / `performance` / `extensibility`).
-Write one file per stance to `.factory/panel/proposal-<stance>.md` using the template below.
+Write one file per stance to `.factory/panel/proposal-<stance>.json` using the template below.
 Each is authored as a true believer in that stance.
 
 ### Step 2 — Run the adversarial panel (one reviewer per axis)
@@ -36,7 +36,7 @@ Each is authored as a true believer in that stance.
 Spawn N independent panelists, none of which authored the proposal it reviews. Each panelist
 attacks from its own axis and returns a **ballot** naming the single fatal flaw with evidence
 and a `CONFIRMED | PLAUSIBLE` verdict. Every proposal gets a ballot from every other axis.
-Write ballots to `.factory/panel/ballot-<proposal>-<reviewer>.md`. `CONFIRMED` = the reviewer
+Write ballots to `.factory/panel/ballot-<axis>.json`. `CONFIRMED` = the reviewer
 demonstrated the failure (repro, citation, counterexample); `PLAUSIBLE` = argued but unproven.
 
 ### Step 3 — Synthesize the resolving ADR
@@ -48,7 +48,7 @@ Any flaw you cannot resolve is a named, accepted Consequence — never a silent 
 
 ## Templates
 
-### Proposal (`.factory/panel/proposal-<stance>.md`)
+### Proposal (`.factory/panel/proposal-<stance>.json`)
 
 ```markdown
 # Proposal: <stance> (e.g. contract-first)
@@ -59,7 +59,7 @@ Price paid: <what this stance knowingly sacrifices — be honest>
 Key mechanics: <APIs / boundaries / data flow that make it real>
 ```
 
-### Ballot (`.factory/panel/ballot-<proposal>-<reviewer>.md`)
+### Ballot (`.factory/panel/ballot-<axis>.json`)
 
 ```markdown
 # Ballot — reviewer:<axis> vs proposal:<stance>

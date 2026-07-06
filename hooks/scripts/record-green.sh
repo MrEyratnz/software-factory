@@ -12,6 +12,17 @@ cmd="$(field tool_input.command)"
 test_re="$(config_get testCommandRegex '(npm ((run|-s) )?test|node --test|vitest|pytest|go test|cargo test|make test)')"
 printf '%s' "$cmd" | grep -Eq "$test_re" || allow
 
+# Harden against forged green: refuse to mint a receipt for a command that only
+# *mentions* the suite or neutralizes its exit status. This is not airtight
+# (CI is the authoritative gate) but it closes the trivial forgeries:
+#   echo/printf/: /true prefix, `|| true`, `; true`, `&& true`, `# …` comment.
+trimmed="$(printf '%s' "$cmd" | sed -E 's/^[[:space:]]+//')"
+case "$trimmed" in
+  echo\ *|printf\ *|:\ *|true\ *|:|true) allow ;;
+esac
+printf '%s' "$cmd" | grep -Eq '(\|\||;|&&)[[:space:]]*(true|:)([[:space:]]|$)' && allow
+printf '%s' "$cmd" | grep -Eq '#' && allow
+
 # Read the command's exit status from the tool response (try known field names).
 ec="$(field tool_response.exitCode)"
 [ -n "$ec" ] || ec="$(field tool_response.exit_code)"

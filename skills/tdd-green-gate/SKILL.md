@@ -43,11 +43,14 @@ refuses any commit whose tree does not match a green receipt.
    manager and the exact script per stage (do **not** guess `npm`/`pnpm` or script names).
    ```
    .factory/config.json
-     { "pm": "pnpm",
-       "scripts": {
-         "typecheck": "...", "boundary": "...", "unit": "...",
-         "bdd": "...", "build": "...", "drift": "..." } }
+     { "stack": "node",
+       "gates": {
+         "typecheck": "...", "boundaries": "...", "unit": "...",
+         "bdd": "...", "build": "..." },
+       "generators": [ { "sourceRegex": "...", "command": "...", "output": "..." } ] }
    ```
+   (Artifact-drift — stage 6 — is the `generators[]` entries, diffed after
+   regeneration; see the `factory-config` skill for the full schema.)
 2. **Red first.** Write the smallest failing test that pins the new behavior/bug. Run stage 3/4
    and *watch it fail for the right reason*. A test that passes before you write code proves
    nothing — strengthen it.

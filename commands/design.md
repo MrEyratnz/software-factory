@@ -9,7 +9,8 @@ Design-system work: `$ARGUMENTS`
   artifact from its single source and `git diff --exit-code` it (drift gate), and
   run the contrast unit test (every declared fg/bg pairing meets its WCAG AA
   threshold). Report pass/fail; change nothing.
-- **--session "scope"**: dispatch the **design-lead** (load `design-system-rigor`,
+- **--session "scope"**: set the write-fence (`echo design-lead > .factory/active-agent`) and dispatch the
+  **design-lead** (load `design-system-rigor`,
   fenced to the design dirs) to evolve the design system — keeping ONE token
   source of truth, a checked-in generated artifact with a byte-equality test, and
   the contrast-gate-as-unit-test with its declare-a-color-forces-you-to-gate-it

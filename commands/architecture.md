@@ -5,7 +5,8 @@ argument-hint: "[--constraints \"...\"]"
 
 Draft or refresh `docs/ARCHITECTURE.md`. Extra constraints: `$ARGUMENTS`
 
-Dispatch the **architect** (load `module-boundaries` + `docs-spine`). Describe
+Set the write-fence (`echo architect > .factory/active-agent`), then dispatch
+the **architect** (load `module-boundaries` + `docs-spine`). Describe
 the modular monolith: `kernel < modules < app`; one public API per module;
 cross-module access only through that API; ports/adapters with a shared
 contract-test-suite per port; and the structural safety invariants for this

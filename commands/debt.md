@@ -7,7 +7,8 @@ Manage tracked tech-debt: `$ARGUMENTS`
 
 - **list**: show open GitHub issues labeled `tech-debt`, plus any unreconciled
   findings in `.factory/review/*.json`.
-- **sync**: dispatch the **tech-debt-clerk** to reconcile — the connector
+- **sync**: set `echo tech-debt-clerk > .factory/active-agent` and dispatch the
+  **tech-debt-clerk** to reconcile — the connector
   `techdebt_audit` diffs this session's findings against the open `tech-debt`
   issues by content fingerprint, and the clerk files each missing one (with
   location/impact/provenance/suggested-fix) without ever double-filing.

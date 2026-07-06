@@ -31,6 +31,7 @@ regexes + a command allowlist, not by changing hook code.
 
 ```jsonc
 {
+  "stack":             "node", // node|python|go|custom — selects the adapter defaults
   "sourceRegex":       "…",   // guard-commit/guard-scope: which paths are product source
   "testRegex":         "…",   // guard-commit: a feat/fix touching source MUST also touch a test
   "testCommandRegex":  "…",   // recognizes a test-run invocation (for commit_lint heuristics)
@@ -42,7 +43,7 @@ regexes + a command allowlist, not by changing hook code.
   "generators": [             // drift gate: regenerate + compare against checked-in output
     { "sourceRegex": "…", "command": "…", "output": "…" }
   ],
-  "green": {                  // gate_evaluate/record-green run these IN THIS ORDER, short-circuit on red
+  "gates": {                  // gate_evaluate/record-green run these IN THIS ORDER, short-circuit on red
     "typecheck":  "…",        // 1
     "boundaries": "…",        // 2  module-boundary (kernel<modules<app, ports/adapters)
     "unit":       "…",        // 3
@@ -52,7 +53,7 @@ regexes + a command allowlist, not by changing hook code.
 }
 ```
 
-Every value in `green.*` and `generators[].command` is an entry in the allowlist:
+Every value in `gates.*` and `generators[].command` is an entry in the allowlist:
 the ONLY strings the gate is permitted to shell out to.
 
 ## Per-stack adapters
@@ -71,7 +72,7 @@ the ONLY strings the gate is permitted to shell out to.
   "generators": [
     { "sourceRegex": "^design/tokens/.*\\.json$", "command": "pnpm tokens:build", "output": "src/styles/tokens.css" }
   ],
-  "green": {
+  "gates": {
     "typecheck": "pnpm tsc --noEmit",
     "boundaries": "pnpm depcruise src",
     "unit": "pnpm vitest run",
@@ -95,7 +96,7 @@ the ONLY strings the gate is permitted to shell out to.
   "generators": [
     { "sourceRegex": "^design/tokens/.*\\.yaml$", "command": "python -m tools.tokens", "output": "src/app/static/tokens.css" }
   ],
-  "green": {
+  "gates": {
     "typecheck": "mypy src",
     "boundaries": "import-linter --config .importlinter",
     "unit": "pytest -q tests/unit",
@@ -119,7 +120,7 @@ the ONLY strings the gate is permitted to shell out to.
   "generators": [
     { "sourceRegex": "^design/tokens/.*\\.json$", "command": "go run ./tools/tokens", "output": "web/static/tokens.css" }
   ],
-  "green": {
+  "gates": {
     "typecheck": "go vet ./...",
     "boundaries": "go-arch-lint check",
     "unit": "go test ./...",
@@ -137,7 +138,7 @@ the ONLY strings the gate is permitted to shell out to.
    the repo's tree (a wrong `testRegex` lets a `feat` land with no test — invariant
    broken silently). Confirm `roadmapPath` is the file with the `[ ]`/`[x]` boxes.
 3. **Prove each command by hand once**, then let the connector own it — run
-   `gate_evaluate`; it executes `green.*` in order and returns a per-stage verdict.
+   `gate_evaluate`; it executes `gates.*` in order and returns a per-stage verdict.
    Fix at the earliest red stage.
 4. **Register generators** so the drift stage regenerates `output` from
    `sourceRegex` inputs and diffs against the checked-in file (contract: generated
@@ -147,7 +148,7 @@ the ONLY strings the gate is permitted to shell out to.
 
 ## Anti-patterns (blocked or will bite you)
 
-- Putting a raw shell command in a hook/prompt instead of a `green.*` key — the hook
+- Putting a raw shell command in a hook/prompt instead of a `gates.*` key — the hook
   will not run it; only allowlisted config values execute.
 - Letting the autonomous loop edit `config.json` to weaken a gate — `guard-scope`
   denies the write; a green from a poisoned config is void.

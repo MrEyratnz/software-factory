@@ -7,13 +7,15 @@ Settle this by judge panel: `$ARGUMENTS`
 
 Run the ADR-0009 method (load `judge-panel`):
 
-1. **Propose (parallel).** Launch 3 **proposer** subagents, each pinned to a
-   distinct stance (default `contract-first`, `security-first`, `dx-first`; or
-   the `--stances` given). Each writes one deliberately partisan proposal to
-   `.factory/panel/<stance>.json`. They do not read each other's files.
-2. **Judge (parallel).** Launch 3 **panelist** subagents on distinct attack axes.
-   Each reads all proposals and returns a ballot naming each proposal's single
-   fatal flaw with a CONFIRMED/PLAUSIBLE verdict.
+1. **Propose (parallel).** Set the fence `echo proposer > .factory/active-agent`,
+   then launch 3 **proposer** subagents, each pinned to a distinct stance
+   (default `contract-first`, `security-first`, `dx-first`; or the `--stances`
+   given). Each writes one deliberately partisan proposal to
+   `.factory/panel/proposal-<stance>.json`. They do not read each other's files.
+2. **Judge (parallel).** Set `echo panelist > .factory/active-agent`, then launch
+   3 **panelist** subagents on distinct attack axes. Each reads all proposals and
+   writes a ballot (`.factory/panel/ballot-<axis>.json`) naming each proposal's
+   single fatal flaw with a CONFIRMED/PLAUSIBLE verdict.
 3. **Synthesize.** Dispatch the **architect** to write a numbered ADR that takes
    the best spine from each proposal and **resolves every panel-confirmed fatal
    flaw** — with an explicit "flaws resolved" table — rather than inheriting any.

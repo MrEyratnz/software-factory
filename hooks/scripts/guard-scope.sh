@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # guard-scope — path-level least-privilege the tool frontmatter can't express.
-# Blocks a Write/Edit outside the active agent's allowlist. This single hook
-# closes BOTH the receipt-forgery vector and the poison-the-config (ACE) vector:
-# .factory/state/ and .factory/config.json are write-protected for everyone,
-# so the policed agent can neither forge its own green receipt nor rewrite the
-# commands the gates run.
+# Blocks a Write/Edit/MultiEdit outside the active agent's allowlist, and denies
+# ALL editor-tool writes to the factory's trust roots (.factory/state/**,
+# .factory/config.json). NOTE: this covers only the Write/Edit/MultiEdit tools;
+# the Bash write path to those roots is denied by the companion
+# guard-bash-writes hook. Neither is airtight against a determined agent — which
+# is precisely why CI, not any local hook, is the authoritative boundary.
 . "$(dirname "$0")/../lib/common.sh"
 
 case "$(field tool_name)" in Write|Edit|MultiEdit) ;; *) allow ;; esac
@@ -34,8 +35,11 @@ active="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
 design_dir="$(config_get designDir 'design/')"
 
 case "$active" in
-  reviewer|panelist)
-    deny "the $active agent is read-only by construction — it may not write files (findings go to its return artifact)" ;;
+  reviewer)
+    deny "the reviewer is read-only by construction — it may not write files (findings go to its return artifact)" ;;
+  panelist)
+    # The panelist writes exactly one ballot artifact; nothing else.
+    case "$rel" in .factory/panel/*) allow ;; *) deny "a panelist writes only its ballot under .factory/panel/ (attempted: $rel)" ;; esac ;;
   architect)
     case "$rel" in docs/*) allow ;; *) deny "the architect writes only under docs/ (attempted: $rel)" ;; esac ;;
   proposer)

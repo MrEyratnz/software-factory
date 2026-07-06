@@ -13,8 +13,17 @@ case "$fp" in
   *) allow ;;
 esac
 
-new="$(field tool_input.new_string)"
-old="$(field tool_input.old_string)"
+# Extract old/new text for BOTH Edit (new_string/old_string) and MultiEdit
+# (edits[].new_string / old_string, concatenated) — else a flip inside a
+# MultiEdit is invisible and slips through.
+new="$(HOOK_JSON="$HOOK_INPUT" node -e '
+  const ti=(JSON.parse(process.env.HOOK_JSON||"{}").tool_input)||{};
+  if(Array.isArray(ti.edits)) process.stdout.write(ti.edits.map(e=>e.new_string||"").join("\n"));
+  else process.stdout.write(ti.new_string||"");' 2>/dev/null)"
+old="$(HOOK_JSON="$HOOK_INPUT" node -e '
+  const ti=(JSON.parse(process.env.HOOK_JSON||"{}").tool_input)||{};
+  if(Array.isArray(ti.edits)) process.stdout.write(ti.edits.map(e=>e.old_string||"").join("\n"));
+  else process.stdout.write(ti.old_string||"");' 2>/dev/null)"
 newx="$(printf '%s' "$new" | grep -oiE '\[x\]' | wc -l | tr -d ' ')"
 oldx="$(printf '%s' "$old" | grep -oiE '\[x\]' | wc -l | tr -d ' ')"
 

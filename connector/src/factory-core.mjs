@@ -284,7 +284,12 @@ export function roadmapCheck(item, proof) {
   if (!sha) {
     return { mayFlip: false, reason: 'no merged-green SHA proof for this item', sha: null };
   }
-  if (p.item && norm(p.item) !== norm(item)) {
+  // Fail closed: a proof with no item binding is a reusable skeleton key. It
+  // MUST name the item it certifies, and that item must match the one flipped.
+  if (!p.item || String(p.item).trim() === '') {
+    return { mayFlip: false, reason: 'proof is not bound to a specific item', sha };
+  }
+  if (norm(p.item) !== norm(item)) {
     return { mayFlip: false, reason: 'proof is for a different item', sha };
   }
   return { mayFlip: true, reason: 'merged-green proof present', sha };

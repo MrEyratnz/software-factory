@@ -248,9 +248,11 @@ test('roadmapCheck: refuses without a merged-green SHA proof', () => {
   assert.match(r.reason, /no merged-green/i);
 });
 
-test('roadmapCheck: allows with valid proof; rejects proof for another item', () => {
+test('roadmapCheck: allows only an item-bound proof that matches', () => {
   const sha = 'a1b2c3d4e5f6';
-  assert.equal(roadmapCheck('item x', { mergedGreenSha: sha }).mayFlip, true);
+  // Fail closed: a proof with no item binding is a reusable skeleton key.
+  assert.equal(roadmapCheck('item x', { mergedGreenSha: sha }).mayFlip, false);
+  assert.equal(roadmapCheck('item x', { mergedGreenSha: sha, item: 'item x' }).mayFlip, true);
   assert.equal(roadmapCheck('item x', { mergedGreenSha: sha, item: 'item y' }).mayFlip, false);
 });
 
