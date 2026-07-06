@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "software-factory",
+  "description": "The Dark Software Factory marketplace — a lights-out, autonomous software production line for Claude Code, distilled from a fully autonomous product build.",
+  "owner": {
+    "name": "MrEyratnz"
+  },
+  "plugins": [
+    {
+      "name": "dark-software-factory",
+      "source": ".",
+      "description": "Scaffold docs, drive a TDD roadmap loop, run adversarial reviews that auto-file tech-debt, design by judge panel, and ship via gated Conventional-Commit releases.",
+      "category": "workflow",
+      "keywords": ["autonomous", "tdd", "release-automation"]
+    }
+  ]
+}

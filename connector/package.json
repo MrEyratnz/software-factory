@@ -1,0 +1,17 @@
+{
+  "name": "dark-software-factory-connector",
+  "version": "0.1.0",
+  "description": "Zero-dependency MCP connector exposing the Dark Software Factory rule engine (roadmap, ADRs, tech-debt, conventional commits, release planning) as deterministic tools",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "dark-software-factory-connector": "src/server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "license": "MIT"
+}
