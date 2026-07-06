@@ -1,0 +1,24 @@
+# {{PROJECT}} — working agreements for Claude
+
+This repo runs the **Dark Software Factory**. The laws below are enforced by
+hooks locally and re-enforced by CI as the authoritative boundary.
+
+## The laws
+
+- **TDD is law.** Write the failing test first. `npm test` (typecheck →
+  boundaries → unit → BDD → build → drift) is green at every commit. Never
+  commit red.
+- **Roadmap honesty.** Work `docs/ROADMAP.md` top-to-bottom. A checkbox flips to
+  `[x]` only when its work merged with green tests.
+- **Modules via public APIs only.** Cross-module access goes through a module's
+  index; boundaries are CI-enforced.
+- **Never release from red.** Releases are gated and smoke-tested on the ACTUAL
+  built artifact.
+
+## Code review → tech-debt
+
+Any finding from a review — including adversarial reviews — that is **not fixed
+in the current PR** must be opened as a GitHub issue labeled `tech-debt`, so it
+doesn't get lost. Include: the location (`file:line`), what it is and why it
+matters (a concrete failure or cost), its provenance (pre-existing vs. introduced),
+and a suggested fix. Do not silently drop a finding or bury it in chat.

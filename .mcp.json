@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "dark-software-factory": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/connector/src/server.mjs"],
+      "env": {
+        "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+# CI for a Dark Software Factory repo — the AUTHORITATIVE boundary. The local
+# hooks are fast fail-early UX; this re-runs the identical gates on the merged
+# branch, which is where "checked off only when merged with green tests" is
+# truly enforced. Require this check in branch protection on {{RELEASE_BRANCH}}.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The green pipeline, in order (mirror .factory/config.json "gates"):
+      - run: npm run typecheck
+      - run: npm run check:boundaries
+      - run: npm run test:unit
+      - run: npm run test:bdd
+      - run: npm run build
+      # Generated-artifact drift: regenerate, then fail on any diff.
+      - name: Generated files are in sync
+        run: |
+          npm run generate --if-present
+          git diff --exit-code

@@ -1,0 +1,32 @@
+/**
+ * Module-boundary enforcement for the modular monolith (see docs/ARCHITECTURE.md).
+ * Layers: kernel (dependency-free) < modules (bounded contexts) < app (root).
+ * Run via `npm run check:boundaries` (depcruise src). Adjust paths to your tree.
+ */
+module.exports = {
+  forbidden: [
+    {
+      name: 'kernel-imports-nothing-above-it',
+      severity: 'error',
+      from: { path: '^src/kernel' },
+      to: { path: '^src/(modules|app)' },
+    },
+    {
+      name: 'cross-module-only-via-public-api',
+      severity: 'error',
+      from: { path: '^src/modules/([^/]+)/', pathNot: ['\\.test\\.', '\\.contract\\.'] },
+      to: { path: '^src/modules/(?!$1/)[^/]+/(?!index\\.)' },
+    },
+    {
+      name: 'modules-do-not-import-app',
+      severity: 'error',
+      from: { path: '^src/modules' },
+      to: { path: '^src/app' },
+    },
+  ],
+  options: {
+    doNotFollow: { path: 'node_modules' },
+    tsConfig: { fileName: 'tsconfig.json' },
+    tsPreCompilationDeps: true,
+  },
+};

@@ -1,0 +1,17 @@
+# Python stack adapter — resolved into .factory/config.json by /factory-init.
+stack: python
+roadmapPath: docs/ROADMAP.md
+adrDir: docs/adr
+releaseBranch: main
+sourceRegex: "^(src/|[a-z_]+/)"
+testRegex: "(test_|_test\\.py|/tests?/|\\.feature$)"
+testCommandRegex: "(pytest|python -m pytest|tox|make test)"
+releaseVerbRegex: "(git tag|gh release create|twine upload|python -m build|hatch publish|release-please)"
+maxIterations: 10
+gates:
+  typecheck: "mypy ."
+  boundaries: "import-linter"
+  unit: "pytest -q"
+  bdd: "behave"
+  build: "python -m build"
+generators: []

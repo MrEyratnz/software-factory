@@ -1,0 +1,17 @@
+# Go stack adapter — resolved into .factory/config.json by /factory-init.
+stack: go
+roadmapPath: docs/ROADMAP.md
+adrDir: docs/adr
+releaseBranch: main
+sourceRegex: "\\.go$"
+testRegex: "(_test\\.go$|/tests?/|\\.feature$)"
+testCommandRegex: "(go test|make test|gotestsum)"
+releaseVerbRegex: "(git tag|gh release create|goreleaser|release-please)"
+maxIterations: 10
+gates:
+  typecheck: "go vet ./..."
+  boundaries: "go-arch-lint check"
+  unit: "go test ./..."
+  bdd: "godog"
+  build: "go build ./..."
+generators: []

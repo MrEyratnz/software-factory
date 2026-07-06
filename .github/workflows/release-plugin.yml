@@ -1,0 +1,49 @@
+name: release
+
+# The plugin dogfoods its own conventional-release law. On every push to main,
+# release-please maintains a release PR batching Conventional-Commit changes and
+# bumping the version across plugin.json, marketplace.json, and the connector's
+# package.json. Merging it cuts a vX.Y.Z tag + GitHub Release (Claude Code
+# marketplaces install from a git ref). GATED: the full hermetic validate.yml
+# must be green (branch protection) before the release PR can merge, and the
+# published tag is smoke-tested on a clean checkout — never release from red.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  smoke:
+    name: smoke-test the released tag on a clean checkout
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # Smoke the ACTUAL released artifact: validate it as a plugin, and boot the
+      # bundled connector over stdio asserting the expected tools are advertised.
+      - name: claude plugin validate (released tag)
+        run: npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/plugin.json --strict
+      - name: connector boots and advertises its tools
+        run: |
+          cd connector && node --test "test/**/*.test.mjs"
