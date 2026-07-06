@@ -91,6 +91,13 @@ are automated (release-please) and gated on a green run and a clean-checkout
 smoke test. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for this repo's working
 agreements.
 
+> **Release setup (one-time):** release-please opens a release PR, so enable
+> **Settings → Actions → General → Workflow permissions → "Allow GitHub Actions
+> to create and approve pull requests"**, or set a `RELEASE_PLEASE_TOKEN` secret
+> (a PAT with `contents:write` + `pull-requests:write`). Without one of these,
+> the release job fails with *"GitHub Actions is not permitted to create or
+> approve pull requests."*
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
