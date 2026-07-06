@@ -224,6 +224,22 @@ EVENT="$(evt "$R" Bash '{"command":"echo npm test"}' ',"tool_response":{"exitCod
 if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - 'echo npm test' must NOT mint a receipt"; fi
 EVENT="$(evt "$R" Bash '{"command":"npm test || true"}' ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
 if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - 'npm test || true' must NOT mint a receipt"; fi
+# #22: when the harness omits tool_response.exitCode, re-execute the matched
+# gate command to get its REAL status instead of silently skipping the receipt
+# (which would fail-close every commit). A passing re-run mints a green receipt.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+printf '%s' '{"name":"t","version":"1.0.0","scripts":{"test":"exit 0"}}' > "$R/package.json"
+EVENT="$(evt "$R" Bash '{"command":"npm test"}')"
+assert_exit 0 "record-green (no exitCode) re-execs the suite and exits 0"
+if [ -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - re-exec of a passing suite mints a receipt"; fi
+ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
+if [ "$ROK" = "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - re-exec green receipt ok=true (got $ROK)"; fi
+# A FAILING re-run must NOT yield a green receipt.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+printf '%s' '{"name":"t","version":"1.0.0","scripts":{"test":"exit 1"}}' > "$R/package.json"
+EVENT="$(evt "$R" Bash '{"command":"npm test"}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
+if [ "$ROK" != "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - re-exec of a FAILING suite must not mint green (got $ROK)"; fi
 
 echo "# debt-reconcile"
 SCRIPT="$S/debt-reconcile.sh"
