@@ -19,9 +19,15 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # NOTE: release-please opens a release PR. For the default GITHUB_TOKEN to
+      # be allowed to do that, enable repo Settings → Actions → General →
+      # Workflow permissions → "Allow GitHub Actions to create and approve pull
+      # requests". Otherwise set a RELEASE_PLEASE_TOKEN secret (a PAT with
+      # contents:write + pull-requests:write), used automatically below.
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
