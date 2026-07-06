@@ -1,0 +1,20 @@
+# Optional local OTEL collector for the Dark Software Factory's opt-in
+# push-based metrics (see README.md → "Optional OTEL metrics (opt-in)").
+#
+# Gated behind the "otel" profile so it never starts as a side effect of any
+# other `docker compose up` in this repo:
+#
+#   docker compose --profile otel -f docker-compose.otel.yml up -d
+#
+# Collector-only, metrics-only MVP: one otlp receiver, one debug exporter (logs
+# received metrics to its own stdout — `docker compose logs otel-collector`).
+# No traces/spans, no Prometheus/Grafana, no ledger-scraping sidecar.
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector:0.109.0
+    profiles: ["otel"]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4318:4318"

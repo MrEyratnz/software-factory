@@ -44,6 +44,16 @@
         }
       },
       "default": []
+    },
+    "otel": {
+      "type": "object",
+      "description": "optional, opt-in push-based OTEL metrics (collector-only, metrics-only MVP). Off by default: hooks never fork or touch the network unless enabled is exactly true.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "turn on the emit calls in the hooks; no-op when false/absent" },
+        "endpoint": { "type": "string", "default": "http://localhost:4318", "description": "OTLP/HTTP collector base URL; hooks POST to <endpoint>/v1/metrics" },
+        "exporter": { "type": "string", "enum": ["otlphttp"], "default": "otlphttp", "description": "only OTLP/HTTP JSON is supported (zero-dep, hand-built payloads)" }
+      }
     }
   }
 }

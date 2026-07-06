@@ -39,6 +39,10 @@ receipt="$(printf '{"stages":[{"name":"suite","exitCode":%s}],"treeHash":%s}' "$
   | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(JSON.stringify({...o.receipt,ts:o.receipt.tree?1:0}))}catch(e){process.stdout.write("")}})')"
 
 [ -n "$receipt" ] || allow
+
+rok="$(printf '%s' "$receipt" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).ok))}catch(e){process.stdout.write("false")}})')"
+otel_emit factory_gate_suite_total sum 1 "$(printf '{"result":"%s"}' "$([ "$rok" = "true" ] && echo pass || echo fail)")"
+
 mkdir -p "$STATE_DIR"
 printf '%s\n' "$receipt" > "$STATE_DIR/gate-receipt.json"
 allow

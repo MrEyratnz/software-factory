@@ -19,4 +19,5 @@ subject="$(cd "$PROJECT_DIR" 2>/dev/null && git log -1 --pretty=%s 2>/dev/null)"
 mkdir -p "$FACTORY_DIR"
 line="$(SHA="$sha" ST="$station" SUB="$subject" node -e 'process.stdout.write(JSON.stringify({station:process.env.ST,sha:process.env.SHA,subject:process.env.SUB}))')"
 printf '%s\n' "$line" >> "$FACTORY_DIR/ledger.jsonl"
+otel_emit factory_commits_total sum 1 "$(printf '{"station":%s}' "$(json_str "$station")")"
 allow

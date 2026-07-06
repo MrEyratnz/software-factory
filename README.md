@@ -75,7 +75,10 @@ gates — except while a release is in progress, when it steps aside and
 `guard-release` is the sole arbiter) · `record-green` · `check-drift` ·
 `ledger-record` · `validate-handoff` · **`debt-reconcile`** (a session cannot end
 while a review finding is unfixed *and* unfiled) · `loop-guard` (bounded
-lights-out) · `bootstrap` + `inject-status` (orientation).
+lights-out) · `bootstrap` + `inject-status` (orientation). Several of the above
+also push an optional OTEL metric at their decision points — see
+[Optional OTEL metrics (opt-in)](#optional-otel-metrics-opt-in) below; off by
+default and a no-op unless configured.
 
 ### Connector (the model-free spine)
 
@@ -86,6 +89,49 @@ rules as deterministic, read-only tools — `roadmap_status` / `roadmap_next` /
 (`factory-core.mjs`) is called by the hooks (via `cli.mjs`) and by CI, so the
 read path and the enforcement path can never disagree. It never mutates the
 repo; the command / agent / hook layer does, under normal permissions.
+
+## Optional OTEL metrics (opt-in)
+
+The hooks can push a handful of push-based metrics to an OpenTelemetry
+collector so you can answer "is the lights-out loop healthy, where does it
+stall" — off by default, zero new dependencies (no `@opentelemetry/*`; OTLP/HTTP
+JSON is hand-built and POSTed with node's built-in `http`/`https`).
+
+**Enable it:**
+
+```jsonc
+// .factory/config.json
+{
+  "otel": { "enabled": true, "endpoint": "http://localhost:4318", "exporter": "otlphttp" }
+}
+```
+
+```
+docker compose --profile otel -f docker-compose.otel.yml up -d   # local collector, logs to stdout
+```
+
+**What's emitted** (all `sum` counters unless noted `gauge`):
+
+| Metric | Emitted by | Attributes |
+|---|---|---|
+| `factory_gate_commit_total` | `guard-commit` | `result` (allow/deny), `reason` on deny |
+| `factory_gate_release_total` | `guard-release` | `result` (allow/deny) |
+| `factory_gate_suite_total` | `record-green` | `result` (pass/fail) |
+| `factory_commits_total` | `ledger-record` | `station` |
+| `factory_loop_iterations_total` | `loop-guard` | — |
+| `factory_roadmap_percent_complete` (gauge) | `loop-guard` | — |
+| `factory_techdebt_missing_total` (gauge) | `debt-reconcile` | — |
+
+**Off by default, and safe when on.** With `otel.enabled` unset/false (the
+default), every gating hook returns before forking anything network-facing —
+no measurable latency, no network touch. When enabled, the emit runs fully
+backgrounded and detached from the hook (`otel-emit.mjs &` + `disown`), with a
+~250ms client-side timeout that swallows every failure (DNS, connection
+refused, timeout) and always exits 0 — a dead or missing collector is
+invisible to the commit/release path and can never change a hook's decision.
+Collector-only, metrics-only MVP: no traces/spans, no Prometheus/Grafana, no
+ledger-scraping sidecar, no per-agent token accounting (candidates for a later
+phase).
 
 ## Develop
 

@@ -1,0 +1,18 @@
+# Minimal collector config for the Dark Software Factory's opt-in metrics.
+# Receives OTLP/HTTP JSON on :4318 and logs it via the debug exporter — no
+# backend wiring (Prometheus/Grafana etc.) in this collector-only MVP.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [debug]

@@ -22,21 +22,22 @@ esac
 
 relb="$(config_get releaseBranch 'main')"
 cur="$(cd "$PROJECT_DIR" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-[ -n "$cur" ] && [ "$cur" != "$relb" ] && deny "releases are cut only from '$relb' (currently on '$cur')"
+[ -n "$cur" ] && [ "$cur" != "$relb" ] && { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "releases are cut only from '$relb' (currently on '$cur')"; }
 
 proof="$STATE_DIR/release-proof.json"
-[ -f "$proof" ] || deny "no release-gate proof — the full suite must be green on the BUILT artifact and history Conventional-Commit clean before releasing"
+[ -f "$proof" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "no release-gate proof — the full suite must be green on the BUILT artifact and history Conventional-Commit clean before releasing"; }
 pok="$(REC="$proof" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
-[ "$pok" = "true" ] || deny "release gate not satisfied (never release from red)"
+[ "$pok" = "true" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "release gate not satisfied (never release from red)"; }
 
 # Also require a fresh green gate-receipt bound to the CURRENT tree, so a release
 # is never cut from a tree that is not green right now (binds the proof to the
 # tree, not just an ok flag). Fail closed.
 receipt="$STATE_DIR/gate-receipt.json"
-[ -f "$receipt" ] || deny "no green gate receipt — the suite must be green on this exact tree before releasing"
+[ -f "$receipt" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "no green gate receipt — the suite must be green on this exact tree before releasing"; }
 gok="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
 gtree="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
 cur="$(tree_hash)"
-[ "$gok" = "true" ] || deny "the gate is red — never release from red"
-[ -n "$cur" ] && [ "$cur" = "$gtree" ] || deny "the tree changed since the suite last passed — re-run it before releasing"
+[ "$gok" = "true" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "the gate is red — never release from red"; }
+[ -n "$cur" ] && [ "$cur" = "$gtree" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "the tree changed since the suite last passed — re-run it before releasing"; }
+otel_emit factory_gate_release_total sum 1 '{"result":"allow"}'
 allow
