@@ -63,7 +63,9 @@ loop is a single session working the roadmap top-to-bottom.
 `guard-commit` (TDD / never commit red, via a `git write-tree`-bound green
 receipt) · `guard-scope` (path least-privilege — closes receipt-forgery and
 config-poisoning) · `guard-roadmap` (a box flips only with merged-green proof) ·
-`guard-release` (Bash + github-MCP) · `record-green` · `check-drift` ·
+`guard-release` (Bash + github-MCP) · `guard-mcp-commit` (denies the
+github-MCP file-write path outright — commits must go through local
+`git commit`, which `guard-commit` already gates) · `record-green` · `check-drift` ·
 `ledger-record` · `validate-handoff` · **`debt-reconcile`** (a session cannot end
 while a review finding is unfixed *and* unfiled) · `loop-guard` (bounded
 lights-out) · `bootstrap` + `inject-status` (orientation).

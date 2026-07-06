@@ -30,6 +30,12 @@
         ]
       },
       {
+        "matcher": "mcp__github__create_or_update_file|mcp__github__push_files",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-mcp-commit.sh", "timeout": 20 }
+        ]
+      },
+      {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-scope.sh", "timeout": 20 }
