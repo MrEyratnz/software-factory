@@ -78,6 +78,29 @@ EVENT="$(evt "$R" Bash '{"command":"git commit -m \"added a thing\""}')"; assert
 R2="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R2"; echo x > "$R2/src/b.ts"; ( cd "$R2" && git add -A )
 TH2="$(repo_tree_hash "$R2")"; printf '{"tree":"%s","ok":true}' "$TH2" > "$R2/.factory/state/gate-receipt.json"
 EVENT="$(evt "$R2" Bash '{"command":"git commit -m \"feat: b\""}')"; assert_exit 2 "tests-first: feat with source but no test blocked"
+# fail-conservative commit detection: forms that evade the old loose-adjacency
+# regex (git alias, and git/commit split across a line-continuation newline)
+# must still engage the gate — no green receipt is present in $R at this point.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"git ci -m \"feat: add a\""}')"; assert_exit 2 "commit via unknown/alias subcommand (git ci) blocked (evasion)"
+EVENT="$(evt "$R" Bash '{"command":"git \\\ncommit -m \"feat: add a\""}')"; assert_exit 2 "commit split across a line-continuation newline blocked (evasion)"
+# and clearly-non-commit git subcommands must still be allowed even when split
+# across a newline, so the fail-conservative fix doesn't break the workflow.
+EVENT="$(evt "$R" Bash '{"command":"git \\\nstatus"}')"; assert_exit 0 "git status split across newline still allowed"
+EVENT="$(evt "$R" Bash '{"command":"git status"}')"; assert_exit 0 "git status allowed"
+EVENT="$(evt "$R" Bash '{"command":"git diff"}')"; assert_exit 0 "git diff allowed"
+EVENT="$(evt "$R" Bash '{"command":"git log"}')"; assert_exit 0 "git log allowed"
+EVENT="$(evt "$R" Bash '{"command":"git add ."}')"; assert_exit 0 "git add allowed"
+# fail-conservative on bare/indirect git invocations (#6 round 2): a bare
+# `git` whose subcommand is supplied indirectly (xargs feeding the final
+# arg, or the whole invocation hidden inside a `sh -c`/`bash -c` string)
+# cannot be confidently parsed as non-commit, so it must still engage the
+# gate even though no literal "commit" token sits next to the "git" token.
+EVENT="$(evt "$R" Bash '{"command":"printf \"%s\" \"commit -am x\" | xargs git"}')"; assert_exit 2 "commit via xargs-supplied subcommand blocked (evasion)"
+EVENT="$(evt "$R" Bash '{"command":"sh -c '"'"'git commit -m \"feat: x\"'"'"'"}')"; assert_exit 2 "commit hidden inside sh -c string blocked (evasion)"
+# guard-rail: a genuinely safe indirect command (no commit anywhere) must not
+# be over-blocked just because it mentions xargs alongside git.
+EVENT="$(evt "$R" Bash '{"command":"echo hello | xargs git status"}')"; assert_exit 0 "safe indirect git status via xargs still allowed"
 
 echo "# guard-scope"
 SCRIPT="$S/guard-scope.sh"
