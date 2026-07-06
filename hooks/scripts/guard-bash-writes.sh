@@ -21,11 +21,18 @@ cmd="$(field tool_input.command)"
 # just prose. Checked first so it fences the WHOLE tree, ahead of the
 # trust-root-only check below that applies to every other role. Extends the
 # base write-construct regex with the git mutators (add/commit/apply/reset/
-# stash/restore/rm) that a plain redirect/tee/sed check would miss.
+# stash/restore/rm/clean) that a plain redirect/tee/sed check would miss.
+# The mutator-verb group is anchored at command-start OR after a
+# separator/whitespace (not just a REQUIRED leading space), so a command that
+# *starts* with a verb (e.g. "rm -rf x", "tee .factory/active-agent") is still
+# caught. The redirect match requires the ">" to be preceded by
+# start/whitespace/a fd digit/"&" so a real redirect (`> f`, `>> f`, `2> f`,
+# `&> f`) is caught but a bare ">" inside a quoted arg (e.g. `grep "=>"`) is
+# not.
 active="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
 case "$active" in
   reviewer)
-    if printf '%s' "$cmd" | grep -Eq '(>>?|[[:space:]]tee([[:space:]]|$)|[[:space:]](cp|mv|dd|install|ln|truncate|rm)[[:space:]]|sed[[:space:]]+-i|git[[:space:]]+(checkout|add|commit|apply|reset|stash|restore|rm)|>\|)'; then
+    if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]]|[0-9]|&)>>?|(^|[;&|[:space:]])(cp|mv|dd|install|ln|truncate|rm|tee|patch)([[:space:]]|$)|sed[[:space:]]+-i|git[[:space:]]+(checkout|add|commit|apply|reset|stash|restore|rm|clean)'; then
       deny "the reviewer is read-only by construction — its Bash may not mutate the tree (attempted: $cmd)"
     fi
     ;;

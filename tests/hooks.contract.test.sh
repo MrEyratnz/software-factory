@@ -186,11 +186,28 @@ EVENT="$(evt "$R" Bash '{"command":"git checkout -- ."}')"; assert_exit 2 "revie
 EVENT="$(evt "$R" Bash '{"command":"git diff"}')"; assert_exit 0 "reviewer: git diff allowed"
 EVENT="$(evt "$R" Bash '{"command":"node --test \"test/**/*.test.mjs\""}')"; assert_exit 0 "reviewer: node --test allowed"
 EVENT="$(evt "$R" Bash '{"command":"grep -r foo ."}')"; assert_exit 0 "reviewer: grep allowed"
+# regression: a mutator verb at the very START of the command (no leading
+# whitespace to anchor on) must still be caught — this is the under-block bug.
+EVENT="$(evt "$R" Bash '{"command":"rm -rf src/evil"}')"; assert_exit 2 "reviewer: leading rm blocked"
+EVENT="$(evt "$R" Bash '{"command":"tee .factory/active-agent <<< implementer"}')"; assert_exit 2 "reviewer: leading tee (role self-escalation) blocked"
+EVENT="$(evt "$R" Bash '{"command":"cp a b"}')"; assert_exit 2 "reviewer: leading cp blocked"
+EVENT="$(evt "$R" Bash '{"command":"git clean -fd"}')"; assert_exit 2 "reviewer: git clean blocked"
+EVENT="$(evt "$R" Bash '{"command":"echo x >> src/evil.ts"}')"; assert_exit 2 "reviewer: append redirect blocked"
+EVENT="$(evt "$R" Bash '{"command":"sed -i s/a/b/ hooks/lib/common.sh"}')"; assert_exit 2 "reviewer: sed -i of arbitrary file blocked"
+# regression: a bare `>` inside a quoted argument (not an actual redirect) must
+# NOT be denied — this is the over-block bug (grep for arrow functions, common
+# in this JS/TS repo).
+EVENT="$(evt "$R" Bash '{"command":"grep -rn \"=>\" src/"}')"; assert_exit 0 "reviewer: grep for => (quoted, not a redirect) allowed"
+EVENT="$(evt "$R" Bash '{"command":"git log --stat"}')"; assert_exit 0 "reviewer: git log --stat allowed"
+EVENT="$(evt "$R" Bash '{"command":"grep -rn foo ."}')"; assert_exit 0 "reviewer: grep -rn allowed"
+EVENT="$(evt "$R" Bash '{"command":"cat hooks/lib/common.sh"}')"; assert_exit 0 "reviewer: cat allowed"
+EVENT="$(evt "$R" Bash '{"command":"ls -la"}')"; assert_exit 0 "reviewer: ls allowed"
 # a non-read-only role (implementer) is unaffected: it may still write source,
 # but the trust-root protection is unchanged.
 echo implementer > "$R/.factory/active-agent"
 EVENT="$(evt "$R" Bash '{"command":"echo x > src/ok.ts"}')"; assert_exit 0 "implementer: bash write to source still allowed"
 EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "implementer: trust-root write still blocked"
+EVENT="$(evt "$R" Bash '{"command":"echo x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "implementer: trust-root write (echo) still blocked"
 rm -f "$R/.factory/active-agent"
 
 echo "# record-green"
