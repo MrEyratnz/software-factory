@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.3](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.2...dark-software-factory-v0.1.3) (2026-07-06)
+
+
+### Features
+
+* **otel:** opt-in push-based factory metrics (collector-only MVP) ([#9](https://github.com/MrEyratnz/software-factory/issues/9)) ([8d73641](https://github.com/MrEyratnz/software-factory/commit/8d7364172a934b733a4c3b5390da8451a3629494))
+
+
+### Bug Fixes
+
+* **connector:** correct ledger_read docstring to match the written ledger shape ([#18](https://github.com/MrEyratnz/software-factory/issues/18)) ([85777f0](https://github.com/MrEyratnz/software-factory/commit/85777f017c8998851ac89db139493f90d2e2cbb4))
+* **hooks:** re-execute the gate when the harness omits tool_response.exitCode ([#22](https://github.com/MrEyratnz/software-factory/issues/22)) ([049bdfe](https://github.com/MrEyratnz/software-factory/commit/049bdfe1fd8aa0d43a5a313535a39c44a3aa77c2))
+
 ## [0.1.2](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.1...dark-software-factory-v0.1.2) (2026-07-06)
 
 
