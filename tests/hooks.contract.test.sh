@@ -509,6 +509,27 @@ EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"
 ERR="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
 case "$ERR" in *"[hard-boundary]"*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - trust-root write tagged [hard-boundary] (got: $ERR)";; esac
 
+echo "# status banner throttle (issue #34)"
+SCRIPT="$S/inject-status.sh"
+# uninitialized repo (no .factory/config.json): inject nothing at all.
+D="$(mktemp -d "$TMPROOT/uninit.XXXXXX")"; ( cd "$D" && git init -q && git commit --allow-empty -q -m init 2>/dev/null ); mkdir -p "$D/.factory/state"
+export CLAUDE_PROJECT_DIR="$D"
+EVENT='{"hook_event_name":"UserPromptSubmit","cwd":"'"$D"'"}'
+OUT="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>/dev/null)"
+if [ -z "$OUT" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #34: uninitialized repo injects nothing (got: $OUT)"; fi
+# initialized repo: first turn injects the banner, an identical next turn is suppressed.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT='{"hook_event_name":"UserPromptSubmit","cwd":"'"$R"'"}'
+OUT1="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>/dev/null)"
+case "$OUT1" in *additionalContext*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - #34: first turn injects the banner (got: $OUT1)";; esac
+OUT2="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>/dev/null)"
+if [ -z "$OUT2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #34: unchanged banner suppressed on next turn (got: $OUT2)"; fi
+# paused → silent.
+touch "$R/.factory/state/paused"
+OUT3="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>/dev/null)"
+if [ -z "$OUT3" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #34: paused suppresses the banner (got: $OUT3)"; fi
+rm -f "$R/.factory/state/paused"
+
 echo "# check-drift & orientation"
 SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generators → allow"
