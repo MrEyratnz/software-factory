@@ -5,6 +5,13 @@ on:
     branches: ['**']
   pull_request:
 
+# Least privilege: this workflow only reads the checkout and runs tests — it
+# never writes to the repo or uses secrets. An explicit read-only token here
+# means a fork PR (once this repo is public) can never obtain a write-scoped
+# token from CI, regardless of the repo's default-token setting.
+permissions:
+  contents: read
+
 env:
   # Pinned claude-code CLI version for `plugin validate` — keep in sync with
   # the same pin in .github/workflows/release-plugin.yml.

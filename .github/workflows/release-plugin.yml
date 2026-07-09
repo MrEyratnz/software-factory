@@ -27,9 +27,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege at the workflow level: the verify + smoke jobs only read the
+# checkout. Only the release-please job needs write, and it declares that scope
+# itself below.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   # Pinned claude-code CLI version for `plugin validate` — keep in sync with
@@ -58,6 +60,11 @@ jobs:
   release-please:
     needs: verify
     runs-on: ubuntu-latest
+    # The only job that mutates the repo: release-please opens/updates the
+    # release PR and cuts the tag + GitHub Release.
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}

@@ -1,0 +1,10 @@
+# Default owner for everything in the repo: GitHub auto-requests a review from
+# @MrEyratnz on PRs that others open, and CODEOWNERS auto-suggests reviewers.
+#
+# NOTE (solo maintainer): GitHub never requests — or accepts — a review from a
+# PR's own author. While @MrEyratnz is the ONLY owner, do NOT enable branch
+# protection's "Require review from Code Owners" (nor a required-approvals count
+# you can't meet): a PR you author yourself could never satisfy it and would be
+# unmergeable without an admin override. Gate on required status checks instead,
+# and turn on code-owner review once a second owner exists.
+* @MrEyratnz
