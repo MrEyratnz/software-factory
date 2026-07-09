@@ -140,20 +140,13 @@ tree_hash() {
 # trusted, and the `cd` is only honored at command start. Falls back to
 # PROJECT_DIR.
 command_target_dir() {
-  local cmd="$1" gc d=""
-  # git -C <dir> anywhere it sets the git invocation's dir; trusted only if it
-  # resolves to an existing directory (so a nonexistent path named in a message
-  # is not mistaken for the target).
-  gc="$(printf '%s' "$cmd" | sed -nE "s/.*git[[:space:]]+-C[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]]+).*/\1/p" | head -1 | tr -d "\"'")"
-  if [ -n "$gc" ]; then
-    case "$gc" in /*) : ;; *) gc="$PROJECT_DIR/$gc" ;; esac
-    [ -d "$gc" ] && { printf '%s' "$gc"; return; }
-  fi
-  # leading `cd <dir> &&`/`;`
-  d="$(printf '%s' "$cmd" | sed -nE "s/^[[:space:]]*cd[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]&;|]+).*/\1/p" | head -1 | tr -d "\"'")"
-  [ -n "$d" ] || { printf '%s' "$PROJECT_DIR"; return; }
-  case "$d" in /*) : ;; *) d="$PROJECT_DIR/$d" ;; esac
-  printf '%s' "$d"
+  local cmd="$1" out cd gitC
+  out="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-cmd-target.mjs" 2>/dev/null)"
+  gitC="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).gitC||"")}catch(e){}})')"
+  cd="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).cd||"")}catch(e){}})')"
+  if [ -n "$gitC" ]; then printf '%s' "$gitC"; return; fi
+  if [ -n "$cd" ]; then printf '%s' "$cd"; return; fi
+  printf '%s' "$PROJECT_DIR"
 }
 
 # repo_root <dir> — the git top-level of dir (so a subdir maps to one receipt),

@@ -650,6 +650,10 @@ EVENT="$(evt "$R" Bash '{"command":"cd '"$G"' && git -C '"$R"' commit -m \"chore
 assert_exit 2 "#2: git -C target (red session repo) not certified by a cd'd green sibling"
 EVENT="$(evt "$R" Bash '{"command":"cd '"$G"' && git commit -m \"chore: g\""}')"
 assert_exit 0 "#2: commit to the cd'd green repo still allowed"
+# #2 (message-injection variant): a `git -C <green>` mentioned INSIDE the commit
+# message is not a git option — the red session commit must still be denied.
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"chore: git -C '"$G"' note\""}')"
+assert_exit 2 "#2: git -C inside the -m message does not bind the gate to a sibling"
 # #3: a `cd` into a trust root then a redirect must be caught (pause/receipt forge).
 SCRIPT="$S/guard-bash-writes.sh"
 R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
