@@ -1,0 +1,19 @@
+# Keep the CI/release GitHub Actions current — Dependabot opens PRs that bump
+# each action (and, when pinned to a commit SHA, updates the SHA + its version
+# comment). The plugin ships no runtime npm dependencies, so only the
+# github-actions ecosystem is tracked here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      # Match this repo's Conventional-Commit law so release-please classifies
+      # the bumps correctly (chore = no release on its own).
+      prefix: chore
+    groups:
+      github-actions:
+        patterns:
+          - "*"
