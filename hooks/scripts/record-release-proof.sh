@@ -32,9 +32,12 @@ esac
 printf '%s' "$cmd" | grep -Eq '(\|\||;|&&)[[:space:]]*(true|:)([[:space:]]|$)' && allow
 printf '%s' "$cmd" | grep -Eq '#' && allow
 
+# The repo this build actually targets (issue #28), for the branch + tree.
+target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
 # Only on the configured release branch.
 relb="$(config_get releaseBranch 'main')"
-cur_branch="$(cd "$PROJECT_DIR" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+cur_branch="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -n "$cur_branch" ] && [ "$cur_branch" = "$relb" ] || allow
 
 # Read the build+smoke exit status. No exit-code evidence → do not fabricate a
@@ -46,7 +49,7 @@ ec="$(field tool_response.exitCode)"
 [ -n "$ec" ] || allow
 [ "$ec" = "0" ] || allow
 
-tree="$(tree_hash)"
+tree="$(tree_hash "$target_root")"
 [ -n "$tree" ] || allow
 
 otel_emit factory_release_proof_total sum 1 '{"result":"mint"}'

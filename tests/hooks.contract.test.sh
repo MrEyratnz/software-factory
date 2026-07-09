@@ -557,6 +557,33 @@ EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"
 ERR="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
 case "$ERR" in *"[hard-boundary]"*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - trust-root write tagged [hard-boundary] (got: $ERR)";; esac
 
+echo "# multi-repo receipt binding (issue #28)"
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+# a sibling repo B (its own git repo) committed to from the SAME session.
+B="$(mktemp -d "$TMPROOT/repoB.XXXXXX")"
+( cd "$B" && git init -q && git symbolic-ref HEAD refs/heads/main 2>/dev/null; git config user.email t@t && git config user.name t && git commit --allow-empty -q -m init )
+mkdir -p "$B/src"; echo x > "$B/src/b.ts"; ( cd "$B" && git add -A )
+# the session repo R being green must NOT certify a commit to B (the bug).
+TH="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$TH" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && git commit -m \"chore: b\""}')"
+assert_exit 2 "#28: commit to sibling repo B not certified by R's own receipt"
+# mint B's receipt via record-green targeting B (cd into B).
+SCRIPT="$S/record-green.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && npm test"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+BKEY="$(printf '%s' "$B" | cksum | cut -d' ' -f1)"
+if [ -f "$R/.factory/state/gate-receipt-$BKEY.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #28: record-green mints a per-repo keyed receipt for B"; fi
+# and the session repo's own default receipt is untouched by B's run.
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && git commit -m \"chore: b\""}')"
+assert_exit 0 "#28: commit to B allowed once B has its own green receipt"
+# a plain in-session commit still uses the canonical gate-receipt.json.
+echo x > "$R/src/a.ts"; echo x > "$R/src/a.test.ts"; ( cd "$R" && git add -A )
+THr="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$THr" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: a\""}')"
+assert_exit 0 "#28: in-session commit still uses the canonical receipt (backward compatible)"
+
 echo "# status banner throttle (issue #34)"
 SCRIPT="$S/inject-status.sh"
 # uninitialized repo (no .factory/config.json): inject nothing at all.

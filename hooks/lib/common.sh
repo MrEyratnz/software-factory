@@ -107,15 +107,17 @@ respect_pause() {
 }
 
 # --- git plumbing ----------------------------------------------------------
-# tree_hash — deterministic hash of the working tree (tracked + untracked),
+# tree_hash [dir] — deterministic hash of a working tree (tracked + untracked),
 # EXCLUDING .factory/, computed via a throwaway index so the real index is
 # never touched. Binding a green receipt to this hash means any later edit to
-# source silently invalidates it.
+# source silently invalidates it. Defaults to the session PROJECT_DIR, but
+# accepts an explicit dir so a gate can hash the repo the command actually
+# targets, not just the one the session started in (issue #28).
 tree_hash() {
-  local idx out
+  local dir="${1:-$PROJECT_DIR}" idx out
   idx="$(mktemp)"; rm -f "$idx"
   out="$(
-    cd "$PROJECT_DIR" 2>/dev/null || exit 0
+    cd "$dir" 2>/dev/null || exit 0
     GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1
     GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null
   )"
@@ -123,7 +125,55 @@ tree_hash() {
   printf '%s' "$out"
 }
 
-staged_files() { ( cd "$PROJECT_DIR" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
+# --- target-repo resolution (issue #28) ------------------------------------
+# The green gate must bind to the repo a command actually operates on, not the
+# fixed session PROJECT_DIR — otherwise a commit to a sibling repo in a
+# multi-repo session is checked against the ORIGINAL project's tree, which is
+# meaningless. These helpers derive that target repo and key its receipt.
+#
+# command_target_dir <cmd> — best-effort working directory of a Bash command:
+# a leading `cd <dir> &&`/`;`, or a command that STARTS with `git -C <dir>`.
+# Conservative on purpose (anchored at command start) so a `cd`/`git -C` merely
+# mentioned inside a commit message or heredoc is NOT mistaken for the target.
+# Falls back to PROJECT_DIR.
+command_target_dir() {
+  local cmd="$1" d=""
+  d="$(printf '%s' "$cmd" | sed -nE "s/^[[:space:]]*cd[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]&;|]+).*/\1/p" | head -1)"
+  if [ -z "$d" ]; then
+    d="$(printf '%s' "$cmd" | sed -nE "s/^[[:space:]]*git[[:space:]]+-C[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]]+).*/\1/p" | head -1)"
+  fi
+  d="$(printf '%s' "$d" | tr -d "\"'")"
+  [ -n "$d" ] || { printf '%s' "$PROJECT_DIR"; return; }
+  case "$d" in /*) : ;; *) d="$PROJECT_DIR/$d" ;; esac
+  printf '%s' "$d"
+}
+
+# repo_root <dir> — the git top-level of dir (so a subdir maps to one receipt),
+# or dir itself when it is not inside a git repo.
+repo_root() {
+  local d="$1" top
+  top="$(cd "$d" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] && printf '%s' "$top" || printf '%s' "$d"
+}
+
+# receipt_file [repo-root] — the gate-receipt path for a repo. The session's own
+# project keeps the canonical gate-receipt.json (backward compatible); any OTHER
+# repo committed to in the same session gets its own receipt keyed by a short
+# hash of its root, so concurrent per-repo receipts can coexist. All receipts
+# live under the SESSION's protected .factory/state trust root, never the
+# target repo's.
+receipt_file() {
+  local root="${1:-$PROJECT_DIR}" sroot key
+  sroot="$(repo_root "$PROJECT_DIR")"
+  if [ "$root" = "$sroot" ] || [ "$root" = "$PROJECT_DIR" ] || [ -z "$root" ]; then
+    printf '%s' "$STATE_DIR/gate-receipt.json"
+  else
+    key="$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+    printf '%s' "$STATE_DIR/gate-receipt-$key.json"
+  fi
+}
+
+staged_files() { ( cd "${1:-$PROJECT_DIR}" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
 
 # --- otel (optional, opt-in, push-based metrics) ----------------------------
 # otel_emit <name> <type:sum|gauge> <value> [attrsJson] — fire-and-forget push
@@ -195,7 +245,7 @@ status_text() {
     local rtree cur rok
     rok="$(REC="$STATE_DIR/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
     rtree="$(REC="$STATE_DIR/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
-    cur="$(tree_hash)"
+    cur="$(tree_hash "$PROJECT_DIR")"
     if [ "$rok" = "true" ] && [ "$cur" = "$rtree" ]; then gate="green"; else gate="stale/red (re-run tests)"; fi
   else
     gate="unknown (no gate run yet)"
