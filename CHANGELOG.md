@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.5](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.4...dark-software-factory-v0.1.5) (2026-07-09)
+
+
+### Features
+
+* **hooks:** config-driven per-gate toggles and a session-local pause ([f851d89](https://github.com/MrEyratnz/software-factory/commit/f851d89e8a39157cdbf5a5aceef146a77b98df1d))
+* **hooks:** optionally HMAC-sign gate receipts so hand-written proofs are rejected ([f5d2430](https://github.com/MrEyratnz/software-factory/commit/f5d243093d289c77f1949ca3788681d7ac7de7e7))
+* **hooks:** tag heuristic denials distinctly from hard boundaries ([4735290](https://github.com/MrEyratnz/software-factory/commit/47352902d9d4137cfcf1aed9b4a863968e474d62))
+* **release:** give the release-state files a real lifecycle ([a880c27](https://github.com/MrEyratnz/software-factory/commit/a880c27bf89cdc0ee3d3add16a21182cc980352d))
+
+
+### Bug Fixes
+
+* **guard-scope,guard-bash-writes:** out-of-project write parity + ~/.claude carve-out ([2a9e6e4](https://github.com/MrEyratnz/software-factory/commit/2a9e6e4a7f3fbcc4884b4abddf8128ad251d60b4))
+* **hooks:** bind the green gate to the repo the command targets ([b681fd7](https://github.com/MrEyratnz/software-factory/commit/b681fd7bd9dabeb5e4486865bd768c96c622f52c))
+* **hooks:** close 6 findings from the branch's adversarial self-review ([a338f7e](https://github.com/MrEyratnz/software-factory/commit/a338f7e8d59c0a2b4953e455d07232c2cd6a2272))
+* **hooks:** resolve the git target dir with a quote-aware tokenizer ([32dc119](https://github.com/MrEyratnz/software-factory/commit/32dc1190ea482f8be1356722eeb8fc1239203728))
+* **inject-status:** throttle the status banner instead of nagging every turn ([e4e9925](https://github.com/MrEyratnz/software-factory/commit/e4e9925d1ecf487c88d13e29493416a54cc21b15))
+* **parse-git-commit:** a git-in-a-path substring is not a commit ([a02d4cc](https://github.com/MrEyratnz/software-factory/commit/a02d4ccb9ab5863740f28dbb0a904c8996d14b46))
+* **record-green:** invoke the configured testCommand, never re-exec the matched command ([094f317](https://github.com/MrEyratnz/software-factory/commit/094f317402ad81dc5231d9fc0ccdae6298c8cae3))
+
 ## [0.1.4](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.3...dark-software-factory-v0.1.4) (2026-07-09)
 
 
