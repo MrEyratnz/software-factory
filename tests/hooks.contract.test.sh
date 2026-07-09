@@ -636,6 +636,39 @@ OUT3="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>/dev/null)"
 if [ -z "$OUT3" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #34: paused suppresses the banner (got: $OUT3)"; fi
 rm -f "$R/.factory/state/paused"
 
+echo "# adversarial self-review regressions (findings #1-#6)"
+# #2: `git -C <dir>` overrides `cd` — the gate must bind to the repo git actually
+# targets, so a red commit can't be certified by a cd'd green sibling.
+SCRIPT="$S/record-green.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"   # session repo, RED (no receipt)
+G="$(mktemp -d "$TMPROOT/repoG.XXXXXX")"
+( cd "$G" && git init -q && git symbolic-ref HEAD refs/heads/main 2>/dev/null; git config user.email t@t && git config user.name t && git commit --allow-empty -q -m init )
+mkdir -p "$G/src"; echo x > "$G/src/g.ts"; ( cd "$G" && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"cd '"$G"' && npm test"}' ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$G"' && git -C '"$R"' commit -m \"chore: x\""}')"
+assert_exit 2 "#2: git -C target (red session repo) not certified by a cd'd green sibling"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$G"' && git commit -m \"chore: g\""}')"
+assert_exit 0 "#2: commit to the cd'd green repo still allowed"
+# #3: a `cd` into a trust root then a redirect must be caught (pause/receipt forge).
+SCRIPT="$S/guard-bash-writes.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"cd .factory/state && printf {} > paused"}')"; assert_exit 2 "#3: cd into trust root then redirect (pause forge) blocked"
+EVENT="$(evt "$R" Bash '{"command":"cd .factory/state && printf x > gate-receipt.json"}')"; assert_exit 2 "#3: cd into trust root then redirect (receipt forge) blocked"
+# #4: a `cd` outside the tree then a redirect is an out-of-project write.
+EVENT="$(evt "$R" Bash '{"command":"cd /etc && printf x >> hosts"}')"; assert_exit 2 "#4: cd outside then redirect (out-of-project) blocked"
+# #1/#6: a `>` or `tee` that is quoted / an argument is not a write construct.
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"docs: logs cmd > /var/log/app.log\""}')"; assert_exit 0 "#1: > inside a commit message is not an out-of-project write"
+EVENT="$(evt "$R" Bash '{"command":"echo \"usage: mycmd > /etc/output.conf\""}')"; assert_exit 0 "#1: > inside a quoted echo is not a redirect"
+EVENT="$(evt "$R" Bash '{"command":"grep tee /etc/hosts"}')"; assert_exit 0 "#6: tee as a grep argument is not a write construct"
+# #5: guard-scope must fail CLOSED (deny, not abort) when HOME is unset under set -u.
+SCRIPT="$S/guard-scope.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo implementer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":"/etc/x.conf"}')"
+got5="$(printf '%s' "$EVENT" | HOOK_INPUT="" env -u HOME CLAUDE_PROJECT_DIR="$R" bash "$SCRIPT" >/dev/null 2>&1; echo $?)"
+if [ "$got5" = "2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #5: guard-scope with HOME unset must deny/fail-closed (got exit $got5)"; fi
+rm -f "$R/.factory/active-agent"
+
 echo "# check-drift & orientation"
 SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generators → allow"

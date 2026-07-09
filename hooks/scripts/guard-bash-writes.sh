@@ -39,15 +39,18 @@ case "$active" in
     ;;
 esac
 
+# Classify redirect/tee write targets once, resolved against the command's
+# effective cwd (a leading `cd`), so paths reached via `cd <dir>` are judged by
+# where they LAND, not by the literal text (issues #31, #3, #4). Quote-aware, so
+# a `>` inside a quoted string / commit message is not a false positive (#1/#6).
+pj="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-bash-writes.mjs" 2>/dev/null)"
+outside="$(printf '%s' "$pj" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const a=JSON.parse(s).outside;process.stdout.write(a&&a.length?a[0]:"")}catch(e){}})')"
+troot="$(printf '%s' "$pj" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const a=JSON.parse(s).trustRoot;process.stdout.write(a&&a.length?a[0]:"")}catch(e){}})')"
+
 # General "no writes outside the project directory" parity with guard-scope
-# (issue #31): guard-scope bans out-of-project writes for the editor tools, but
-# the Bash surface had no equivalent, so a `cat > /elsewhere` slipped through.
-# Best-effort: inspects redirect/tee targets, with carve-outs for Claude Code's
-# own state (~/.claude, incl. the memory feature), temp dirs, and /dev.
-if enforcement_on enforceProjectDirScope; then
-  outside="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-bash-writes.mjs" 2>/dev/null \
-    | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const a=JSON.parse(s).outside;process.stdout.write(a&&a.length?a[0]:"")}catch(e){}})')"
-  [ -n "$outside" ] && deny_soft "writing outside the project directory is not allowed: $outside (guard-scope enforces the same rule for the editor tools; ~/.claude, temp dirs, and /dev are carved out)"
+# (issue #31): carve-outs for ~/.claude (incl. memory), temp dirs, and /dev.
+if enforcement_on enforceProjectDirScope && [ -n "$outside" ]; then
+  deny_soft "writing outside the project directory is not allowed: $outside (guard-scope enforces the same rule for the editor tools; ~/.claude, temp dirs, and /dev are carved out)"
 fi
 
 # Trust-root protection can be relaxed per-repo via enforcement.protectTrustRoots.
@@ -62,10 +65,14 @@ if [ "$active" = "release-captain" ] \
   allow
 fi
 
-# Does the command reference a protected trust-root path at all?
-printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/|\.factory/config\.json' || allow
+# A redirect/tee target that RESOLVES into a trust root — even via a `cd` the
+# raw-text grep below would miss (issue #3: `cd .factory/state && > paused`) — is
+# a forgery attempt. Hard boundary.
+[ -n "$troot" ] && deny "writing to the factory's trust roots via the shell is not allowed — these are hook-managed and cannot be hand-forged (attempted: $troot)"
 
-# Is it a write construct (redirect, or a mutating command targeting the path)?
+# Belt-and-suspenders for literal trust-root references via a mutating construct
+# the redirect parser does not model (cp/mv/sed -i/git checkout/…).
+printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/|\.factory/config\.json' || allow
 if printf '%s' "$cmd" | grep -Eq '(>>?|[[:space:]]tee([[:space:]]|$)|[[:space:]](cp|mv|dd|install|ln|truncate|rm)[[:space:]]|sed[[:space:]]+-i|git[[:space:]]+checkout|>\|)'; then
   deny "writing to the factory's trust roots (.factory/state, .factory/config.json, .factory/review) via the shell is not allowed — these are hook-managed. (The green receipt, release/roadmap proofs, and config cannot be hand-forged.)"
 fi

@@ -131,18 +131,26 @@ tree_hash() {
 # multi-repo session is checked against the ORIGINAL project's tree, which is
 # meaningless. These helpers derive that target repo and key its receipt.
 #
-# command_target_dir <cmd> — best-effort working directory of a Bash command:
-# a leading `cd <dir> &&`/`;`, or a command that STARTS with `git -C <dir>`.
-# Conservative on purpose (anchored at command start) so a `cd`/`git -C` merely
-# mentioned inside a commit message or heredoc is NOT mistaken for the target.
-# Falls back to PROJECT_DIR.
+# command_target_dir <cmd> — best-effort working directory a git command
+# operates on, mirroring git's OWN precedence: `git -C <dir>` overrides the
+# shell cwd, which a leading `cd <dir>` sets. So `git -C <dir>` wins over `cd`
+# even when both are present (`cd G && git -C R commit` targets R, not G — the
+# gate must bind to R). A `git -C`/`cd` merely mentioned inside a commit message
+# or heredoc is ignored: the `git -C` target must be an existing directory to be
+# trusted, and the `cd` is only honored at command start. Falls back to
+# PROJECT_DIR.
 command_target_dir() {
-  local cmd="$1" d=""
-  d="$(printf '%s' "$cmd" | sed -nE "s/^[[:space:]]*cd[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]&;|]+).*/\1/p" | head -1)"
-  if [ -z "$d" ]; then
-    d="$(printf '%s' "$cmd" | sed -nE "s/^[[:space:]]*git[[:space:]]+-C[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]]+).*/\1/p" | head -1)"
+  local cmd="$1" gc d=""
+  # git -C <dir> anywhere it sets the git invocation's dir; trusted only if it
+  # resolves to an existing directory (so a nonexistent path named in a message
+  # is not mistaken for the target).
+  gc="$(printf '%s' "$cmd" | sed -nE "s/.*git[[:space:]]+-C[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]]+).*/\1/p" | head -1 | tr -d "\"'")"
+  if [ -n "$gc" ]; then
+    case "$gc" in /*) : ;; *) gc="$PROJECT_DIR/$gc" ;; esac
+    [ -d "$gc" ] && { printf '%s' "$gc"; return; }
   fi
-  d="$(printf '%s' "$d" | tr -d "\"'")"
+  # leading `cd <dir> &&`/`;`
+  d="$(printf '%s' "$cmd" | sed -nE "s/^[[:space:]]*cd[[:space:]]+(\"[^\"]+\"|'[^']+'|[^[:space:]&;|]+).*/\1/p" | head -1 | tr -d "\"'")"
   [ -n "$d" ] || { printf '%s' "$PROJECT_DIR"; return; }
   case "$d" in /*) : ;; *) d="$PROJECT_DIR/$d" ;; esac
   printf '%s' "$d"

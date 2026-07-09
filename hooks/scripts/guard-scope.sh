@@ -31,8 +31,12 @@ abs="$(FP="$fp" PD="$PROJECT_DIR" node -e '
 if enforcement_on enforceProjectDirScope; then
   case "$rel" in
     ../*|/*)
+      # ${HOME:-} not $HOME: under `set -u` an unset HOME would abort the hook
+      # (exit 1), which Claude Code treats as a non-blocking error — a hard
+      # boundary must never fail OPEN. With HOME unset the carve-out simply
+      # doesn't match and the write is denied (fail closed).
       case "$abs" in
-        "$HOME/.claude/"*|/tmp/*|/private/tmp/*|/var/folders/*|/dev/*) allow ;;
+        "${HOME:-/dev/null/nohome}/.claude/"*|/tmp/*|/private/tmp/*|/var/folders/*|/dev/*) allow ;;
         *) deny "write outside the project directory is not allowed: $rel" ;;
       esac ;;
   esac
