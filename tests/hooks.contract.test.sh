@@ -29,8 +29,8 @@ mkrepo() {
   mkdir -p "$d/.factory/state" "$d/.factory/review" "$d/.factory/panel" "$d/docs" "$d/src"
   cat > "$d/.factory/config.json" <<'JSON'
 { "sourceRegex": "^src/", "testRegex": "(\\.test\\.|\\.spec\\.|/tests?/|\\.feature$)",
-  "testCommandRegex": "(npm ((run|-s) )?test|node --test)", "roadmapPath": "docs/ROADMAP.md",
-  "releaseBranch": "main", "generators": [] }
+  "testCommandRegex": "(npm ((run|-s) )?test|node --test)", "testCommand": "npm test",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [] }
 JSON
   printf '%s' "$d"
 }
@@ -224,9 +224,10 @@ EVENT="$(evt "$R" Bash '{"command":"echo npm test"}' ',"tool_response":{"exitCod
 if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - 'echo npm test' must NOT mint a receipt"; fi
 EVENT="$(evt "$R" Bash '{"command":"npm test || true"}' ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
 if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - 'npm test || true' must NOT mint a receipt"; fi
-# #22: when the harness omits tool_response.exitCode, re-execute the matched
-# gate command to get its REAL status instead of silently skipping the receipt
-# (which would fail-close every commit). A passing re-run mints a green receipt.
+# #22/#27: when the harness omits tool_response.exitCode, invoke the repo's
+# allowlisted `testCommand` (NOT the arbitrary matched command) to get its REAL
+# status instead of silently skipping the receipt (which would fail-close every
+# commit). A passing invoker mints a green receipt.
 R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
 printf '%s' '{"name":"t","version":"1.0.0","scripts":{"test":"exit 0"}}' > "$R/package.json"
 EVENT="$(evt "$R" Bash '{"command":"npm test"}')"
@@ -240,6 +241,31 @@ printf '%s' '{"name":"t","version":"1.0.0","scripts":{"test":"exit 1"}}' > "$R/p
 EVENT="$(evt "$R" Bash '{"command":"npm test"}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
 ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
 if [ "$ROK" != "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - re-exec of a FAILING suite must not mint green (got $ROK)"; fi
+# #27: never re-execute the ARBITRARY matched command to recover a missing exit
+# code. A command that only *matches* testCommandRegex but is not the suite
+# (here it would also touch a sentinel) must NOT be re-run; with no configured
+# testCommand no receipt is minted (fail safe).
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "testCommandRegex": "(npm test)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [] }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"npm test; touch '"$R"'/ARBITRARY_RAN"}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+if [ ! -e "$R/ARBITRARY_RAN" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #27: arbitrary matched command must NOT be re-executed"; fi
+if [ ! -f "$R/.factory/state/gate-receipt.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #27: no testCommand + no exitCode must not mint a receipt"; fi
+# with an allowlisted testCommand configured, THAT is invoked (not the arbitrary
+# command) to get a real exit code deterministically.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "testCommandRegex": "(npm test)",
+  "testCommand": "true", "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [] }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"npm test; touch '"$R"'/ARBITRARY_RAN"}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+if [ ! -e "$R/ARBITRARY_RAN" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #27: configured testCommand invoked, not the arbitrary command"; fi
+ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
+if [ "$ROK" = "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #27: configured testCommand (true) mints green (got $ROK)"; fi
 
 echo "# debt-reconcile"
 SCRIPT="$S/debt-reconcile.sh"

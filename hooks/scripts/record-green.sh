@@ -28,8 +28,20 @@ ec="$(field tool_response.exitCode)"
 [ -n "$ec" ] || ec="$(field tool_response.exit_code)"
 [ -n "$ec" ] || ec="$(field tool_response.code)"
 [ -n "$ec" ] || ec="$(field tool_response.returnCode)"
-# No exit-status evidence → do not fabricate a green receipt (fail safe).
-if [ -z "$ec" ]; then ( cd "$PROJECT_DIR" 2>/dev/null && eval "$cmd" ) >/dev/null 2>&1; ec=$?; fi
+# No exit-status evidence: rather than blindly re-executing the ARBITRARY
+# already-run command (issue #27 — unsafe for anything non-idempotent, and the
+# root of the "red receipt poisoning" when a non-test command merely *matched*
+# testCommandRegex), invoke the repo's explicit, allowlisted `testCommand` and
+# take its real exit code (issues #27, #35). `testCommand` comes only from the
+# trust-root config, never from the agent's command string. With no configured
+# invoker there is no safe way to determine green here, so fail safe: decline to
+# mint a receipt (the commit gate stays closed until a suite with a real exit
+# code runs).
+if [ -z "$ec" ]; then
+  tc="$(config_get testCommand '')"
+  [ -n "$tc" ] || allow
+  ( cd "$PROJECT_DIR" 2>/dev/null && eval "$tc" ) >/dev/null 2>&1; ec=$?
+fi
 
 tree="$(tree_hash)"
 [ -n "$tree" ] || allow
