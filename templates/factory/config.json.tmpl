@@ -7,7 +7,16 @@
   "testRegex": "(\\.test\\.|\\.spec\\.|_test\\.|/tests?/|\\.feature$)",
   "testCommandRegex": "(npm ((run|-s) )?test|node --test|vitest)",
   "releaseVerbRegex": "(git tag|gh release create|npm publish|npm version |release-please)",
+  "testCommand": "npm test",
   "maxIterations": 10,
+  "enforcement": {
+    "requireGreenReceiptOnCommit": true,
+    "requireTestsFirst": true,
+    "conventionalCommitLint": true,
+    "requireReleaseProof": true,
+    "enforceProjectDirScope": true,
+    "protectTrustRoots": true
+  },
   "gates": {
     "typecheck": "npm run typecheck",
     "boundaries": "npm run check:boundaries",

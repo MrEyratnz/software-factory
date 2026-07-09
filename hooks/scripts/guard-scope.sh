@@ -8,6 +8,7 @@
 # is precisely why CI, not any local hook, is the authoritative boundary.
 . "$(dirname "$0")/../lib/common.sh"
 
+respect_pause guard-scope
 case "$(field tool_name)" in Write|Edit|MultiEdit) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 [ -n "$fp" ] || allow
@@ -18,18 +19,23 @@ rel="$(FP="$fp" PD="$PROJECT_DIR" node -e '
   process.stdout.write(p.relative(process.env.PD, abs));
 ')"
 
-# Writing outside the project tree is never allowed.
-case "$rel" in
-  ../*|/*) deny "write outside the project directory is not allowed: $rel" ;;
-esac
+# Writing outside the project tree is never allowed (unless the scope gate is
+# relaxed for this repo via enforcement.enforceProjectDirScope).
+if enforcement_on enforceProjectDirScope; then
+  case "$rel" in
+    ../*|/*) deny "write outside the project directory is not allowed: $rel" ;;
+  esac
+fi
 
 # Universal protection of the factory's own trust roots (any agent, including
 # the conductor). The hooks that legitimately update these use shell I/O, not
 # the Write/Edit tool, so this is safe to enforce for all.
-case "$rel" in
-  .factory/state/*|.factory/config.json)
-    deny "$rel is factory-managed state — it may not be written via the editor tools" ;;
-esac
+if enforcement_on protectTrustRoots; then
+  case "$rel" in
+    .factory/state/*|.factory/config.json)
+      deny "$rel is factory-managed state — it may not be written via the editor tools" ;;
+  esac
+fi
 
 active="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
 design_dir="$(config_get designDir 'design/')"

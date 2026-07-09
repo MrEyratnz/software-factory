@@ -72,6 +72,40 @@ config_get() {
   ' "$key" "$def" 2>/dev/null || printf '%s' "$def"
 }
 
+# --- enforcement levers (issues #29, #30) ----------------------------------
+# The hard gates are ON by default. Two levers relax them without the binary
+# all-or-nothing plugin toggle:
+#
+#   1. enforcement_on <gate> — a per-gate boolean in .factory/config.json's
+#      "enforcement" block (committed, reviewable, per-repo). Every hard gate
+#      defaults to true; a repo opts a single gate out deliberately and
+#      visibly, e.g. {"enforcement":{"requireGreenReceiptOnCommit":false}}.
+#      Returns 0 (enforce) unless the key is explicitly the string "false".
+enforcement_on() {
+  [ "$(config_get "enforcement.$1" true)" != "false" ]
+}
+
+#   2. factory_paused / respect_pause — a session-local escape hatch. When a
+#      human drops a marker at $STATE_DIR/paused (or paused.json), every hard
+#      gate steps aside for this worktree, independent of Claude Code's
+#      settings hot-reload semantics (which do not reliably detach a plugin's
+#      hooks mid-session). The marker lives under the trust-root
+#      .factory/state/, so the policed agent cannot forge it through the gated
+#      tools — only a human or CI with direct filesystem access sets it
+#      (`touch .factory/state/paused`) and clears it (`rm`). factory_paused
+#      returns 0 (paused) when the marker is present.
+factory_paused() {
+  [ -f "$STATE_DIR/paused" ] || [ -f "$STATE_DIR/paused.json" ]
+}
+
+# respect_pause <hook-name> — call at the top of an enforcing guard: if the
+# factory is paused, emit a metric and allow (exit 0). No-op otherwise.
+respect_pause() {
+  factory_paused || return 0
+  otel_emit factory_gate_paused_total sum 1 "$(printf '{"hook":%s}' "$(json_str "${1:-unknown}")")"
+  allow
+}
+
 # --- git plumbing ----------------------------------------------------------
 # tree_hash — deterministic hash of the working tree (tracked + untracked),
 # EXCLUDING .factory/, computed via a throwaway index so the real index is

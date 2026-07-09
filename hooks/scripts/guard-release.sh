@@ -8,6 +8,7 @@
 # the configured release branch.
 . "$(dirname "$0")/../lib/common.sh"
 
+respect_pause guard-release
 tn="$(field tool_name)"
 cmd="$(field tool_input.command)"
 rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|docker push|release-please|npm version )')"
@@ -24,10 +25,12 @@ relb="$(config_get releaseBranch 'main')"
 cur="$(cd "$PROJECT_DIR" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -n "$cur" ] && [ "$cur" != "$relb" ] && { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "releases are cut only from '$relb' (currently on '$cur')"; }
 
-proof="$STATE_DIR/release-proof.json"
-[ -f "$proof" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "no release-gate proof — the full suite must be green on the BUILT artifact and history Conventional-Commit clean before releasing"; }
-pok="$(REC="$proof" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
-[ "$pok" = "true" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "release gate not satisfied (never release from red)"; }
+if enforcement_on requireReleaseProof; then
+  proof="$STATE_DIR/release-proof.json"
+  [ -f "$proof" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "no release-gate proof — the full suite must be green on the BUILT artifact and history Conventional-Commit clean before releasing"; }
+  pok="$(REC="$proof" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
+  [ "$pok" = "true" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "release gate not satisfied (never release from red)"; }
+fi
 
 # Also require a fresh green gate-receipt bound to the CURRENT tree, so a release
 # is never cut from a tree that is not green right now (binds the proof to the

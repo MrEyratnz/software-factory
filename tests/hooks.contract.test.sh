@@ -358,6 +358,83 @@ printf '{"tree":"%s","ok":true,"stages":[{"name":"suite","ok":true}]}' "$TH" > "
 EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: add a\""}')"
 assert_exit_fast 0 "otel enabled + unreachable endpoint: allow still returns exit 0 promptly" 3000
 
+echo "# enforcement toggles + pause (issues #29, #30)"
+# --- session-local pause: every hard gate steps aside when the marker exists.
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+echo x > "$R/src/a.ts"; echo x > "$R/src/a.test.ts"; ( cd "$R" && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: add a\""}')"
+assert_exit 2 "pause: commit denied without receipt (baseline)"
+touch "$R/.factory/state/paused"
+assert_exit 0 "pause: marker lets the otherwise-denied commit through"
+rm -f "$R/.factory/state/paused"
+SCRIPT="$S/guard-bash-writes.sh"
+EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"
+assert_exit 2 "pause: trust-root write denied (baseline)"
+touch "$R/.factory/state/paused"
+assert_exit 0 "pause: trust-root write allowed while paused"
+rm -f "$R/.factory/state/paused"
+
+# --- per-gate enforcement toggles (default ON; a repo opts out visibly).
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.|/tests?/)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "enforcement": { "requireGreenReceiptOnCommit": false } }
+JSON
+echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"chore: no receipt needed\""}')"
+assert_exit 0 "enforcement: requireGreenReceiptOnCommit=false allows commit with no receipt"
+
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.|/tests?/)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "enforcement": { "conventionalCommitLint": false, "requireGreenReceiptOnCommit": false } }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"totally not conventional\""}')"
+assert_exit 0 "enforcement: conventionalCommitLint=false allows a non-conventional message"
+
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.|/tests?/)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "enforcement": { "requireTestsFirst": false, "requireGreenReceiptOnCommit": false } }
+JSON
+echo x > "$R/src/b.ts"; ( cd "$R" && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: b with no test\""}')"
+assert_exit 0 "enforcement: requireTestsFirst=false allows feat staging source but no test"
+
+SCRIPT="$S/guard-scope.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo implementer > "$R/.factory/active-agent"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "enforcement": { "protectTrustRoots": false } }
+JSON
+EVENT="$(evt "$R" Write '{"file_path":".factory/config.json"}')"
+assert_exit 0 "enforcement: protectTrustRoots=false lets the editor write factory config"
+
+SCRIPT="$S/guard-bash-writes.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "enforcement": { "protectTrustRoots": false } }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"
+assert_exit 0 "enforcement: protectTrustRoots=false lets bash write the receipt"
+
+SCRIPT="$S/guard-release.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "releaseVerbRegex": "(git tag|npm publish)",
+  "enforcement": { "requireReleaseProof": false } }
+JSON
+THrel="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$THrel" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"
+assert_exit 0 "enforcement: requireReleaseProof=false releases with only a fresh green receipt"
+
 echo "# check-drift & orientation"
 SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generators → allow"

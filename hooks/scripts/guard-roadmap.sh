@@ -5,6 +5,7 @@
 # comes from CI, not the local tree). Makes checkbox honesty structural.
 . "$(dirname "$0")/../lib/common.sh"
 
+respect_pause guard-roadmap
 case "$(field tool_name)" in Edit|MultiEdit) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 roadmap="$(config_get roadmapPath 'docs/ROADMAP.md')"

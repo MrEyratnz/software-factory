@@ -12,6 +12,7 @@
 # local hook, is the authoritative boundary.
 . "$(dirname "$0")/../lib/common.sh"
 
+respect_pause guard-bash-writes
 [ "$(field tool_name)" = "Bash" ] || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow
@@ -37,6 +38,9 @@ case "$active" in
     fi
     ;;
 esac
+
+# Trust-root protection can be relaxed per-repo via enforcement.protectTrustRoots.
+enforcement_on protectTrustRoots || allow
 
 # Does the command reference a protected trust-root path at all?
 printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/|\.factory/config\.json' || allow
