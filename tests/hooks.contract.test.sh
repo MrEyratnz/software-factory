@@ -469,6 +469,27 @@ THrel="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$THrel" > "$R/
 EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"
 assert_exit 0 "enforcement: requireReleaseProof=false releases with only a fresh green receipt"
 
+echo "# denial signalling: heuristic vs hard-boundary (issues #32, #33)"
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+echo x > "$R/src/a.ts"; echo x > "$R/src/a.test.ts"; ( cd "$R" && git add -A )
+# a commit-gate denial (engaged via the best-effort commit heuristic) is tagged
+# [heuristic] and says a retry/rephrase is expected — so a classifier reading
+# the transcript does not treat the recovery as evasion.
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: add a\""}')"
+ERR="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
+case "$ERR" in *"[heuristic]"*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - commit-gate denial tagged [heuristic] (got: $ERR)";; esac
+# a bypass-flag denial is a real boundary — tagged [hard-boundary], no
+# "rephrasing is fine" invitation.
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"feat: add a\""}')"
+ERR="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
+case "$ERR" in *"[hard-boundary]"*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - bypass-flag denial tagged [hard-boundary] (got: $ERR)";; esac
+# a trust-root write is a hard boundary on the Bash surface too.
+SCRIPT="$S/guard-bash-writes.sh"
+EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"
+ERR="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
+case "$ERR" in *"[hard-boundary]"*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - trust-root write tagged [hard-boundary] (got: $ERR)";; esac
+
 echo "# check-drift & orientation"
 SCRIPT="$S/check-drift.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
 EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generators → allow"

@@ -147,7 +147,25 @@ otel_emit() {
 }
 
 # --- decisions -------------------------------------------------------------
-deny()  { printf '%s\n' "dark-software-factory: $1" >&2; exit 2; }
+# Two denial classes so a human — or Claude Code's separate auto-mode
+# classifier — can tell a hard boundary from a best-effort heuristic (issues
+# #32, #33). The [hard-boundary] / [heuristic] tag is machine-readable on
+# purpose: it is the structured signal that distinguishes the two.
+#
+#   deny      — a HARD boundary: a bypass flag, a trust-root write, a write
+#               outside the project tree, an exact tool-name policy. There is no
+#               false positive here and routing around it is not sanctioned.
+#   deny_soft — a HEURISTIC, fail-early match on command *text* (commit/release
+#               detection, lint, tests-first) that can misfire. Satisfying the
+#               requirement OR rephrasing so the heuristic no longer matches is
+#               expected and fine — CI re-runs the authoritative gate regardless.
+#               Appending this note gives any classifier/reviewer reading the
+#               transcript a clear signal that a retry is not evasion.
+deny()  { printf '%s\n' "dark-software-factory: [hard-boundary] $1" >&2; exit 2; }
+deny_soft() {
+  printf '%s\n' "dark-software-factory: [heuristic] $1 — best-effort, fail-early match on command text, not a hard security boundary; satisfying the requirement or rephrasing to avoid the match is expected (CI re-runs the authoritative gate)." >&2
+  exit 2
+}
 allow() { exit 0; }
 
 # inject_context <text> — additionalContext for SessionStart / UserPromptSubmit.

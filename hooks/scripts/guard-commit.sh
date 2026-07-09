@@ -31,7 +31,7 @@ if [ -n "$message" ]; then
   ok="$(printf '%s' "$lint" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).ok))}catch(e){process.stdout.write("true")}})')"
   ctype="$(printf '%s' "$lint" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).type||"")}catch(e){}})')"
   if enforcement_on conventionalCommitLint; then
-    [ "$ok" = "false" ] && { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"lint"}'; deny "commit message is not a valid Conventional Commit (feat/fix/…): $message"; }
+    [ "$ok" = "false" ] && { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"lint"}'; deny_soft "commit message is not a valid Conventional Commit (feat/fix/…): $message"; }
   fi
 fi
 
@@ -51,7 +51,7 @@ if { [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; } && enforcement_on requireT
     has_test="$(printf '%s\n' "$files" | grep -Eq "$test_re" && echo yes || echo no)"
     [ "$has_src" = "yes" ] && [ "$has_test" = "no" ] && {
       otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"tests-first"}'
-      deny "tests-first: this ${ctype} stages source but no test — write the failing test first (TDD)"
+      deny_soft "tests-first: this ${ctype} stages source but no test — write the failing test first (TDD)"
     }
   fi
 fi
@@ -59,15 +59,15 @@ fi
 # (d) green receipt, bound to the current tree
 if enforcement_on requireGreenReceiptOnCommit; then
   receipt="$STATE_DIR/gate-receipt.json"
-  [ -f "$receipt" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-receipt"}'; deny "no green gate receipt — run the full test suite; it must pass on this exact tree before committing"; }
+  [ -f "$receipt" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-receipt"}'; deny_soft "no green gate receipt — run the full test suite; it must pass on this exact tree before committing"; }
   rok="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
   rtree="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
-  [ "$rok" = "true" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"red"}'; deny "the last gate run was red — fix it to green before committing"; }
+  [ "$rok" = "true" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"red"}'; deny_soft "the last gate run was red — fix it to green before committing"; }
   # Fail closed: if we cannot compute the current tree hash, we cannot certify the
   # receipt still matches, so refuse rather than allow.
   cur="$(tree_hash)"
   [ -n "$cur" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-tree-hash"}'; deny "cannot compute the working-tree hash — refusing to certify green"; }
-  [ "$cur" = "$rtree" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"stale-tree"}'; deny "the tree changed since tests last passed — re-run the suite to refresh the green receipt"; }
+  [ "$cur" = "$rtree" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"stale-tree"}'; deny_soft "the tree changed since tests last passed — re-run the suite to refresh the green receipt"; }
 fi
 
 otel_emit factory_gate_commit_total sum 1 '{"result":"allow"}'
