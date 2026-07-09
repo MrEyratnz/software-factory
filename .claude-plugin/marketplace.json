@@ -9,7 +9,7 @@
     {
       "name": "dark-software-factory",
       "source": "./",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "description": "Scaffold docs, drive a TDD roadmap loop, run adversarial reviews that auto-file tech-debt, design by judge panel, and ship via gated Conventional-Commit releases.",
       "category": "workflow",
       "keywords": [
