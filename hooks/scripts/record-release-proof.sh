@@ -54,5 +54,7 @@ tree="$(tree_hash "$target_root")"
 
 otel_emit factory_release_proof_total sum 1 '{"result":"mint"}'
 mkdir -p "$STATE_DIR"
-printf '{"ok":true,"tree":%s,"branch":%s}\n' "$(json_str "$tree")" "$(json_str "$relb")" > "$STATE_DIR/release-proof.json"
+# Sign when a runner-only key is configured (issue #2); no-op passthrough else.
+printf '{"ok":true,"tree":%s,"branch":%s}' "$(json_str "$tree")" "$(json_str "$relb")" \
+  | receipt_embed_sig > "$STATE_DIR/release-proof.json"
 allow

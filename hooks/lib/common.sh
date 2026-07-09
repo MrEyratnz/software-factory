@@ -173,6 +173,64 @@ receipt_file() {
   fi
 }
 
+# --- optional receipt signing (issue #2) -----------------------------------
+# The gate proofs live inside the repo the policed agent can write, and
+# record-green infers "green" from the agent's command + exit code — so a
+# determined agent can hand-write a proof. guard-scope/guard-bash-writes raise
+# the bar, but the residual weakness is architectural (CI is the authoritative
+# boundary regardless).
+#
+# When a runner-only signing secret is configured (FACTORY_RECEIPT_KEY, or a
+# path in FACTORY_RECEIPT_KEYFILE), receipts/proofs are HMAC-SHA256-signed and a
+# missing/invalid signature is REJECTED — so a hand-written receipt no longer
+# certifies green. The protection is exactly as strong as the secret's privacy
+# from the agent: a runner that keeps it hook-private (or scrubs it from the
+# agent's shell env) closes hand-forgery outright; elsewhere it still raises the
+# bar. When no secret is set (the default) behavior is unchanged — no signature
+# is required, fully backward compatible.
+receipt_secret() {
+  if [ -n "${FACTORY_RECEIPT_KEY:-}" ]; then printf '%s' "$FACTORY_RECEIPT_KEY"; return; fi
+  local kf="${FACTORY_RECEIPT_KEYFILE:-}"
+  [ -n "$kf" ] && [ -f "$kf" ] && cat "$kf" 2>/dev/null
+}
+
+# receipt_sign <ok> <tree> — HMAC-SHA256 hex over "<ok>:<tree>" under the secret
+# (empty string when no secret is configured).
+receipt_sign() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || { printf ''; return; }
+  PAYLOAD="$1:$2" SECRET="$secret" node -e 'const c=require("crypto");process.stdout.write(c.createHmac("sha256",process.env.SECRET).update(process.env.PAYLOAD||"").digest("hex"))' 2>/dev/null
+}
+
+# receipt_verify <file> — 0 if the receipt is acceptable: no secret configured
+# (nothing to verify), or a secret is set and the file carries a valid signature
+# over its own ok+tree. 1 if a secret is set and the signature is missing/wrong.
+receipt_verify() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || return 0
+  REC="$1" SECRET="$secret" node -e '
+    const fs=require("fs"),c=require("crypto");
+    try{
+      const o=JSON.parse(fs.readFileSync(process.env.REC,"utf8"));
+      const want=c.createHmac("sha256",process.env.SECRET).update(String(o.ok)+":"+(o.tree||"")).digest("hex");
+      const got=String(o.sig||"");
+      process.exit(got.length===want.length && c.timingSafeEqual(Buffer.from(got),Buffer.from(want))?0:1);
+    }catch(e){process.exit(1)}
+  ' 2>/dev/null
+}
+
+# receipt_embed_sig — read a receipt JSON on stdin, add a "sig" field signing
+# its ok+tree, write it back on stdout. A no-op passthrough when no secret.
+receipt_embed_sig() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || { cat; return; }
+  SECRET="$secret" node -e '
+    const c=require("crypto");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try{const o=JSON.parse(s);o.sig=c.createHmac("sha256",process.env.SECRET).update(String(o.ok)+":"+(o.tree||"")).digest("hex");process.stdout.write(JSON.stringify(o));}
+      catch(e){process.stdout.write(s);}
+    });'
+}
+
 staged_files() { ( cd "${1:-$PROJECT_DIR}" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
 
 # --- otel (optional, opt-in, push-based metrics) ----------------------------

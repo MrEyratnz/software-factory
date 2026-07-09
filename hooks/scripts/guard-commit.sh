@@ -64,6 +64,9 @@ fi
 if enforcement_on requireGreenReceiptOnCommit; then
   receipt="$(receipt_file "$target_root")"
   [ -f "$receipt" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-receipt"}'; deny_soft "no green gate receipt — run the full test suite; it must pass on this exact tree before committing"; }
+  # When a signing key is configured, a hand-written receipt (no/invalid
+  # signature) cannot certify green — this is a hard boundary, not a heuristic.
+  receipt_verify "$receipt" || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"bad-sig"}'; deny "the green receipt's signature is missing or invalid — a hand-written receipt cannot certify green (it was not minted by the gate)"; }
   rok="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
   rtree="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
   [ "$rok" = "true" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"red"}'; deny_soft "the last gate run was red — fix it to green before committing"; }

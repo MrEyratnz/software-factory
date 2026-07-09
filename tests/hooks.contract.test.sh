@@ -557,6 +557,37 @@ EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"
 ERR="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
 case "$ERR" in *"[hard-boundary]"*) PASS=$((PASS+1));; *) FAIL=$((FAIL+1)); echo "FAIL - trust-root write tagged [hard-boundary] (got: $ERR)";; esac
 
+echo "# HMAC-signed receipts (issue #2): forged proofs rejected when a key is set"
+export FACTORY_RECEIPT_KEY="test-secret-xyz"
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+echo x > "$R/src/a.ts"; echo x > "$R/src/a.test.ts"; ( cd "$R" && git add -A )
+TH="$(repo_tree_hash "$R")"
+# a hand-written (unsigned) receipt must NOT certify green when a key is set.
+printf '{"tree":"%s","ok":true}' "$TH" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: a\""}')"
+assert_exit 2 "#2: unsigned hand-written receipt rejected when a signing key is set"
+# a correctly signed receipt is accepted.
+SIG="$(PAYLOAD="true:$TH" SECRET="$FACTORY_RECEIPT_KEY" node -e 'const c=require("crypto");process.stdout.write(c.createHmac("sha256",process.env.SECRET).update(process.env.PAYLOAD).digest("hex"))')"
+printf '{"tree":"%s","ok":true,"sig":"%s"}' "$TH" "$SIG" > "$R/.factory/state/gate-receipt.json"
+assert_exit 0 "#2: correctly signed receipt accepted"
+# a receipt signed with the WRONG key is rejected.
+BADSIG="$(PAYLOAD="true:$TH" SECRET="wrong-key" node -e 'const c=require("crypto");process.stdout.write(c.createHmac("sha256",process.env.SECRET).update(process.env.PAYLOAD).digest("hex"))')"
+printf '{"tree":"%s","ok":true,"sig":"%s"}' "$TH" "$BADSIG" > "$R/.factory/state/gate-receipt.json"
+assert_exit 2 "#2: receipt signed with the wrong key rejected"
+# record-green mints a receipt that guard-commit accepts end-to-end under a key.
+SCRIPT="$S/record-green.sh"; rm -f "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"npm test"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: a\""}')"
+assert_exit 0 "#2: record-green mints a signed receipt that guard-commit accepts"
+unset FACTORY_RECEIPT_KEY
+# without a key, an unsigned receipt is accepted exactly as before.
+printf '{"tree":"%s","ok":true}' "$TH" > "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: a\""}')"
+assert_exit 0 "#2: no key configured → unsigned receipt accepted (backward compatible)"
+
 echo "# multi-repo receipt binding (issue #28)"
 SCRIPT="$S/guard-commit.sh"
 R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"

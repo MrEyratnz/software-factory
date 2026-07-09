@@ -33,6 +33,7 @@ cur="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/n
 if enforcement_on requireReleaseProof; then
   proof="$STATE_DIR/release-proof.json"
   [ -f "$proof" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny_soft "no release-gate proof — the full suite must be green on the BUILT artifact and history Conventional-Commit clean before releasing"; }
+  receipt_verify "$proof" || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "the release proof's signature is missing or invalid — a hand-written proof cannot authorize a release"; }
   pok="$(REC="$proof" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
   [ "$pok" = "true" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny_soft "release gate not satisfied (never release from red)"; }
 fi
@@ -42,6 +43,7 @@ fi
 # tree, not just an ok flag). Fail closed.
 receipt="$(receipt_file "$target_root")"
 [ -f "$receipt" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny_soft "no green gate receipt — the suite must be green on this exact tree before releasing"; }
+receipt_verify "$receipt" || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "the green receipt's signature is missing or invalid — a hand-written receipt cannot certify green"; }
 gok="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
 gtree="$(REC="$receipt" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
 cur="$(tree_hash "$target_root")"

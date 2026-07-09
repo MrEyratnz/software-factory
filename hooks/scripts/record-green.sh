@@ -61,5 +61,7 @@ rok="$(printf '%s' "$receipt" | node -e 'let s="";process.stdin.on("data",c=>s+=
 otel_emit factory_gate_suite_total sum 1 "$(printf '{"result":"%s"}' "$([ "$rok" = "true" ] && echo pass || echo fail)")"
 
 mkdir -p "$STATE_DIR"
-printf '%s\n' "$receipt" > "$(receipt_file "$target_root")"
+# Sign the receipt when a runner-only key is configured (issue #2); a no-op
+# passthrough otherwise.
+printf '%s' "$receipt" | receipt_embed_sig > "$(receipt_file "$target_root")"
 allow
