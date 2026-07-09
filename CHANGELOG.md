@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.3...dark-software-factory-v0.1.4) (2026-07-09)
+
+
+### Bug Fixes
+
+* **marketplace:** use canonical ./ relative source for plugin entry ([51ffeb1](https://github.com/MrEyratnz/software-factory/commit/51ffeb1adc543d78844d555f2b10fa18524d6417))
+* **marketplace:** use canonical ./ relative source for plugin entry ([78708ed](https://github.com/MrEyratnz/software-factory/commit/78708edbd8b0302a4175a30e90a51a0e54f32e96))
+
 ## [0.1.3](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.2...dark-software-factory-v0.1.3) (2026-07-06)
 
 
