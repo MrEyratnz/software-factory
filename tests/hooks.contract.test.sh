@@ -101,6 +101,14 @@ EVENT="$(evt "$R" Bash '{"command":"sh -c '"'"'git commit -m \"feat: x\"'"'"'"}'
 # guard-rail: a genuinely safe indirect command (no commit anywhere) must not
 # be over-blocked just because it mentions xargs alongside git.
 EVENT="$(evt "$R" Bash '{"command":"echo hello | xargs git status"}')"; assert_exit 0 "safe indirect git status via xargs still allowed"
+# #26: a `git` substring inside a filesystem PATH or a hyphenated filename is
+# not a command — these path mentions must NOT engage the commit gate (no
+# receipt is present in $R, so a false positive would deny with exit 2).
+EVENT="$(evt "$R" Bash '{"command":"find /home/user/git/software-factory -iname parse-git-commit.mjs"}')"; assert_exit 0 "#26: git inside a path/hyphenated filename is not a commit (allowed)"
+EVENT="$(evt "$R" Bash '{"command":"cat .git/config"}')"; assert_exit 0 "#26: .git/ path mention allowed"
+EVENT="$(evt "$R" Bash '{"command":"grep -r foo /srv/git/mirrors"}')"; assert_exit 0 "#26: /git/ path mention allowed"
+# but a real git commit sitting alongside a path mention is still caught.
+EVENT="$(evt "$R" Bash '{"command":"cd /home/user/git/foo && git commit -m \"feat: x\""}')"; assert_exit 2 "#26: real git commit alongside a path mention still blocked"
 
 echo "# guard-scope"
 SCRIPT="$S/guard-scope.sh"

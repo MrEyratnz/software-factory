@@ -48,12 +48,29 @@ function hasIndirection(cmd) {
   return INDIRECTION_RE.test(cmd);
 }
 
+// A `\bgit\b` match is only a real invocation candidate when the token is a
+// standalone shell word — not `git` glued into a filesystem path, a hyphenated
+// filename, or a hostname (`~/git/repo`, `parse-git-commit.mjs`, `.git/config`,
+// `git.example.com`). Those path mentions are the false-positive class in issue
+// #26: scanning the whole command text made a `find … /git/… -iname
+// parse-git-commit.mjs` look like a commit and wrongly engaged the gate. A
+// neighbor of `/`, `.`, or `-` on either side means path/word glue; every other
+// neighbor (whitespace, start/end, a shell separator or quote) is a real
+// command boundary. `\b` already guarantees the neighbor is a non-word char.
+const PATH_GLUE = new Set(['/', '.', '-']);
+function isPathGlued(cmd, idx) {
+  const before = idx > 0 ? cmd[idx - 1] : '';
+  const after = cmd[idx + 3] || ''; // char immediately after the 3-char "git"
+  return PATH_GLUE.has(before) || PATH_GLUE.has(after);
+}
+
 // Find every `git` subcommand token in the command string and report whether
 // any of them is a commit (or an unrecognized stand-in for one).
 function detectGitCommit(cmd) {
   const gitTok = /\bgit\b/g;
   let match;
   while ((match = gitTok.exec(cmd)) !== null) {
+    if (isPathGlued(cmd, match.index)) continue; // a path/filename mention, not a command
     let i = match.index + match[0].length;
     const len = cmd.length;
     let subcommand = null;
