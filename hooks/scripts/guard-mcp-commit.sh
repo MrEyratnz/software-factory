@@ -24,6 +24,7 @@
 # whether the file is present right now.
 . "$(dirname "$0")/../lib/common.sh"
 
+respect_pause guard-mcp-commit
 tn="$(field tool_name)"
 case "$tn" in
   mcp__github__create_or_update_file|mcp__github__push_files|mcp__github__delete_file) ;;

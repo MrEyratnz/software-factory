@@ -15,8 +15,23 @@
     "testRegex": { "type": "string", "description": "regex matching test paths", "default": "(\\.test\\.|\\.spec\\.|_test\\.|/tests?/|\\.feature$)" },
     "testCommandRegex": { "type": "string", "description": "regex matching the full-suite command (triggers record-green)" },
     "releaseVerbRegex": { "type": "string", "description": "regex matching release verbs (gated by guard-release)" },
+    "releaseProofCommandRegex": { "type": "string", "description": "regex matching the build+smoke command on the BUILT artifact; when it exits 0 on the release branch during a release, record-release-proof mints release-proof.json" },
     "designDir": { "type": "string", "description": "root of design-system sources (fenced to design-lead)" },
     "maxIterations": { "type": "integer", "minimum": 1, "default": 10, "description": "hard cap for a /factory-run lights-out loop" },
+    "testCommand": { "type": "string", "description": "explicit, unambiguous full-suite command the hooks INVOKE themselves when they must determine green deterministically (e.g. record-green with no exit-code evidence). Distinct from testCommandRegex, which only DETECTS that a suite ran. An allowlisted invoker, not a matcher." },
+    "enforcement": {
+      "type": "object",
+      "description": "per-gate toggles for the HARD gates. Every gate defaults ON (true); set one to false to opt a single repo out of that gate deliberately and visibly, instead of the all-or-nothing plugin toggle. A session-local `.factory/state/paused` marker (human-set) relaxes every gate at once for one worktree.",
+      "additionalProperties": false,
+      "properties": {
+        "requireGreenReceiptOnCommit": { "type": "boolean", "default": true, "description": "guard-commit: a tree-bound green receipt must exist to commit" },
+        "requireTestsFirst": { "type": "boolean", "default": true, "description": "guard-commit: a feat/fix staging source must also stage a test (TDD)" },
+        "conventionalCommitLint": { "type": "boolean", "default": true, "description": "guard-commit: the -m message must be a valid Conventional Commit" },
+        "requireReleaseProof": { "type": "boolean", "default": true, "description": "guard-release: a release-gate proof must exist to release" },
+        "enforceProjectDirScope": { "type": "boolean", "default": true, "description": "guard-scope/guard-bash-writes: writes resolving outside the project dir are denied" },
+        "protectTrustRoots": { "type": "boolean", "default": true, "description": "guard-scope/guard-bash-writes: .factory/state, .factory/config.json, .factory/review are hook-managed and cannot be written directly" }
+      }
+    },
     "gates": {
       "type": "object",
       "description": "the per-stage 'green' commands, run in order; empty stages are skipped",

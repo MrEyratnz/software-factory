@@ -72,16 +72,52 @@ config_get() {
   ' "$key" "$def" 2>/dev/null || printf '%s' "$def"
 }
 
+# --- enforcement levers (issues #29, #30) ----------------------------------
+# The hard gates are ON by default. Two levers relax them without the binary
+# all-or-nothing plugin toggle:
+#
+#   1. enforcement_on <gate> — a per-gate boolean in .factory/config.json's
+#      "enforcement" block (committed, reviewable, per-repo). Every hard gate
+#      defaults to true; a repo opts a single gate out deliberately and
+#      visibly, e.g. {"enforcement":{"requireGreenReceiptOnCommit":false}}.
+#      Returns 0 (enforce) unless the key is explicitly the string "false".
+enforcement_on() {
+  [ "$(config_get "enforcement.$1" true)" != "false" ]
+}
+
+#   2. factory_paused / respect_pause — a session-local escape hatch. When a
+#      human drops a marker at $STATE_DIR/paused (or paused.json), every hard
+#      gate steps aside for this worktree, independent of Claude Code's
+#      settings hot-reload semantics (which do not reliably detach a plugin's
+#      hooks mid-session). The marker lives under the trust-root
+#      .factory/state/, so the policed agent cannot forge it through the gated
+#      tools — only a human or CI with direct filesystem access sets it
+#      (`touch .factory/state/paused`) and clears it (`rm`). factory_paused
+#      returns 0 (paused) when the marker is present.
+factory_paused() {
+  [ -f "$STATE_DIR/paused" ] || [ -f "$STATE_DIR/paused.json" ]
+}
+
+# respect_pause <hook-name> — call at the top of an enforcing guard: if the
+# factory is paused, emit a metric and allow (exit 0). No-op otherwise.
+respect_pause() {
+  factory_paused || return 0
+  otel_emit factory_gate_paused_total sum 1 "$(printf '{"hook":%s}' "$(json_str "${1:-unknown}")")"
+  allow
+}
+
 # --- git plumbing ----------------------------------------------------------
-# tree_hash — deterministic hash of the working tree (tracked + untracked),
+# tree_hash [dir] — deterministic hash of a working tree (tracked + untracked),
 # EXCLUDING .factory/, computed via a throwaway index so the real index is
 # never touched. Binding a green receipt to this hash means any later edit to
-# source silently invalidates it.
+# source silently invalidates it. Defaults to the session PROJECT_DIR, but
+# accepts an explicit dir so a gate can hash the repo the command actually
+# targets, not just the one the session started in (issue #28).
 tree_hash() {
-  local idx out
+  local dir="${1:-$PROJECT_DIR}" idx out
   idx="$(mktemp)"; rm -f "$idx"
   out="$(
-    cd "$PROJECT_DIR" 2>/dev/null || exit 0
+    cd "$dir" 2>/dev/null || exit 0
     GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1
     GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null
   )"
@@ -89,7 +125,114 @@ tree_hash() {
   printf '%s' "$out"
 }
 
-staged_files() { ( cd "$PROJECT_DIR" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
+# --- target-repo resolution (issue #28) ------------------------------------
+# The green gate must bind to the repo a command actually operates on, not the
+# fixed session PROJECT_DIR — otherwise a commit to a sibling repo in a
+# multi-repo session is checked against the ORIGINAL project's tree, which is
+# meaningless. These helpers derive that target repo and key its receipt.
+#
+# command_target_dir <cmd> — best-effort working directory a git command
+# operates on, mirroring git's OWN precedence: `git -C <dir>` overrides the
+# shell cwd, which a leading `cd <dir>` sets. So `git -C <dir>` wins over `cd`
+# even when both are present (`cd G && git -C R commit` targets R, not G — the
+# gate must bind to R). A `git -C`/`cd` merely mentioned inside a commit message
+# or heredoc is ignored: the `git -C` target must be an existing directory to be
+# trusted, and the `cd` is only honored at command start. Falls back to
+# PROJECT_DIR.
+command_target_dir() {
+  local cmd="$1" out cd gitC
+  out="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-cmd-target.mjs" 2>/dev/null)"
+  gitC="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).gitC||"")}catch(e){}})')"
+  cd="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).cd||"")}catch(e){}})')"
+  if [ -n "$gitC" ]; then printf '%s' "$gitC"; return; fi
+  if [ -n "$cd" ]; then printf '%s' "$cd"; return; fi
+  printf '%s' "$PROJECT_DIR"
+}
+
+# repo_root <dir> — the git top-level of dir (so a subdir maps to one receipt),
+# or dir itself when it is not inside a git repo.
+repo_root() {
+  local d="$1" top
+  top="$(cd "$d" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] && printf '%s' "$top" || printf '%s' "$d"
+}
+
+# receipt_file [repo-root] — the gate-receipt path for a repo. The session's own
+# project keeps the canonical gate-receipt.json (backward compatible); any OTHER
+# repo committed to in the same session gets its own receipt keyed by a short
+# hash of its root, so concurrent per-repo receipts can coexist. All receipts
+# live under the SESSION's protected .factory/state trust root, never the
+# target repo's.
+receipt_file() {
+  local root="${1:-$PROJECT_DIR}" sroot key
+  sroot="$(repo_root "$PROJECT_DIR")"
+  if [ "$root" = "$sroot" ] || [ "$root" = "$PROJECT_DIR" ] || [ -z "$root" ]; then
+    printf '%s' "$STATE_DIR/gate-receipt.json"
+  else
+    key="$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+    printf '%s' "$STATE_DIR/gate-receipt-$key.json"
+  fi
+}
+
+# --- optional receipt signing (issue #2) -----------------------------------
+# The gate proofs live inside the repo the policed agent can write, and
+# record-green infers "green" from the agent's command + exit code — so a
+# determined agent can hand-write a proof. guard-scope/guard-bash-writes raise
+# the bar, but the residual weakness is architectural (CI is the authoritative
+# boundary regardless).
+#
+# When a runner-only signing secret is configured (FACTORY_RECEIPT_KEY, or a
+# path in FACTORY_RECEIPT_KEYFILE), receipts/proofs are HMAC-SHA256-signed and a
+# missing/invalid signature is REJECTED — so a hand-written receipt no longer
+# certifies green. The protection is exactly as strong as the secret's privacy
+# from the agent: a runner that keeps it hook-private (or scrubs it from the
+# agent's shell env) closes hand-forgery outright; elsewhere it still raises the
+# bar. When no secret is set (the default) behavior is unchanged — no signature
+# is required, fully backward compatible.
+receipt_secret() {
+  if [ -n "${FACTORY_RECEIPT_KEY:-}" ]; then printf '%s' "$FACTORY_RECEIPT_KEY"; return; fi
+  local kf="${FACTORY_RECEIPT_KEYFILE:-}"
+  [ -n "$kf" ] && [ -f "$kf" ] && cat "$kf" 2>/dev/null
+}
+
+# receipt_sign <ok> <tree> — HMAC-SHA256 hex over "<ok>:<tree>" under the secret
+# (empty string when no secret is configured).
+receipt_sign() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || { printf ''; return; }
+  PAYLOAD="$1:$2" SECRET="$secret" node -e 'const c=require("crypto");process.stdout.write(c.createHmac("sha256",process.env.SECRET).update(process.env.PAYLOAD||"").digest("hex"))' 2>/dev/null
+}
+
+# receipt_verify <file> — 0 if the receipt is acceptable: no secret configured
+# (nothing to verify), or a secret is set and the file carries a valid signature
+# over its own ok+tree. 1 if a secret is set and the signature is missing/wrong.
+receipt_verify() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || return 0
+  REC="$1" SECRET="$secret" node -e '
+    const fs=require("fs"),c=require("crypto");
+    try{
+      const o=JSON.parse(fs.readFileSync(process.env.REC,"utf8"));
+      const want=c.createHmac("sha256",process.env.SECRET).update(String(o.ok)+":"+(o.tree||"")).digest("hex");
+      const got=String(o.sig||"");
+      process.exit(got.length===want.length && c.timingSafeEqual(Buffer.from(got),Buffer.from(want))?0:1);
+    }catch(e){process.exit(1)}
+  ' 2>/dev/null
+}
+
+# receipt_embed_sig — read a receipt JSON on stdin, add a "sig" field signing
+# its ok+tree, write it back on stdout. A no-op passthrough when no secret.
+receipt_embed_sig() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || { cat; return; }
+  SECRET="$secret" node -e '
+    const c=require("crypto");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try{const o=JSON.parse(s);o.sig=c.createHmac("sha256",process.env.SECRET).update(String(o.ok)+":"+(o.tree||"")).digest("hex");process.stdout.write(JSON.stringify(o));}
+      catch(e){process.stdout.write(s);}
+    });'
+}
+
+staged_files() { ( cd "${1:-$PROJECT_DIR}" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
 
 # --- otel (optional, opt-in, push-based metrics) ----------------------------
 # otel_emit <name> <type:sum|gauge> <value> [attrsJson] — fire-and-forget push
@@ -113,7 +256,25 @@ otel_emit() {
 }
 
 # --- decisions -------------------------------------------------------------
-deny()  { printf '%s\n' "dark-software-factory: $1" >&2; exit 2; }
+# Two denial classes so a human — or Claude Code's separate auto-mode
+# classifier — can tell a hard boundary from a best-effort heuristic (issues
+# #32, #33). The [hard-boundary] / [heuristic] tag is machine-readable on
+# purpose: it is the structured signal that distinguishes the two.
+#
+#   deny      — a HARD boundary: a bypass flag, a trust-root write, a write
+#               outside the project tree, an exact tool-name policy. There is no
+#               false positive here and routing around it is not sanctioned.
+#   deny_soft — a HEURISTIC, fail-early match on command *text* (commit/release
+#               detection, lint, tests-first) that can misfire. Satisfying the
+#               requirement OR rephrasing so the heuristic no longer matches is
+#               expected and fine — CI re-runs the authoritative gate regardless.
+#               Appending this note gives any classifier/reviewer reading the
+#               transcript a clear signal that a retry is not evasion.
+deny()  { printf '%s\n' "dark-software-factory: [hard-boundary] $1" >&2; exit 2; }
+deny_soft() {
+  printf '%s\n' "dark-software-factory: [heuristic] $1 — best-effort, fail-early match on command text, not a hard security boundary; satisfying the requirement or rephrasing to avoid the match is expected (CI re-runs the authoritative gate)." >&2
+  exit 2
+}
 allow() { exit 0; }
 
 # inject_context <text> — additionalContext for SessionStart / UserPromptSubmit.
@@ -143,7 +304,7 @@ status_text() {
     local rtree cur rok
     rok="$(REC="$STATE_DIR/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("false")}')"
     rtree="$(REC="$STATE_DIR/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}')"
-    cur="$(tree_hash)"
+    cur="$(tree_hash "$PROJECT_DIR")"
     if [ "$rok" = "true" ] && [ "$cur" = "$rtree" ]; then gate="green"; else gate="stale/red (re-run tests)"; fi
   else
     gate="unknown (no gate run yet)"

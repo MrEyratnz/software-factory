@@ -12,6 +12,11 @@ cmd="$(field tool_input.command)"
 test_re="$(config_get testCommandRegex '(npm ((run|-s) )?test|node --test|vitest|pytest|go test|cargo test|make test)')"
 printf '%s' "$cmd" | grep -Eq "$test_re" || allow
 
+# Bind the receipt to the repo the suite actually ran in (issue #28), so a
+# multi-repo session mints "repo B is green" independently of the session's
+# original project.
+target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
 # Harden against forged green: refuse to mint a receipt for a command that only
 # *mentions* the suite or neutralizes its exit status. This is not airtight
 # (CI is the authoritative gate) but it closes the trivial forgeries:
@@ -28,10 +33,22 @@ ec="$(field tool_response.exitCode)"
 [ -n "$ec" ] || ec="$(field tool_response.exit_code)"
 [ -n "$ec" ] || ec="$(field tool_response.code)"
 [ -n "$ec" ] || ec="$(field tool_response.returnCode)"
-# No exit-status evidence → do not fabricate a green receipt (fail safe).
-if [ -z "$ec" ]; then ( cd "$PROJECT_DIR" 2>/dev/null && eval "$cmd" ) >/dev/null 2>&1; ec=$?; fi
+# No exit-status evidence: rather than blindly re-executing the ARBITRARY
+# already-run command (issue #27 — unsafe for anything non-idempotent, and the
+# root of the "red receipt poisoning" when a non-test command merely *matched*
+# testCommandRegex), invoke the repo's explicit, allowlisted `testCommand` and
+# take its real exit code (issues #27, #35). `testCommand` comes only from the
+# trust-root config, never from the agent's command string. With no configured
+# invoker there is no safe way to determine green here, so fail safe: decline to
+# mint a receipt (the commit gate stays closed until a suite with a real exit
+# code runs).
+if [ -z "$ec" ]; then
+  tc="$(config_get testCommand '')"
+  [ -n "$tc" ] || allow
+  ( cd "$target_root" 2>/dev/null && eval "$tc" ) >/dev/null 2>&1; ec=$?
+fi
 
-tree="$(tree_hash)"
+tree="$(tree_hash "$target_root")"
 [ -n "$tree" ] || allow
 
 receipt="$(printf '{"stages":[{"name":"suite","exitCode":%s}],"treeHash":%s}' "$ec" "$(json_str "$tree")" \
@@ -44,5 +61,7 @@ rok="$(printf '%s' "$receipt" | node -e 'let s="";process.stdin.on("data",c=>s+=
 otel_emit factory_gate_suite_total sum 1 "$(printf '{"result":"%s"}' "$([ "$rok" = "true" ] && echo pass || echo fail)")"
 
 mkdir -p "$STATE_DIR"
-printf '%s\n' "$receipt" > "$STATE_DIR/gate-receipt.json"
+# Sign the receipt when a runner-only key is configured (issue #2); a no-op
+# passthrough otherwise.
+printf '%s' "$receipt" | receipt_embed_sig > "$(receipt_file "$target_root")"
 allow
