@@ -15,6 +15,7 @@
     "testRegex": { "type": "string", "description": "regex matching test paths", "default": "(\\.test\\.|\\.spec\\.|_test\\.|/tests?/|\\.feature$)" },
     "testCommandRegex": { "type": "string", "description": "regex matching the full-suite command (triggers record-green)" },
     "releaseVerbRegex": { "type": "string", "description": "regex matching release verbs (gated by guard-release)" },
+    "releaseProofCommandRegex": { "type": "string", "description": "regex matching the build+smoke command on the BUILT artifact; when it exits 0 on the release branch during a release, record-release-proof mints release-proof.json" },
     "designDir": { "type": "string", "description": "root of design-system sources (fenced to design-lead)" },
     "maxIterations": { "type": "integer", "minimum": 1, "default": 10, "description": "hard cap for a /factory-run lights-out loop" },
     "testCommand": { "type": "string", "description": "explicit, unambiguous full-suite command the hooks INVOKE themselves when they must determine green deterministically (e.g. record-green with no exit-code evidence). Distinct from testCommandRegex, which only DETECTS that a suite ran. An allowlisted invoker, not a matcher." },

@@ -180,6 +180,54 @@ rm -f "$R/.factory/state/release-intent.json"
 EVENT="$(evt "$R" Bash '{"command":"echo hi"}')"; assert_exit 0 "unrelated Bash tool allowed"
 EVENT="$(evt "$R" mcp__github__merge_pull_request '{"owner":"o","repo":"r","pullNumber":1}')"; assert_exit 0 "other mcp tool (merge) unaffected"
 
+echo "# release lifecycle: producers + cleanup (issue #14)"
+# --- record-release-proof: the sanctioned producer of release-proof.json.
+SCRIPT="$S/record-release-proof.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "releaseProofCommandRegex": "(npm run build|npm run smoke)" }
+JSON
+# no release in progress → no proof minted even on a green build.
+EVENT="$(evt "$R" Bash '{"command":"npm run build"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+if [ ! -f "$R/.factory/state/release-proof.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #14: no proof minted without release-intent"; fi
+# release in progress + green build on release branch → proof ok:true.
+printf '{"active":true}' > "$R/.factory/state/release-intent.json"
+EVENT="$(evt "$R" Bash '{"command":"npm run build"}' ',"tool_response":{"exitCode":0}')"
+assert_exit 0 "#14: record-release-proof exits 0"
+POK="$(REC="$R/.factory/state/release-proof.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
+if [ "$POK" = "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #14: green build mints release-proof ok=true (got $POK)"; fi
+# a failing build must not mint a proof.
+rm -f "$R/.factory/state/release-proof.json"
+EVENT="$(evt "$R" Bash '{"command":"npm run build"}' ',"tool_response":{"exitCode":1}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+if [ ! -f "$R/.factory/state/release-proof.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #14: failing build must not mint proof"; fi
+# the minted proof is exactly what guard-release needs.
+EVENT="$(evt "$R" Bash '{"command":"npm run build"}' ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+THrel="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$THrel" > "$R/.factory/state/gate-receipt.json"
+SCRIPT="$S/guard-release.sh"; EVENT="$(evt "$R" Bash '{"command":"git tag v1.0.0"}')"; assert_exit 0 "#14: minted proof + fresh receipt lets guard-release allow the tag"
+# --- release-cleanup: clears intent+proof at Stop.
+SCRIPT="$S/release-cleanup.sh"
+printf '{"active":true}' > "$R/.factory/state/release-intent.json"
+printf '{"ok":true}' > "$R/.factory/state/release-proof.json"
+EVENT='{"hook_event_name":"Stop","cwd":"'"$R"'"}'
+assert_exit 0 "#14: release-cleanup exits 0"
+if [ ! -f "$R/.factory/state/release-intent.json" ] && [ ! -f "$R/.factory/state/release-proof.json" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #14: cleanup removes intent+proof at Stop"; fi
+# --- sanctioned intent producer: only the release-captain writes release-intent.
+SCRIPT="$S/guard-scope.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+echo release-captain > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":".factory/state/release-intent.json"}')"; assert_exit 0 "#14: release-captain can write release-intent.json"
+EVENT="$(evt "$R" Write '{"file_path":".factory/state/gate-receipt.json"}')"; assert_exit 2 "#14: release-captain cannot write other trust-root state"
+echo implementer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":".factory/state/release-intent.json"}')"; assert_exit 2 "#14: a non-release-captain cannot write release-intent.json"
+SCRIPT="$S/guard-bash-writes.sh"
+echo release-captain > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Bash '{"command":"echo x > .factory/state/release-intent.json"}')"; assert_exit 0 "#14: release-captain may shell-write release-intent.json"
+EVENT="$(evt "$R" Bash '{"command":"echo x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "#14: release-captain still cannot shell-write the receipt"
+rm -f "$R/.factory/active-agent"
+
 echo "# guard-bash-writes"
 SCRIPT="$S/guard-bash-writes.sh"
 R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"

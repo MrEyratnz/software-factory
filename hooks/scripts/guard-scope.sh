@@ -38,18 +38,24 @@ if enforcement_on enforceProjectDirScope; then
   esac
 fi
 
+active="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
+design_dir="$(config_get designDir 'design/')"
+
 # Universal protection of the factory's own trust roots (any agent, including
 # the conductor). The hooks that legitimately update these use shell I/O, not
-# the Write/Edit tool, so this is safe to enforce for all.
+# the Write/Edit tool, so this is safe to enforce for all — with ONE sanctioned
+# carve-out: the release-captain writes .factory/state/release-intent.json to
+# signal a release is in progress (issue #14). That is the intent flag's
+# sanctioned producer; release-proof.json is minted by the record-release-proof
+# hook, never hand-written, and every other trust-root path stays unwritable.
 if enforcement_on protectTrustRoots; then
   case "$rel" in
+    .factory/state/release-intent.json)
+      [ "$active" = "release-captain" ] || deny "release-intent.json is written only by the release-captain (via /ship)" ;;
     .factory/state/*|.factory/config.json)
       deny "$rel is factory-managed state — it may not be written via the editor tools" ;;
   esac
 fi
-
-active="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
-design_dir="$(config_get designDir 'design/')"
 
 case "$active" in
   reviewer)
@@ -64,7 +70,7 @@ case "$active" in
   design-lead)
     case "$rel" in "$design_dir"*|docs/*) allow ;; *) deny "the design-lead writes only under the design dirs (attempted: $rel)" ;; esac ;;
   release-captain)
-    case "$rel" in docs/*) allow ;; *) deny "the release-captain does not edit source (high blast radius) — it cuts releases via the gated release path (attempted: $rel)" ;; esac ;;
+    case "$rel" in docs/*|.factory/state/release-intent.json) allow ;; *) deny "the release-captain does not edit source (high blast radius) — it cuts releases via the gated release path (attempted: $rel)" ;; esac ;;
   tech-debt-clerk)
     case "$rel" in .factory/review/*) allow ;; *) deny "the tech-debt clerk touches no source — it files issues; findings/status go under .factory/review/ (attempted: $rel)" ;; esac ;;
   implementer|"")

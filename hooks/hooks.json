@@ -53,6 +53,7 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/record-green.sh", "timeout": 30 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/record-release-proof.sh", "timeout": 30 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/ledger-record.sh", "timeout": 20 }
         ]
       },
@@ -75,6 +76,7 @@
       {
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/debt-reconcile.sh", "timeout": 45 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/release-cleanup.sh", "timeout": 20 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/loop-guard.sh", "timeout": 20 }
         ]
       }

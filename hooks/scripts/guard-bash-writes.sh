@@ -53,6 +53,15 @@ fi
 # Trust-root protection can be relaxed per-repo via enforcement.protectTrustRoots.
 enforcement_on protectTrustRoots || allow
 
+# Sanctioned carve-out (issue #14): the release-captain writes the
+# release-intent flag to signal a release is in progress. Only that exact path,
+# only that role, and only when the command touches no other trust-root file.
+if [ "$active" = "release-captain" ] \
+   && printf '%s' "$cmd" | grep -Eq '\.factory/state/release-intent\.json' \
+   && ! printf '%s' "$cmd" | grep -Eq '\.factory/config\.json|\.factory/review/|\.factory/state/(gate-receipt|release-proof|roadmap-proof|loop|paused)'; then
+  allow
+fi
+
 # Does the command reference a protected trust-root path at all?
 printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/|\.factory/config\.json' || allow
 
