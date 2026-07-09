@@ -39,6 +39,17 @@ case "$active" in
     ;;
 esac
 
+# General "no writes outside the project directory" parity with guard-scope
+# (issue #31): guard-scope bans out-of-project writes for the editor tools, but
+# the Bash surface had no equivalent, so a `cat > /elsewhere` slipped through.
+# Best-effort: inspects redirect/tee targets, with carve-outs for Claude Code's
+# own state (~/.claude, incl. the memory feature), temp dirs, and /dev.
+if enforcement_on enforceProjectDirScope; then
+  outside="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-bash-writes.mjs" 2>/dev/null \
+    | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const a=JSON.parse(s).outside;process.stdout.write(a&&a.length?a[0]:"")}catch(e){}})')"
+  [ -n "$outside" ] && deny_soft "writing outside the project directory is not allowed: $outside (guard-scope enforces the same rule for the editor tools; ~/.claude, temp dirs, and /dev are carved out)"
+fi
+
 # Trust-root protection can be relaxed per-repo via enforcement.protectTrustRoots.
 enforcement_on protectTrustRoots || allow
 

@@ -18,12 +18,23 @@ rel="$(FP="$fp" PD="$PROJECT_DIR" node -e '
   const abs=p.isAbsolute(process.env.FP)?process.env.FP:p.resolve(process.env.PD,process.env.FP);
   process.stdout.write(p.relative(process.env.PD, abs));
 ')"
+abs="$(FP="$fp" PD="$PROJECT_DIR" node -e '
+  const p=require("path");
+  process.stdout.write(p.isAbsolute(process.env.FP)?p.resolve(process.env.FP):p.resolve(process.env.PD,process.env.FP));
+')"
 
 # Writing outside the project tree is never allowed (unless the scope gate is
-# relaxed for this repo via enforcement.enforceProjectDirScope).
+# relaxed for this repo via enforcement.enforceProjectDirScope) — except for
+# first-party carve-outs so factory adoption doesn't silently break Claude
+# Code's own features (issue #31): ~/.claude (incl. the memory feature),
+# temp dirs, and /dev.
 if enforcement_on enforceProjectDirScope; then
   case "$rel" in
-    ../*|/*) deny "write outside the project directory is not allowed: $rel" ;;
+    ../*|/*)
+      case "$abs" in
+        "$HOME/.claude/"*|/tmp/*|/private/tmp/*|/var/folders/*|/dev/*) allow ;;
+        *) deny "write outside the project directory is not allowed: $rel" ;;
+      esac ;;
   esac
 fi
 

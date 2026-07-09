@@ -128,6 +128,11 @@ EVENT="$(evt "$R" Write '{"file_path":"docs/x.md"}')"; assert_exit 0 "release-ca
 echo tech-debt-clerk > "$R/.factory/active-agent"
 EVENT="$(evt "$R" Write '{"file_path":"src/x.ts"}')"; assert_exit 2 "tech-debt-clerk cannot write src"
 EVENT="$(evt "$R" Write '{"file_path":".factory/review/x.json"}')"; assert_exit 0 "tech-debt-clerk can write its review status"
+# #31: the editor-tool out-of-project ban carves out ~/.claude (memory feature).
+echo implementer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":"'"$HOME"'/.claude/projects/p/memory/note.md"}')"; assert_exit 0 "#31: editor write to ~/.claude memory carve-out allowed"
+EVENT="$(evt "$R" Write '{"file_path":"/etc/evil.conf"}')"; assert_exit 2 "#31: editor write to a stray absolute path still blocked"
+rm -f "$R/.factory/active-agent"
 
 echo "# guard-roadmap"
 SCRIPT="$S/guard-roadmap.sh"
@@ -217,6 +222,20 @@ EVENT="$(evt "$R" Bash '{"command":"echo x > src/ok.ts"}')"; assert_exit 0 "impl
 EVENT="$(evt "$R" Bash '{"command":"printf x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "implementer: trust-root write still blocked"
 EVENT="$(evt "$R" Bash '{"command":"echo x > .factory/state/gate-receipt.json"}')"; assert_exit 2 "implementer: trust-root write (echo) still blocked"
 rm -f "$R/.factory/active-agent"
+# #31: out-of-project Bash writes are denied (parity with guard-scope), with
+# carve-outs for ~/.claude (incl. the memory feature), temp dirs, and /dev.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"cat > /some/other/path/file"}')"; assert_exit 2 "#31: redirect to an out-of-project path blocked"
+EVENT="$(evt "$R" Bash '{"command":"tee /etc/evil.conf"}')"; assert_exit 2 "#31: tee to an out-of-project path blocked"
+EVENT="$(evt "$R" Bash '{"command":"echo x > src/ok.ts"}')"; assert_exit 0 "#31: in-project redirect still allowed"
+EVENT="$(evt "$R" Bash '{"command":"echo x > '"$HOME"'/.claude/projects/p/memory/note.md"}')"; assert_exit 0 "#31: bash write to ~/.claude memory carve-out allowed"
+EVENT="$(evt "$R" Bash '{"command":"npm test 2>/dev/null"}')"; assert_exit 0 "#31: redirect to /dev/null allowed"
+EVENT="$(evt "$R" Bash '{"command":"grep -rn \"=>\" src/"}')"; assert_exit 0 "#31: quoted => is not a redirect (no false positive)"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "enforcement": { "enforceProjectDirScope": false } }
+JSON
+EVENT="$(evt "$R" Bash '{"command":"cat > /some/other/path/file"}')"; assert_exit 0 "#31: enforceProjectDirScope=false allows out-of-project write"
 
 echo "# record-green"
 SCRIPT="$S/record-green.sh"
