@@ -12,7 +12,13 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
+    # Skip auto-generated PRs from bots (release-please, dependabot): they are
+    # mechanical version/dependency bumps with nothing to adversarially review,
+    # and claude-code-action hard-fails on a non-human actor otherwise — the
+    # "Workflow initiated by non-human actor" error that reddened the v0.1.5
+    # release PR (#44). Human PRs are unaffected.
+    if: ${{ github.event.pull_request.user.type != 'Bot' }}
+    # Optional: further filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
     #   github.event.pull_request.user.login == 'new-developer' ||
