@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.6](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.5...dark-software-factory-v0.1.6) (2026-07-10)
+
+
+### Bug Fixes
+
+* **connector:** engine correctness + MCP server robustness ([711f091](https://github.com/MrEyratnz/software-factory/commit/711f091b7856b854bc917679b63387207ff75f3e))
+* **hooks:** close receipt-forgery paths, resolve uninit deadlocks, harden record-green ([5612bbf](https://github.com/MrEyratnz/software-factory/commit/5612bbf274ffe638012d0df68d01cdb47ea9716d))
+* **hooks:** close regressions found by adversarial review of the fix diff ([993f152](https://github.com/MrEyratnz/software-factory/commit/993f15212e8bf37eabfab3b5888069042a04744d))
+* **hooks:** close round-3 review findings (tox/xargs/rsync false-green + bypass; test gaps) ([6047fa0](https://github.com/MrEyratnz/software-factory/commit/6047fa01469dedcc8c78e63556958e63259efc33))
+* **hooks:** harden cd/symlink resolution; clarify roadmap-proof producer; drop fake ts ([15e6b60](https://github.com/MrEyratnz/software-factory/commit/15e6b60226f2326474e1283be276001cdeace301))
+* **hooks:** per-wrapper value flags — global union reopened the --no-verify/release bypass ([7c1f032](https://github.com/MrEyratnz/software-factory/commit/7c1f0320cf31718f60486a45bbc82c41dcbb0b62))
+* **hooks:** pipe event JSON via stdin, rewrite commit parser, fix tree_hash for subdir sessions ([23b3a3c](https://github.com/MrEyratnz/software-factory/commit/23b3a3c5f8812fce6c89d32822a955ad66b9bff8))
+* **hooks:** unblock reviewer handoff, dedup ledger, quiet uninit repos, fix release/roadmap false-blocks ([ac405b9](https://github.com/MrEyratnz/software-factory/commit/ac405b9eb9bca4e56154ca622fb3453f29a12aa0))
+* **init:** allow first-run config creation; document .factory source-control policy ([6311777](https://github.com/MrEyratnz/software-factory/commit/6311777929f72de1419e42e006944704c05c61b7))
+* uncover and fix factory gate bugs; resolve uninit deadlocks; harden with tests ([fa2f8a9](https://github.com/MrEyratnz/software-factory/commit/fa2f8a9c19e19118657a6a27a74abe4417f30b75))
+
 ## [0.1.5](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.4...dark-software-factory-v0.1.5) (2026-07-09)
 
 
