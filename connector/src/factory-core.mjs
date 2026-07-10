@@ -43,8 +43,14 @@ export function parseRoadmap(markdown) {
   const milestones = [];
   let current = null;
   let next = null;
+  let inFence = false;
 
   lines.forEach((raw, i) => {
+    // A fenced code block (``` or ~~~) toggles fence state; headings and
+    // checkboxes inside it are EXAMPLES, not real milestones/items, and must
+    // not be counted (they corrupt totals and can hijack the "next" item).
+    if (/^\s*(```|~~~)/.test(raw)) { inFence = !inFence; return; }
+    if (inFence) return;
     const heading = raw.match(HEADING_RE);
     if (heading) {
       current = {
@@ -111,10 +117,15 @@ export function indexAdrs(entries) {
   const adrs = entries.map((e) => {
     const filename = String(e?.filename ?? '');
     const content = String(e?.content ?? '');
-    // Number: prefer the leading NNNN in the filename, else "# ADR NNNN".
+    // Number: prefer a LEADING numeric prefix in the filename, else "# ADR NNNN"
+    // from the content. Anchoring to the start (not the first digit run anywhere)
+    // stops an unnumbered slug with an embedded digit — `use-http2-push.md` —
+    // from being mis-read as ADR 2. A date-prefixed name (2024-01-15-…) is a
+    // different convention, not an ADR number, so it is skipped here and falls
+    // back to the content marker.
     let number = null;
-    const fnMatch = filename.match(/(\d{1,4})/);
-    if (fnMatch) number = parseInt(fnMatch[1], 10);
+    const fnMatch = filename.match(/^(\d{1,4})[-_.]/);
+    if (fnMatch && !/^\d{4}-\d{2}-\d{2}/.test(filename)) number = parseInt(fnMatch[1], 10);
     const titleLine = content.split('\n').find((l) => /^#\s+/.test(l)) ?? '';
     const title = titleLine.replace(/^#\s+/, '').trim();
     if (number === null) {
@@ -224,8 +235,12 @@ export function lintTechDebt(finding) {
 /** Pull a fingerprint out of an issue (explicit field or a body/title marker). */
 export function extractFingerprint(issue) {
   const i = issue && typeof issue === 'object' ? issue : {};
-  if (typeof i.fingerprint === 'string' && /^[0-9a-f]{8}$/.test(i.fingerprint)) {
-    return i.fingerprint;
+  if (typeof i.fingerprint === 'string') {
+    // Normalize before validating so an explicit uppercase-hex fingerprint field
+    // is recognized the same as the lowercased body-marker form — otherwise the
+    // same finding would fail to dedupe and be re-filed.
+    const fp = i.fingerprint.trim().toLowerCase();
+    if (/^[0-9a-f]{8}$/.test(fp)) return fp;
   }
   const hay = `${i.title ?? ''}\n${i.body ?? ''}`;
   const m = hay.match(/fingerprint:\s*([0-9a-f]{8})/i);
@@ -313,10 +328,21 @@ export const GATE_STAGES = ['typecheck', 'boundaries', 'unit', 'bdd', 'build', '
  *                     stages:Array<{name:string, ok:boolean}>}}}
  */
 export function gateEvaluate(stages, treeHash) {
-  const norml = (Array.isArray(stages) ? stages : []).map((s) => ({
-    name: String(s?.name ?? '').trim(),
-    ok: s?.ok === true || s?.exitCode === 0,
-  }));
+  const norml = (Array.isArray(stages) ? stages : []).map((s) => {
+    // Make the exit code authoritative WHEN PRESENT (coerced numerically, so a
+    // stringified "0" reads as pass, not fail), and never let an OR mask a
+    // failing signal: a stage is green only if its exit code is 0 AND it does
+    // not also carry an explicit ok:false. With no exit code, fall back to the
+    // ok flag. This closes the false-green where {ok:true, exitCode:1} or
+    // {ok:false, exitCode:0} evaluated green.
+    const raw = s == null ? {} : s;
+    const hasExit = raw.exitCode !== undefined && raw.exitCode !== null
+      && String(raw.exitCode).trim() !== '' && Number.isFinite(Number(raw.exitCode));
+    const ok = hasExit
+      ? (Number(raw.exitCode) === 0 && raw.ok !== false)
+      : raw.ok === true;
+    return { name: String(raw.name ?? '').trim(), ok };
+  });
   const failed = norml.filter((s) => !s.ok).map((s) => s.name);
   const tree = typeof treeHash === 'string' && treeHash.trim() ? treeHash.trim() : null;
   // A receipt with no tree hash is unverifiable → never "green".
@@ -346,7 +372,10 @@ const HEADER_RE = /^(?<type>[a-z]+)(?:\((?<scope>[^)]+)\))?(?<bang>!)?: (?<subje
 export function lintCommit(message, opts = {}) {
   const maxHeader = opts.maxHeader ?? 100;
   const text = String(message ?? '');
-  const header = text.split('\n', 1)[0] ?? '';
+  // Split on CR?LF so a CRLF-authored message (Windows editor, `git commit -F`
+  // on a CRLF file) does not leave a trailing '\r' on the header — which the
+  // header regex's `.+$` cannot match, wrongly rejecting a valid commit.
+  const header = text.split(/\r?\n/, 1)[0] ?? '';
   const errors = [];
   const warnings = [];
 
@@ -368,7 +397,10 @@ export function lintCommit(message, opts = {}) {
   if (/^[A-Z]/.test(subject)) warnings.push('subject should start lower-case');
 
   // Breaking = "!" in header OR a "BREAKING CHANGE:" / "BREAKING-CHANGE:" footer.
-  const breakingFooter = /^BREAKING[ -]CHANGE:/im.test(text);
+  // Per Conventional Commits the footer token MUST be uppercase, so this is
+  // case-SENSITIVE: a prose line like "Breaking change: none — internal only"
+  // must not force a false major bump.
+  const breakingFooter = /^BREAKING[ -]CHANGE:/m.test(text);
   const breaking = Boolean(bang) || breakingFooter;
 
   let bump = 'none';
