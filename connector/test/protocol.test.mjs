@@ -116,7 +116,7 @@ test('a tool that throws is reported in-band as isError', async () => {
 
 /* ── bug-hunt regressions (server robustness) ─────────────────────────── */
 
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 test('ledger_read: limit is clamped (0 → none, N → last N, none → all)', async () => {
@@ -152,5 +152,37 @@ test('safePath: an in-project symlink pointing outside the tree cannot exfiltrat
   } finally {
     rmSync(proj, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('server exposes its tools when installed under a path with a space and bracket', async () => {
+  // The invokedDirectly self-launch guard must compare DECODED paths — under a
+  // path containing a space or '[' the percent-encoded import.meta.url.pathname
+  // would not equal process.argv[1], so the server would start, serve nothing,
+  // and exit 0 (fileURLToPath fixes it).
+  const base = mkdtempSync(join(tmpdir(), 'dsf-sp-'));
+  const dir = join(base, 'a b [x]', 'src');
+  mkdirSync(dir, { recursive: true });
+  const here = dirname(fileURLToPath(import.meta.url));
+  const srcDir = join(here, '..', 'src');
+  for (const f of ['server.mjs', 'factory-core.mjs']) {
+    writeFileSync(join(dir, f), readFileSync(join(srcDir, f)));
+  }
+  try {
+    const out = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [join(dir, 'server.mjs')], { stdio: ['pipe', 'pipe', 'inherit'] });
+      let buf = '';
+      const timer = setTimeout(() => { child.kill(); reject(new Error('timeout')); }, 10000);
+      child.stdout.on('data', (c) => {
+        buf += c.toString();
+        const nl = buf.indexOf('\n');
+        if (nl >= 0) { clearTimeout(timer); child.kill(); resolve(JSON.parse(buf.slice(0, nl))); }
+      });
+      child.on('error', reject);
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) + '\n');
+    });
+    assert.ok(out.result.tools.length > 0, 'server under a special-char path must still advertise tools');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });

@@ -60,7 +60,10 @@ const WRAPPER_VALUE_FLAGS_BY = {
   ionice: new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid']),
   time: new Set(['-o', '--output', '-f', '--format']),
   exec: new Set(['-a']),
-  xargs: new Set(['-I', '-i', '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '-L', '-l', '-d', '--delimiter', '-E', '-e', '-a', '--arg-file']),
+  // NB: xargs -l takes an OPTIONAL, attached arg (-l5); an unattached following
+  // word is the wrapped command, never -l's value — so -l is NOT value-taking
+  // (listing it swallowed the wrapped release verb, a bypass). -L requires a value.
+  xargs: new Set(['-I', '-i', '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '-L', '-d', '--delimiter', '-E', '-e', '-a', '--arg-file']),
 };
 const WRAPPER_POSITIONALS = { timeout: 1, chrt: 1 };
 // Shells whose `-c <string>` arg is itself a command line (a release verb hidden

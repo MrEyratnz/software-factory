@@ -100,7 +100,12 @@ function tokenize(cmd) {
 //           it, so del targets are checked against the trust roots only —
 //           `cd .factory && rm config.json` must not un-initialize the factory.
 const MUTATOR_TARGET = {
-  cp: 'copy', mv: 'copy', install: 'copy', rsync: 'copy', ln: 'copy',
+  cp: 'copy', mv: 'copy', install: 'copy', ln: 'copy',
+  // rsync's destination is its LAST operand; it has NO --target-directory, and
+  // its `-t` means --times (a boolean) — so the `-t <dir>` rule must NOT apply,
+  // or `rsync -t forged .factory/state/gate-receipt.json` would mis-target the
+  // SOURCE and let the receipt-forgery dest slip.
+  rsync: 'last',
   touch: 'all', truncate: 'trunc', dd: 'ddof',
   rm: 'del', rmdir: 'del', unlink: 'del', shred: 'del',
 };
@@ -147,6 +152,10 @@ function collect(cmd) {
     const args = commandArgs(k);
     if (rule === 'all') {
       for (const w of args) if (!w.v.startsWith('-')) targets.push(w);
+    } else if (rule === 'last') {
+      let dest = null;
+      for (const w of args) { if (!w.v.startsWith('-')) dest = w; }
+      if (dest) targets.push(dest);
     } else if (rule === 'del') {
       for (const w of args) if (!w.v.startsWith('-')) targets.push({ v: w.v, unresolvable: w.unresolvable, del: true });
     } else if (rule === 'ddof') {

@@ -906,8 +906,11 @@ echo "# review-round: command wrappers no longer defeat the parsers"
 PGC="$ROOT/hooks/lib/parse-git-commit.mjs"
 CTR="$ROOT/hooks/lib/classify-test-run.mjs"
 CRL="$ROOT/hooks/lib/classify-release.mjs"
-# Mirror of record-green.sh DEFAULT_TEST_RE (kept in sync; see tech-debt #54).
-DTR='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run -m (pytest|unittest|nose2)|tox( +(-e|-p|-r|-f|[a-z])|$))'
+# Use the EXACT DEFAULT_TEST_RE from record-green.sh (extracted, not re-declared)
+# so the classifier tests exercise the production regex and a revert/edit of it
+# fails CI — no divergeable mirror (retires the drift risk of tech-debt #54).
+DTR="$(sed -n "s/^DEFAULT_TEST_RE='\(.*\)'$/\1/p" "$ROOT/hooks/scripts/record-green.sh")"
+[ -n "$DTR" ] || { echo "FAIL - could not extract DEFAULT_TEST_RE from record-green.sh"; FAIL=$((FAIL+1)); }
 REL='(git tag|gh release create|npm publish|docker push|release-please|npm version )'
 jf() { printf '%s' "$1" | node "$2" ${3:+"$3"} | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s)["'"$4"'"])))'; }
 chk() { if [ "$1" = "$2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - $3 (got '$1', want '$2')"; fi; }
@@ -1004,6 +1007,33 @@ chk "$(jf 'coverage run manage.py migrate' "$CTR" "$DTR" testCommand)" false "co
 chk "$(jf 'coverage run -m pytest' "$CTR" "$DTR" testCommand)" true "coverage run -m pytest IS a test run"
 chk "$(jf 'tox -l' "$CTR" "$DTR" testCommand)" false "tox -l (list) is not a test run"
 chk "$(jf 'tox' "$CTR" "$DTR" testCommand)" true "bare tox IS a test run"
+chk "$(jf 'tox -e lint' "$CTR" "$DTR" testCommand)" false "tox -e <env> is not auto-classed as a test (env may be lint/docs)"
+# xargs -l is boolean-optional-arg, not value-taking — must not swallow the wrapped command
+chk "$(jf 'xargs -l npm test' "$CTR" "$DTR" testCommand)" true "xargs -l npm test is a test run (-l does not consume npm)"
+chk "$(jf 'xargs -l gh release create' "$CRL" "$REL" isRelease)" true "xargs -l gh release create is a release (-l does not consume gh)"
+chk "$(jf 'xargs -L 1 gh release create' "$CRL" "$REL" isRelease)" true "xargs -L 1 (value flag) still resolves the wrapped release"
+
+echo "# review-round-2: end-to-end record-green + rsync -t forgery"
+# Drive record-green.sh ITSELF (not just the classifier) so a revert of its
+# DEFAULT_TEST_RE is caught — the false-green vectors must mint NOTHING.
+SCRIPT="$S/record-green.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [] }
+JSON
+e2e() { rm -f "$R/.factory/state/gate-receipt.json"; EVENT="$(evt "$R" Bash "$1" ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1; }
+e2e '{"command":"coverage run manage.py migrate"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "e2e: coverage run <non-test> mints nothing"
+e2e '{"command":"tox -e lint"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "e2e: tox -e lint mints nothing"
+e2e '{"command":"tox -l"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "e2e: tox -l mints nothing"
+e2e '{"command":"coverage run -m pytest"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "e2e: coverage run -m pytest mints"
+e2e '{"command":"tox"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "e2e: bare tox mints"
+# rsync -t is --times (boolean), NOT --target-directory: the dest is the last
+# operand, so a receipt forgery via rsync must be caught.
+SCRIPT="$S/guard-bash-writes.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"rsync -t /tmp/forged.json .factory/state/gate-receipt.json"}')"
+assert_exit 2 "rsync -t receipt forgery is blocked (dest is the last operand, not -t's value)"
+EVENT="$(evt "$R" Bash '{"command":"rsync -a src/ dst/"}')"; assert_exit 0 "legit rsync between in-project dirs allowed"
 
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"

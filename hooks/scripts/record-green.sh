@@ -20,7 +20,7 @@ cmd="$(field tool_input.command)"
 # un-inited repo has no config to widen this, so a green `yarn test`/`bun test`
 # must still be recognized or its commit would deadlock. A repo can override via
 # testCommandRegex.
-DEFAULT_TEST_RE='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run -m (pytest|unittest|nose2)|tox( +(-e|-p|-r|-f|[a-z])|$))'
+DEFAULT_TEST_RE='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run -m (pytest|unittest|nose2)|tox( +(-[prfqv]|--parallel|--recreate))* *$)'
 test_re="$(config_get testCommandRegex "$DEFAULT_TEST_RE")"
 # An explicitly-blanked regex must DISABLE detection, never match every command
 # (an empty ERE matches all): fail safe — mint nothing.
