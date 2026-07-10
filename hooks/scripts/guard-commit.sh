@@ -46,8 +46,12 @@ if { [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; } && enforcement_on requireT
   files="$(staged_files "$target_root")"
   # `git commit -a/-am` stages tracked modifications AT commit time, so nothing
   # is staged yet at PreToolUse — evaluate the tracked changeset instead, or the
-  # TDD check would be silently skipped.
-  if printf '%s' "$cmd" | grep -Eq 'commit[^|&;]*[[:space:]]-[A-Za-z]*a'; then
+  # TDD check would be silently skipped. The -a flag comes from the quote-aware
+  # parser (its `all` field), NOT a grep over the whole command: a message like
+  # `-m "handle the -a flag"` must not be misread as `commit -a` (which would
+  # evaluate the wrong changeset).
+  all="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).all))}catch(e){process.stdout.write("false")}})')"
+  if [ "$all" = "true" ]; then
     files="$( cd "$target_root" 2>/dev/null && git diff --name-only HEAD 2>/dev/null )"
   fi
   if [ -n "$files" ]; then
