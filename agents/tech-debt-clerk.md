@@ -25,4 +25,4 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
 Use `techdebt_lint` to confirm a finding carries every required field before
 filing; if a field is missing, say so rather than filing an incomplete issue.
 Do not silently drop a finding or bury it in chat — if it is not being fixed in
-the PR, it gets an issue. This is exactly the course-creator convention.
+the PR, it gets an issue.

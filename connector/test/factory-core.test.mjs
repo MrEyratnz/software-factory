@@ -183,7 +183,7 @@ test('planRelease: breaking → major', () => {
   assert.deepEqual(r.breaking, ['feat!: x']);
 });
 
-test('planRelease: preMajor policy (course-creator config) demotes bumps', () => {
+test('planRelease: preMajor policy demotes bumps', () => {
   // While 0.x: breaking→minor, feat→patch (matches release-please config).
   assert.equal(planRelease(['feat!: x'], '0.1.2', { preMajor: true }).nextVersion, '0.2.0');
   assert.equal(planRelease(['feat: x'], '0.1.2', { preMajor: true }).nextVersion, '0.1.3');

@@ -25,4 +25,4 @@ ok="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).
 
 n="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).missing.length))}catch(e){process.stdout.write("?")}})')"
 otel_emit factory_techdebt_missing_total gauge "$n" '{}'
-block_stop "$n unfixed review finding(s) are not yet tracked — file each as a \`tech-debt\` issue (run /debt sync) or mark it status:\"fixed\" in .factory/review before ending. (course-creator convention: unfixed findings become tracked tech-debt.)"
+block_stop "$n unfixed review finding(s) are not yet tracked — file each as a \`tech-debt\` issue (run /debt sync) or mark it status:\"fixed\" in .factory/review before ending. (Convention: unfixed findings become tracked tech-debt.)"
