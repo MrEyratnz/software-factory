@@ -13,15 +13,21 @@ case "$(field tool_name)" in Write|Edit|MultiEdit) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 [ -n "$fp" ] || allow
 
-rel="$(FP="$fp" PD="$PROJECT_DIR" node -e '
-  const p=require("path");
-  const abs=p.isAbsolute(process.env.FP)?process.env.FP:p.resolve(process.env.PD,process.env.FP);
-  process.stdout.write(p.relative(process.env.PD, abs));
+# Resolve BOTH rel and abs against the canonical (realpath) project root and
+# canonicalize the target's own path, so a symlink inside the project that points
+# into a trust root (e.g. `ln -s .factory/state sneak` then Write sneak/receipt)
+# cannot smuggle a write past the lexical trust-root match (issue #58). The
+# target file itself may be new, so we realpath the deepest existing ancestor.
+_scope="$(FP="$fp" PD="$PROJECT_DIR" node -e '
+  const p=require("path"),fs=require("fs");
+  const FP=process.env.FP,PD=process.env.PD;
+  let abs=p.isAbsolute(FP)?p.resolve(FP):p.resolve(PD,FP);
+  try{abs=fs.realpathSync(abs)}catch(e){try{abs=p.join(fs.realpathSync(p.dirname(abs)),p.basename(abs))}catch(e2){}}
+  let root=PD;try{root=fs.realpathSync(PD)}catch(e){root=p.resolve(PD)}
+  process.stdout.write(JSON.stringify({rel:p.relative(root,abs),abs}));
 ')"
-abs="$(FP="$fp" PD="$PROJECT_DIR" node -e '
-  const p=require("path");
-  process.stdout.write(p.isAbsolute(process.env.FP)?p.resolve(process.env.FP):p.resolve(process.env.PD,process.env.FP));
-')"
+rel="$(printf '%s' "$_scope" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).rel)}catch(e){}})')"
+abs="$(printf '%s' "$_scope" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).abs)}catch(e){}})')"
 
 # Writing outside the project tree is never allowed (unless the scope gate is
 # relaxed for this repo via enforcement.enforceProjectDirScope) — except for

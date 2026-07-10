@@ -88,7 +88,7 @@ tree="$(tree_hash "$target_root")"
 
 receipt="$(printf '{"stages":[{"name":"suite","exitCode":%s}],"treeHash":%s}' "$ec" "$(json_str "$tree")" \
   | fc gate-evaluate \
-  | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(JSON.stringify({...o.receipt,ts:o.receipt.tree?1:0}))}catch(e){process.stdout.write("")}})')"
+  | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(JSON.stringify(o.receipt))}catch(e){process.stdout.write("")}})')"
 
 [ -n "$receipt" ] || allow
 

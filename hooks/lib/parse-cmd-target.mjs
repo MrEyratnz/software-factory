@@ -55,11 +55,28 @@ const OPT_WITH_VALUE = new Set(['-c', '--git-dir', '--work-tree', '--namespace',
 
 function resolveTarget(cmd) {
   const toks = tokenize(cmd);
+  // Effective cwd: track every command-position `cd <dir>` up to the git
+  // invocation, not just the first token. `cd a; cd b; git commit` lands in b;
+  // `FOO=1 cd sub && git commit` lands in sub (skip the env assignment); `cd -`
+  // / a bare `cd` is unresolvable, so it clears the tracked cwd (fall back to
+  // PROJECT_DIR) rather than mis-binding to a literal "-".
   let cwd = '';
   for (let k = 0; k < toks.length; k++) {
-    if (toks[k].op) continue;
-    if (toks[k].v === 'cd' && toks[k + 1] && !toks[k + 1].op) cwd = toks[k + 1].v;
-    break;
+    const t = toks[k];
+    if (t.op) continue;
+    const atCmdPos = k === 0 || (toks[k - 1].op && CMD_SEP.has(toks[k - 1].op));
+    if (!atCmdPos) continue;
+    // Skip leading env assignments (VAR=val) to reach the real command word.
+    let c = k;
+    while (c < toks.length && !toks[c].op && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[c].v)) c++;
+    if (c >= toks.length || toks[c].op) continue;
+    const word = toks[c].v;
+    if (word === 'git') break; // the git command runs with the cwd accumulated so far
+    if (word === 'cd') {
+      const arg = toks[c + 1];
+      if (arg && !arg.op && arg.v !== '-' && arg.v !== '~-') cwd = arg.v;
+      else cwd = ''; // `cd -` / bare `cd` (home) — unresolvable, don't guess
+    }
   }
   let dashC = '';
   for (let k = 0; k < toks.length && !dashC; k++) {
