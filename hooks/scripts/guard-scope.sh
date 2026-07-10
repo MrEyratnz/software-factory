@@ -21,8 +21,18 @@ fp="$(field tool_input.file_path)"
 _scope="$(FP="$fp" PD="$PROJECT_DIR" node -e '
   const p=require("path"),fs=require("fs");
   const FP=process.env.FP,PD=process.env.PD;
-  let abs=p.isAbsolute(FP)?p.resolve(FP):p.resolve(PD,FP);
-  try{abs=fs.realpathSync(abs)}catch(e){try{abs=p.join(fs.realpathSync(p.dirname(abs)),p.basename(abs))}catch(e2){}}
+  // Canonicalize as far as the path EXISTS, then re-append the not-yet-created
+  // tail — walking up to the deepest existing ancestor (not just the immediate
+  // parent), so a new file in a not-yet-created nested dir under a SYMLINKED
+  // project root still canonicalizes correctly instead of being mis-judged
+  // out-of-tree (issue #58 follow-up).
+  const canon=(a)=>{
+    try{return fs.realpathSync(a)}catch(e){}
+    const tail=[]; let cur=a;
+    for(let i=0;i<64;i++){ const par=p.dirname(cur); if(par===cur) break; tail.unshift(p.basename(cur)); cur=par; try{return p.join(fs.realpathSync(cur),...tail)}catch(e){} }
+    return a;
+  };
+  const abs=canon(p.isAbsolute(FP)?p.resolve(FP):p.resolve(PD,FP));
   let root=PD;try{root=fs.realpathSync(PD)}catch(e){root=p.resolve(PD)}
   process.stdout.write(JSON.stringify({rel:p.relative(root,abs),abs}));
 ')"

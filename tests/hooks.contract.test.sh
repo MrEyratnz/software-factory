@@ -897,6 +897,89 @@ EVENT="$(evt "$R" Bash '{"command":"npm run build # release build"}' ',"tool_res
 printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
 assert_file exists "$R/.factory/state/release-proof.json" "release proof mints on a green build with a trailing '#' comment"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Review-round regressions — defects the adversarial review of the fix diff
+# itself surfaced (command wrappers defeating the tokenized parsers, cp -t
+# forgery, cross-repo/config-delete bypasses, symlinked-root false-block).
+# ═══════════════════════════════════════════════════════════════════════════
+echo "# review-round: command wrappers no longer defeat the parsers"
+PGC="$ROOT/hooks/lib/parse-git-commit.mjs"
+CTR="$ROOT/hooks/lib/classify-test-run.mjs"
+CRL="$ROOT/hooks/lib/classify-release.mjs"
+DTR='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run|tox)'
+REL='(git tag|gh release create|npm publish|docker push|release-please|npm version )'
+jf() { printf '%s' "$1" | node "$2" ${3:+"$3"} | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s)["'"$4"'"])))'; }
+chk() { if [ "$1" = "$2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - $3 (got '$1', want '$2')"; fi; }
+# parse-git-commit: wrapped commits detected; bypass still scoped; heredoc scoped
+chk "$(jf 'timeout 60 git commit --no-verify -m x' "$PGC" '' isCommit)" true "wrapper: timeout git commit is a commit"
+chk "$(jf 'timeout 60 git commit --no-verify -m x' "$PGC" '' bypass)" true "wrapper: --no-verify under timeout still a bypass"
+chk "$(jf 'nice -n 5 git commit -m x' "$PGC" '' isCommit)" true "wrapper: nice -n 5 git commit is a commit"
+chk "$(jf 'sudo -u ci git commit -m x' "$PGC" '' isCommit)" true "wrapper: sudo -u ci git commit is a commit"
+chk "$(jf 'git commit -m "feat: real" && cat <<EOF > n.txt
+notes
+EOF' "$PGC" '' message)" "feat: real" "heredoc: unrelated chained heredoc does not overwrite the -m message"
+# classify-test-run: wrappers engage; python forms; playwright install excluded; && clean; & not clean
+chk "$(jf 'timeout 300 npm test' "$CTR" "$DTR" testCommand)" true "wrapper: timeout npm test is a test run"
+chk "$(jf 'python -m pytest' "$CTR" "$DTR" testCommand)" true "python -m pytest is a test run"
+chk "$(jf 'coverage run -m pytest' "$CTR" "$DTR" testCommand)" true "coverage run is a test run"
+chk "$(jf 'npx playwright install' "$CTR" "$DTR" testCommand)" false "npx playwright install is NOT a test run"
+chk "$(jf 'npm test && npm run lint' "$CTR" "$DTR" cleanInvocation)" true "&&-chained suite: exit code is authoritative"
+chk "$(jf 'npm test &' "$CTR" "$DTR" cleanInvocation)" false "backgrounded suite: exit code NOT authoritative"
+# classify-release: wrapped/sh-c releases detected
+chk "$(jf 'timeout 60 gh release create v1' "$CRL" "$REL" isRelease)" true "wrapper: timeout gh release create is a release"
+chk "$(jf "sh -c 'gh release create v1'" "$CRL" "$REL" isRelease)" true "sh -c hidden release is a release"
+chk "$(jf 'git tag -l' "$CRL" "$REL" isRelease)" false "git tag -l (read-only) still not a release"
+
+echo "# review-round: parse-bash-writes cp -t forgery + rm trust-root deletion"
+PBW="$ROOT/hooks/lib/parse-bash-writes.mjs"
+tcount() { printf '%s' "$1" | HOOK_PROJECT_DIR=/proj node "$PBW" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String((JSON.parse(s).trustRoot||[]).length)))'; }
+chk "$(tcount 'cp -t .factory/state gate-receipt.json')" 1 "cp -t DIR flags the trust-root target dir"
+chk "$(tcount 'cp -rt .factory/state x')" 1 "cp -rt cluster flags the trust-root dir"
+chk "$(tcount 'cd .factory && rm config.json')" 1 "cd-relative rm of config flagged as trust-root delete"
+chk "$(tcount 'rm src/x.ts')" 0 "rm of an in-project non-trust file is not over-flagged"
+
+echo "# review-round: guard-bash-writes carve-out + cross-repo + nested symlink"
+SCRIPT="$S/guard-bash-writes.sh"
+B="$(mkbare)"; export CLAUDE_PROJECT_DIR="$B"   # uninit (no config)
+EVENT="$(evt "$B" Bash '{"command":"cd .factory && mkdir -p state && printf {} > config.json; : > state/paused"}')"
+assert_exit 2 "carve-out: config-create that ALSO plants state/paused is blocked"
+EVENT="$(evt "$B" Bash '{"command":"mkdir -p .factory && printf {} > .factory/config.json"}')"
+assert_exit 0 "carve-out: first-run config-only creation still allowed"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"    # init
+EVENT="$(evt "$R" Bash '{"command":"cd .factory && rm config.json"}')"
+assert_exit 2 "cd-relative rm of config in an inited repo is blocked (no kill-switch)"
+# cross-repo union: uninit session A committing to inited sibling B is still gated
+A2="$(mkbare)"; B2="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$A2"
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$A2" Bash '{"command":"cd '"$B2"' && git commit -m \"feat: sneaky\""}')"
+assert_exit 2 "cross-repo: uninit session cannot bypass an inited sibling's commit gate"
+EVENT="$(evt "$A2" Bash '{"command":"git commit -m \"feat: local\""}')"
+assert_exit 0 "cross-repo: uninit session + uninit target stays advisory (no deadlock)"
+# guard-scope: a new nested file under a SYMLINKED project root is allowed
+SCRIPT="$S/guard-scope.sh"
+SYMBASE="$(mktemp -d "$TMPROOT/symp.XXXXXX")"; mkdir -p "$SYMBASE/real/.factory" "$SYMBASE/real/src"
+printf '{}' > "$SYMBASE/real/.factory/config.json"; ( cd "$SYMBASE/real" && git init -q )
+ln -s "$SYMBASE/real" "$SYMBASE/sym"; echo implementer > "$SYMBASE/real/.factory/active-agent"
+export CLAUDE_PROJECT_DIR="$SYMBASE/sym"
+EVENT="$(evt "$SYMBASE/sym" Write '{"file_path":"'"$SYMBASE"'/sym/src/comp/NewThing/index.tsx"}')"
+assert_exit 0 "symlinked root: new file in a not-yet-created nested dir is allowed"
+EVENT="$(evt "$SYMBASE/sym" Write '{"file_path":".factory/state/gate-receipt.json"}')"
+assert_exit 2 "symlinked root: trust-root write still blocked"
+
+echo "# review-round: record-green recognizes python/wrapper suites, rejects background"
+SCRIPT="$S/record-green.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [] }
+JSON
+rgm() { rm -f "$R/.factory/state/gate-receipt.json"; EVENT="$(evt "$R" Bash "$1" ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1; }
+rgm '{"command":"python -m pytest"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "python -m pytest mints a receipt"
+rgm '{"command":"timeout 300 npm test"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "timeout npm test mints a receipt"
+rgm '{"command":"npm test && npm run lint"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "npm test && lint mints (exit authoritative)"
+rgm '{"command":"npx playwright install"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "npx playwright install mints nothing"
+rgm '{"command":"npm test &"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "backgrounded npm test mints nothing"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

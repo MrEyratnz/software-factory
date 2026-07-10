@@ -38,7 +38,22 @@ function skipWord(cmd, i) {
   return i;
 }
 
-const PREFIX_WORDS = new Set(['command', 'builtin', 'exec', 'env', 'time', 'nice', 'nohup', 'sudo', 'then', 'do', 'else']);
+const PREFIX_WORDS = new Set(['then', 'do', 'else']);
+// Command wrappers (run another command later in argv). A release verb wrapped
+// in `timeout … gh release create` / `nice … npm publish` must still be seen, or
+// the release gate is bypassed — the pre-rewrite whole-line grep caught these.
+const WRAPPERS = new Set([
+  'timeout', 'nice', 'nohup', 'sudo', 'doas', 'env', 'stdbuf', 'ionice', 'chrt',
+  'setsid', 'unbuffer', 'time', 'command', 'builtin', 'exec', 'xargs',
+]);
+const WRAPPER_VALUE_FLAGS = new Set([
+  '-s', '--signal', '-k', '--kill-after', '-n', '-u', '-g', '-C', '-h', '-p',
+  '-r', '-t', '-U', '-o', '-e', '-i', '-c', '-D', '-R', '-S', '--user', '--group',
+]);
+const WRAPPER_POSITIONALS = { timeout: 1, chrt: 1 };
+// Shells whose `-c <string>` arg is itself a command line (a release verb hidden
+// in `sh -c 'gh release create v1'` must still be gated).
+const SHELL_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
 // Parse into simple commands (arrays of unquoted words), honoring quotes,
 // redirects, and `#` comments.
@@ -66,16 +81,29 @@ function parse(cmd) {
   return commands;
 }
 
-// Words of a simple command from its command word onward (skip env/prefix).
+// Words of a simple command from its EFFECTIVE command word onward: skip env
+// assignments and shell-keyword prefixes, then unwrap command wrappers (past
+// their flags/values/positionals) so `timeout 60 gh release create` resolves to
+// `gh release create`.
 function head(words) {
-  let k = 0;
-  while (k < words.length) {
-    const w = words[k];
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) { k++; continue; }
-    if (PREFIX_WORDS.has(w)) { k++; continue; }
-    break;
+  let w = words;
+  for (let guard = 0; guard < 6; guard += 1) {
+    let k = 0;
+    while (k < w.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[k]) || PREFIX_WORDS.has(w[k]))) k += 1;
+    if (k >= w.length) return [];
+    if (!WRAPPERS.has(w[k])) return w.slice(k);
+    let j = k + 1;
+    let pos = WRAPPER_POSITIONALS[w[k]] || 0;
+    while (j < w.length) {
+      const t = w[j];
+      if (t.startsWith('-')) { j += 1; if (WRAPPER_VALUE_FLAGS.has(t) && j < w.length && !w[j].startsWith('-')) j += 1; continue; }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) { j += 1; continue; }
+      if (pos > 0) { pos -= 1; j += 1; continue; }
+      break;
+    }
+    w = w.slice(j);
   }
-  return words.slice(k);
+  return w;
 }
 
 const TAG_LIST_FLAGS = new Set(['-l', '--list', '-n', '--contains', '--no-contains', '--points-at', '-v', '--verify', '--merged', '--no-merged', '--sort', '--format', '-d', '--delete']);
@@ -100,19 +128,31 @@ function isGitTagCreate(hw) {
 let re = null;
 try { const src = String(process.argv[2] ?? ''); if (src) re = new RegExp('^(?:' + src + ')'); } catch { re = null; }
 
+function analyze(rawCmd, depth) {
+  const cmd = rawCmd.replace(/\\\r?\n/g, '');
+  for (const words of parse(cmd)) {
+    const hw = head(words);
+    if (!hw.length) continue;
+    // `sh -c '<payload>'` / `bash -c …` / `eval '<payload>'`: recurse into the
+    // payload (bounded depth) so a release verb hidden there is still detected.
+    if (depth < 4 && (SHELL_WORDS.has(hw[0]) || hw[0] === 'eval')) {
+      let payload = '';
+      if (hw[0] === 'eval') payload = hw.slice(1).join(' ');
+      else { const ci = hw.indexOf('-c'); if (ci >= 0 && hw[ci + 1]) payload = hw[ci + 1]; }
+      if (payload && analyze(payload, depth + 1)) return true;
+      continue;
+    }
+    // `git … tag …` — decide by create-vs-list, never by the raw regex (which
+    // would match `git tag -l`).
+    if (hw[0] === 'git' && hw.includes('tag')) { if (isGitTagCreate(hw)) return true; continue; }
+    if (re && re.test(hw.join(' '))) return true;
+  }
+  return false;
+}
+
 let s = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => { s += c; });
 process.stdin.on('end', () => {
-  const cmd = s.replace(/\\\r?\n/g, '');
-  let isRelease = false;
-  for (const words of parse(cmd)) {
-    const hw = head(words);
-    if (!hw.length) continue;
-    // `git … tag …` — decide by create-vs-list, never by the raw regex (which
-    // would match `git tag -l`).
-    if (hw[0] === 'git' && hw.includes('tag')) { if (isGitTagCreate(hw)) { isRelease = true; break; } continue; }
-    if (re && re.test(hw.join(' '))) { isRelease = true; break; }
-  }
-  process.stdout.write(JSON.stringify({ isRelease }));
+  process.stdout.write(JSON.stringify({ isRelease: analyze(s, 0) }));
 });

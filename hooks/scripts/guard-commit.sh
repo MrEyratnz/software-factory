@@ -10,10 +10,6 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-commit
-# Not factory-initialized (no .factory/config.json) → the workflow gate steps
-# aside rather than demanding a green receipt no producer can mint here, which
-# would deadlock every commit in an un-inited repo (run /factory-init to arm it).
-require_initialized guard-commit
 [ "$(field tool_name)" = "Bash" ] || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow
@@ -25,6 +21,17 @@ is_commit="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>
 # The repo this commit actually targets (honors `cd <dir> &&`/`git -C <dir>`),
 # so the green gate binds to it, not the fixed session project (issue #28).
 target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
+# The factory is advisory only when NEITHER the session NOR the target repo is
+# initialized. Enforcing on session-init keeps the established model (the session
+# factory gates commits to any repo it touches, binding the receipt to the target
+# tree — issue #28); ALSO enforcing on target-init means an un-inited scratch
+# session cannot be used as a blanket bypass for an initialized sibling reached
+# via `cd`/`git -C`. Both un-inited → step aside (no producer can mint a receipt).
+if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
+  otel_emit factory_gate_uninitialized_total sum 1 '{"hook":"guard-commit"}'
+  allow
+fi
 
 # (a) bypass flags
 bypass="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).bypass))}catch(e){process.stdout.write("false")}})')"

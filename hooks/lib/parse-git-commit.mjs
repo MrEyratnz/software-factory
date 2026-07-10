@@ -43,9 +43,26 @@ const SAFE_SUBCOMMANDS = new Set([
 // git global options that consume the NEXT token as their value (so the
 // subcommand walk must skip that value too).
 const GIT_OPT_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
-// Non-git command words that merely PREFIX another command; skip them so
-// `command git commit` / `env git commit` still resolve to the git invocation.
-const PREFIX_WORDS = new Set(['command', 'builtin', 'exec', 'env', 'time', 'nice', 'nohup', 'sudo', 'xargs']);
+// Command WRAPPERS — programs that run ANOTHER command given later in their
+// argv (`timeout 60 git commit`, `nice -n 5 git commit`, `sudo -u ci git
+// commit`, `env X=1 git commit`). The wrapped command must be found past the
+// wrapper's own flags/values/positionals, or a wrapped `git commit` (and its
+// hard --no-verify block) would slip the gate — the pre-rewrite whole-text scan
+// caught these, so missing them is a regression.
+const WRAPPERS = new Set([
+  'timeout', 'nice', 'nohup', 'sudo', 'doas', 'env', 'stdbuf', 'ionice', 'chrt',
+  'setsid', 'unbuffer', 'time', 'command', 'builtin', 'exec', 'xargs',
+]);
+// Wrapper flags that consume the NEXT token as their value (so it is not the
+// wrapped command). Superset across the wrappers above; a false skip only makes
+// isCommit MORE conservative (engage the gate), never less.
+const WRAPPER_VALUE_FLAGS = new Set([
+  '-s', '--signal', '-k', '--kill-after', '-n', '-u', '-g', '-C', '-h', '-p',
+  '-r', '-t', '-U', '-o', '-e', '-i', '-c', '-D', '-R', '-S', '--user', '--group',
+]);
+// Wrappers that take a positional argument BEFORE the wrapped command (timeout's
+// DURATION, chrt's PRIORITY).
+const WRAPPER_POSITIONALS = { timeout: 1, chrt: 1 };
 // Constructs that can supply a git subcommand (or whole invocation) out of
 // static view — a bare `git` alongside one of these fails toward the gate.
 const INDIRECTION_RE = /\bxargs\b|\beval\b|\bsh\s+-c\b|\bbash\s+-c\b|`|\$\(/;
@@ -96,18 +113,38 @@ function segments(toks) {
   return segs;
 }
 
-// From a segment's word tokens, return the command word index (skipping leading
-// VAR=val assignments and prefix words like `command`/`env`), or -1.
+// From a segment's word tokens, return the index of the EFFECTIVE command word:
+// skip leading VAR=val assignments, then unwrap any command wrappers (past their
+// flags/values/positionals) so `timeout 60 git …` / `nice -n 5 git …` resolve to
+// the `git` token. Returns -1 if none.
 function commandWordIndex(seg) {
+  // Drop operator tokens up front so index math over words is simple.
   let k = 0;
-  while (k < seg.length) {
+  let guard = 0;
+  while (k < seg.length && guard < 8) {
+    guard += 1;
+    // skip env assignments
+    while (k < seg.length && (seg[k].op || (!seg[k].quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[k].v)))) k += 1;
+    if (k >= seg.length) return -1;
     const t = seg[k];
-    if (t.op) { k++; continue; }
-    if (!t.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(t.v)) { k++; continue; } // env assignment
-    if (!t.quoted && PREFIX_WORDS.has(t.v)) { k++; continue; } // command/env/… prefix
-    return k;
+    if (t.quoted || !WRAPPERS.has(t.v)) return k; // real command word (or a quoted one)
+    // unwrap: advance past the wrapper's own flags/values/positionals
+    let j = k + 1;
+    let pos = WRAPPER_POSITIONALS[t.v] || 0;
+    while (j < seg.length && !seg[j].op) {
+      const a = seg[j];
+      if (a.v.startsWith('-')) {
+        j += 1;
+        if (WRAPPER_VALUE_FLAGS.has(a.v) && j < seg.length && !seg[j].op && !seg[j].v.startsWith('-')) j += 1;
+        continue;
+      }
+      if (!a.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a.v)) { j += 1; continue; } // env's VAR=val
+      if (pos > 0) { pos -= 1; j += 1; continue; }
+      break;
+    }
+    k = j;
   }
-  return -1;
+  return k < seg.length ? k : -1;
 }
 
 // Given the git segment and the index of the `git` word, find the subcommand
@@ -230,8 +267,11 @@ function analyze(rawCmd, depth = 0) {
       if (!message && a.message) message = a.message;
     }
   }
-  // Heredoc message wins over any literal $(cat <<…) token text.
-  if (isCommit) {
+  // Heredoc message wins over any literal $(cat <<…) token text — but ONLY when
+  // the commit's OWN -m argument is a heredoc (its extracted value still carries
+  // the `<<`). Otherwise an UNRELATED chained heredoc (`git commit -m "feat: x"
+  // && cat <<EOF > notes`) would overwrite the real message and fail the lint.
+  if (isCommit && /<</.test(message)) {
     const hd = heredocMessage(cmd);
     if (hd != null) message = hd;
   }

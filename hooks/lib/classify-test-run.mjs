@@ -49,7 +49,44 @@ function readWord(cmd, i) {
   return [v, i];
 }
 
-const PREFIX_WORDS = new Set(['command', 'builtin', 'exec', 'env', 'time', 'nice', 'nohup', 'sudo', 'then', 'do', 'else']);
+// Shell keywords that merely precede a command word.
+const PREFIX_WORDS = new Set(['then', 'do', 'else']);
+// Command wrappers (run another command later in argv) — the test binary is the
+// WRAPPED command, so `timeout 300 npm test` / `nice -n 5 npm test` must resolve
+// to `npm test` or a legit green suite mints no receipt (a false-block the
+// pre-rewrite whole-line grep did not have).
+const WRAPPERS = new Set([
+  'timeout', 'nice', 'nohup', 'sudo', 'doas', 'env', 'stdbuf', 'ionice', 'chrt',
+  'setsid', 'unbuffer', 'time', 'command', 'builtin', 'exec', 'xargs',
+]);
+const WRAPPER_VALUE_FLAGS = new Set([
+  '-s', '--signal', '-k', '--kill-after', '-n', '-u', '-g', '-C', '-h', '-p',
+  '-r', '-t', '-U', '-o', '-e', '-i', '-c', '-D', '-R', '-S', '--user', '--group',
+]);
+const WRAPPER_POSITIONALS = { timeout: 1, chrt: 1 };
+
+// Drop leading env assignments, shell-keyword prefixes, and command wrappers
+// (with their flags/values/positionals), returning the wrapped command's words.
+function stripLeadingWrappers(words) {
+  let w = words;
+  for (let guard = 0; guard < 6; guard += 1) {
+    let i = 0;
+    while (i < w.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i]) || PREFIX_WORDS.has(w[i]))) i += 1;
+    if (i >= w.length) return [];
+    if (!WRAPPERS.has(w[i])) return w.slice(i);
+    let j = i + 1;
+    let pos = WRAPPER_POSITIONALS[w[i]] || 0;
+    while (j < w.length) {
+      const t = w[j];
+      if (t.startsWith('-')) { j += 1; if (WRAPPER_VALUE_FLAGS.has(t) && j < w.length && !w[j].startsWith('-')) j += 1; continue; }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) { j += 1; continue; }
+      if (pos > 0) { pos -= 1; j += 1; continue; }
+      break;
+    }
+    w = w.slice(j);
+  }
+  return w;
+}
 
 // Parse into simple commands, honoring quotes, redirections (which do NOT split
 // commands and whose '&' in `2>&1`/`>&` is not a background separator), and
@@ -57,14 +94,19 @@ const PREFIX_WORDS = new Set(['command', 'builtin', 'exec', 'env', 'time', 'nice
 function parse(cmd) {
   const commands = []; // each: array of unquoted words
   const n = cmd.length; let i = 0; let words = [];
+  // `masked` = the reported exit code does NOT certify the whole line: a pipe
+  // (`|`), an or-list (`||`), a sequence (`;`), or a background (`&`) all detach
+  // the final status from an earlier command. Only `&&` (and no connector) keeps
+  // exit 0 == "every command, including the suite, passed".
+  let masked = false;
   const flush = () => { if (words.length) commands.push(words); words = []; };
   while (i < n) {
     const c = cmd[i];
     if (/\s/.test(c)) { i++; continue; }
     if (c === '#') { while (i < n && cmd[i] !== '\n') i++; continue; } // comment
-    if (c === '|') { flush(); i += cmd[i + 1] === '|' ? 2 : 1; continue; }
-    if (c === ';') { flush(); i++; continue; }
-    if (c === '&') { if (cmd[i + 1] === '&') { flush(); i += 2; } else { flush(); i++; } continue; }
+    if (c === '|') { flush(); masked = true; i += cmd[i + 1] === '|' ? 2 : 1; continue; } // | and ||
+    if (c === ';') { flush(); masked = true; i++; continue; }
+    if (c === '&') { if (cmd[i + 1] === '&') { flush(); i += 2; } else { flush(); masked = true; i++; } continue; } // && ok; bare & (background) masks
     if (c === '(' || c === ')') { i++; continue; }
     if (c === '>' || c === '<') {
       i++; if (cmd[i] === c) i++;          // >> or <<
@@ -78,21 +120,14 @@ function parse(cmd) {
     i = ni > i ? ni : i + 1;
   }
   flush();
-  return commands;
+  return { commands, masked };
 }
 
-// The command word of a simple command, skipping env assignments (VAR=val) and
-// prefix words (command/env/sudo/…). Returns the reconstructed "word arg arg…"
-// from that command word onward, or '' if none.
+// The wrapped command of a simple command (env/prefix/wrapper stripped),
+// reconstructed as "word arg arg…" for anchored regex matching, or '' if none.
 function commandFrom(words) {
-  let k = 0;
-  while (k < words.length) {
-    const w = words[k];
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) { k++; continue; }
-    if (PREFIX_WORDS.has(w)) { k++; continue; }
-    break;
-  }
-  return k < words.length ? words.slice(k).join(' ') : '';
+  const w = stripLeadingWrappers(words);
+  return w.length ? w.join(' ') : '';
 }
 
 let re = null;
@@ -106,9 +141,14 @@ process.stdin.on('end', () => {
   const cmd = s.replace(/\\\r?\n/g, '');
   let testCommand = false; let cleanInvocation = false;
   if (re) {
-    const commands = parse(cmd).map(commandFrom).filter(Boolean);
-    for (const c of commands) if (re.test(c)) { testCommand = true; break; }
-    if (commands.length) cleanInvocation = re.test(commands[commands.length - 1]);
+    const { commands, masked } = parse(cmd);
+    const heads = commands.map(commandFrom).filter(Boolean);
+    for (const c of heads) if (re.test(c)) { testCommand = true; break; }
+    // The exit code certifies the SUITE only when a test command is present and
+    // nothing masks the status: a pure `&&` chain (or a lone command) means exit
+    // 0 implies every command — including the suite — passed. Any |, ||, ;, or
+    // background & means the reported status describes something else.
+    cleanInvocation = testCommand && !masked;
   }
   process.stdout.write(JSON.stringify({ testCommand, cleanInvocation }));
 });

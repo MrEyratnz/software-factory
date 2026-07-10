@@ -41,13 +41,23 @@ function safePath(p) {
   const abs = isAbsolute(p) ? resolve(p) : resolve(projectDir, p);
   let root;
   try { root = realpathSync(projectDir); } catch { root = resolve(projectDir); }
-  // Canonicalize as far as the path exists (a not-yet-created file resolves via
-  // its existing parent), so symlinks anywhere on the path are followed.
+  // Canonicalize as far as the path exists — walking up to the DEEPEST existing
+  // ancestor, then re-appending the not-yet-created tail — so symlinks anywhere
+  // on the path are followed even when several trailing segments don't exist yet.
   let real = abs;
   try {
     real = realpathSync(abs);
   } catch {
-    try { real = join(realpathSync(dirname(abs)), basename(abs)); } catch { real = abs; }
+    const tail = [];
+    let cur = abs;
+    real = abs;
+    for (let i = 0; i < 64; i += 1) {
+      const par = dirname(cur);
+      if (par === cur) break;
+      tail.unshift(basename(cur));
+      cur = par;
+      try { real = join(realpathSync(cur), ...tail); break; } catch { /* keep walking up */ }
+    }
   }
   if (real !== root && !real.startsWith(root + sep)) {
     throw new Error(`path escapes project directory: ${p}`);

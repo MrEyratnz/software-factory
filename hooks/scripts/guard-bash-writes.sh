@@ -56,6 +56,7 @@ esac
 pj="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-bash-writes.mjs" 2>/dev/null)"
 outside="$(printf '%s' "$pj" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const a=JSON.parse(s).outside;process.stdout.write(a&&a.length?a[0]:"")}catch(e){}})')"
 troot="$(printf '%s' "$pj" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const a=JSON.parse(s).trustRoot;process.stdout.write(a&&a.length?a[0]:"")}catch(e){}})')"
+trootcount="$(printf '%s' "$pj" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String((JSON.parse(s).trustRoot||[]).length))}catch(e){process.stdout.write("0")}})')"
 
 # General "no writes outside the project directory" parity with guard-scope
 # (issue #31): carve-outs for ~/.claude (incl. memory), temp dirs, and /dev.
@@ -76,12 +77,15 @@ if [ "$active" = "release-captain" ] \
 fi
 
 # First-run /factory-init may create .factory/config.json via the shell (heredoc
-# redirect). Allow it ONLY while the config does not yet exist and config.json is
-# the sole trust-root target — never state/review, never once the config exists
-# (issues #1, #54). Once created, the config is edited as committed source.
+# redirect). Allow it ONLY while the config does not yet exist AND config.json is
+# the SOLE trust-root target — checked against the resolved trust-root LIST, not
+# a literal grep, so a command that ALSO plants state (e.g.
+# `cd .factory && > config.json; > state/paused`) is not smuggled through the
+# carve-out (its trust-root list has 2 entries). Once created, the config is
+# edited as committed source (issues #1, #54).
 if [ ! -f "$CONFIG_FILE" ] \
-   && printf '%s' "$troot" | grep -q '/\.factory/config\.json$' \
-   && ! printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/'; then
+   && [ "$trootcount" = "1" ] \
+   && printf '%s' "$troot" | grep -q '/\.factory/config\.json$'; then
   allow
 fi
 

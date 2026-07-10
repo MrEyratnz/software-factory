@@ -89,13 +89,20 @@ function tokenize(cmd) {
 // — a leading `cp forged .factory/state/gate-receipt.json` forged a green
 // receipt, and `touch .factory/state/paused` self-disabled every gate, because
 // neither is a redirect or `tee`. Model each one's write target(s):
-//   last  — the final non-flag argument is the destination (cp/mv/install/rsync/ln)
+//   copy  — cp/mv/install/rsync/ln: the `-t <dir>` / `--target-directory` DIR if
+//           present (it reverses arg order — `cp -t .factory/state x` writes into
+//           .factory/state), else the final non-flag operand.
 //   all   — every non-flag argument is created/updated (touch)
 //   trunc — truncate's file arg(s) (skip the -s size value)
 //   ddof  — dd's `of=<path>`
+//   del   — rm/rmdir/unlink/shred: every non-flag operand is DELETED; deleting a
+//           trust-root file (config/receipt/paused) is as dangerous as writing
+//           it, so del targets are checked against the trust roots only —
+//           `cd .factory && rm config.json` must not un-initialize the factory.
 const MUTATOR_TARGET = {
-  cp: 'last', mv: 'last', install: 'last', rsync: 'last', ln: 'last',
+  cp: 'copy', mv: 'copy', install: 'copy', rsync: 'copy', ln: 'copy',
   touch: 'all', truncate: 'trunc', dd: 'ddof',
+  rm: 'del', rmdir: 'del', unlink: 'del', shred: 'del',
 };
 
 function collect(cmd) {
@@ -140,6 +147,8 @@ function collect(cmd) {
     const args = commandArgs(k);
     if (rule === 'all') {
       for (const w of args) if (!w.v.startsWith('-')) targets.push(w);
+    } else if (rule === 'del') {
+      for (const w of args) if (!w.v.startsWith('-')) targets.push({ v: w.v, unresolvable: w.unresolvable, del: true });
     } else if (rule === 'ddof') {
       for (const w of args) { const m = /^of=(.+)$/.exec(w.v); if (m) targets.push({ v: m[1], unresolvable: w.unresolvable }); }
     } else if (rule === 'trunc') {
@@ -149,10 +158,17 @@ function collect(cmd) {
         if (w.v.startsWith('-')) continue;
         targets.push(w);
       }
-    } else { // 'last' — the final non-flag operand is the destination
-      let dest = null;
-      for (const w of args) { if (!w.v.startsWith('-')) dest = w; }
-      if (dest) targets.push(dest);
+    } else { // 'copy' — a `-t <dir>` / `--target-directory` DIR reverses the order
+      let tdir = null;
+      for (let j = 0; j < args.length; j++) {
+        const w = args[j]; const v = w.v;
+        let m = /^--target-directory=(.+)$/.exec(v);
+        if (m) { tdir = { v: m[1], unresolvable: w.unresolvable }; break; }
+        if (v === '--target-directory' || /^-[A-Za-z]*t$/.test(v)) { const nx = args[j + 1]; if (nx && !nx.v.startsWith('-')) tdir = nx; break; }
+        m = /^-t(.+)$/.exec(v); if (m && !v.startsWith('--')) { tdir = { v: m[1], unresolvable: w.unresolvable }; break; }
+      }
+      if (tdir) targets.push(tdir);
+      else { let dest = null; for (const w of args) { if (!w.v.startsWith('-')) dest = w; } if (dest) targets.push(dest); }
     }
   }
   return { targets, cwd };
@@ -169,6 +185,11 @@ process.stdin.on('end', () => {
   for (const t of targets) {
     if (!t.v || t.unresolvable) continue;
     const abs = path.resolve(base, expandHome(t.v));
+    // Deletion targets (rm/rmdir/unlink/shred) are checked against the trust
+    // roots ONLY — a delete of an in-project or out-of-project file is not this
+    // hook's concern (and the reviewer fence already blocks rm via its verb
+    // regex), but a delete of a hook-managed trust-root file must be denied.
+    if (t.del) { if (underTrustRoot(abs)) trustRoot.push(abs); continue; }
     all.push(abs); // every resolved write target, for callers that fence ALL writes
     if (underTrustRoot(abs)) trustRoot.push(abs);
     else if (!underAllowedRoot(abs)) outside.push(abs);

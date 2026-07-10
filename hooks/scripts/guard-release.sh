@@ -9,9 +9,6 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-release
-# Un-inited repo → step aside (no release-proof producer exists here, so every
-# release verb would be permanently denied). /factory-init arms the gate.
-require_initialized guard-release
 tn="$(field tool_name)"
 cmd="$(field tool_input.command)"
 rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|docker push|release-please|npm version )')"
@@ -33,6 +30,15 @@ esac
 # so the branch/receipt/tree checks bind to it, not the fixed session project
 # (issue #28). For the MCP tools cmd is empty and this is the session project.
 target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
+# Advisory only when NEITHER the session NOR the target repo is initialized (see
+# guard-commit): enforcing on session-init keeps the issue-#28 model, and ALSO
+# on target-init stops an un-inited session bypassing an initialized sibling's
+# release gate. Both un-inited → step aside (no release-proof producer here).
+if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
+  otel_emit factory_gate_uninitialized_total sum 1 '{"hook":"guard-release"}'
+  allow
+fi
 
 relb="$(config_get releaseBranch 'main')"
 cur="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
