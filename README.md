@@ -1,21 +1,18 @@
 # dark-software-factory
 
 A **lights-out software factory for Claude Code**. Drop it into any repository
-and it runs the same autonomous production line that built
-[`course-creator`](https://github.com/MrEyratnz/course-creator) end-to-end:
-scaffold the docs spine, drive a TDD roadmap loop, run parallel adversarial
-reviews that auto-file tech-debt, design by judge panel, and ship via gated
-Conventional-Commit releases.
+and it runs an autonomous production line: scaffold the docs spine, drive a
+TDD roadmap loop, run parallel adversarial reviews that auto-file tech-debt,
+design by judge panel, and ship via gated Conventional-Commit releases.
 
 The methodology's laws are **enforced by hooks** locally (fast, fail-early) and
 **re-enforced by CI** as the authoritative boundary — so "never commit red,"
 "a roadmap box is checked only when merged green," and "never release from red"
 are preconditions the harness denies, not documentation an agent skips.
 
-> **Provenance.** Every practice here is one `course-creator` followed by hand
-> across its autonomous build and its design session — distilled, hardened
-> against the agent it governs, and productized. This plugin was itself designed
-> by the very method it encodes: a three-proposal adversarial judge panel
+> **Provenance.** Every practice here was distilled and hardened against the
+> agent it governs, then productized. This plugin was itself designed by the
+> very method it encodes: a three-proposal adversarial judge panel
 > (contract / agent-crew / governance) synthesized into one blueprint.
 
 ## Install

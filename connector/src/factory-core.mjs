@@ -4,15 +4,14 @@
  *
  * Every export here is a pure function: string / plain-object in, plain-object
  * out, no I/O, no clock, no randomness. That is deliberate — these functions
- * encode the *rules* of the factory (the ones course-creator followed by hand),
- * so they must be trivially unit-testable and give byte-identical results for
- * identical input. All filesystem access lives in the MCP server
- * (`server.mjs`); this module never touches disk.
+ * encode the *rules* of the factory, so they must be trivially unit-testable
+ * and give byte-identical results for identical input. All filesystem access
+ * lives in the MCP server (`server.mjs`); this module never touches disk.
  *
- * The rules implemented, each traceable to a course-creator practice:
+ * The rules implemented:
  *   - parseRoadmap    → the milestone/checkbox roadmap worked top-to-bottom
  *   - indexAdrs       → numbered ADRs (Status/Context/Decision/Consequences)
- *   - lintTechDebt    → the review→tech-debt convention (course-creator CLAUDE.md)
+ *   - lintTechDebt    → the review→tech-debt convention
  *   - lintCommit      → Conventional Commits (feat→minor, fix→patch, !→major)
  *   - planRelease     → release-please-style version bump + changelog grouping
  */
@@ -140,7 +139,7 @@ export function indexAdrs(entries) {
 }
 
 /* ────────────────────────────────────────────────────────────────────────
- * 3. Tech-debt lint — enforce the course-creator review→tech-debt convention:
+ * 3. Tech-debt lint — enforce the review→tech-debt convention:
  *    a deferred finding must carry location (file:line), impact (what & why),
  *    provenance (pre-existing | introduced), and a suggested fix.
  * ──────────────────────────────────────────────────────────────────────── */
@@ -421,7 +420,7 @@ function parseSemver(v) {
 /**
  * @param {string[]|Array<{subject:string}>} commits
  * @param {string} currentVersion  e.g. "0.1.2"
- * @param {{preMajor?:boolean}} [opts]  preMajor mirrors course-creator's
+ * @param {{preMajor?:boolean}} [opts]  preMajor mirrors a common
  *   release-please config (bump-minor-pre-major + bump-patch-for-minor-pre-major):
  *   while major===0, a breaking change bumps minor and a feature bumps patch.
  * @returns {{currentVersion:string, nextVersion:string,
