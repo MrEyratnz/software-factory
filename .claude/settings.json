@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "dark-software-factory@software-factory": true
+  },
+  "extraKnownMarketplaces": {
+    "software-factory": {
+      "source": {
+        "source": "github",
+        "repo": "MrEyratnz/software-factory"
+      }
+    }
+  }
+}
