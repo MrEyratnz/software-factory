@@ -23,10 +23,24 @@ FACTORY_CLI="$PLUGIN_ROOT/connector/src/cli.mjs"
 if [ -z "${HOOK_INPUT:-}" ]; then
   HOOK_INPUT="$(cat 2>/dev/null || true)"
 fi
-export HOOK_INPUT
+# Strip the export attribute unconditionally. If the hook was invoked with
+# HOOK_INPUT already in its environment (a wrapper, or a test harness passing
+# HOOK_INPUT=""), the reassignment above KEEPS that export attribute — so the
+# whole (possibly >128KB) event would be re-marshalled into every child process's
+# environment and execve would fail E2BIG, exactly the failure the stdin design
+# exists to avoid. `export -n` guarantees HOOK_INPUT stays a plain shell variable.
+export -n HOOK_INPUT 2>/dev/null || true
+# NOTE: HOOK_INPUT is a plain shell variable and is deliberately NOT exported.
+# The event JSON can be large (a Bash tool_response carries the command's full
+# stdout/stderr). On Linux a single environment-variable string is capped at
+# MAX_ARG_STRLEN (128KB); once HOOK_INPUT crosses it, execve() of EVERY child
+# process fails with E2BIG. That would make `field`/`config_get`/`fc` — and thus
+# every gate verdict — silently fail open (a verbose passing suite would then
+# never mint a receipt, and a commit could slip past). So the payload is fed to
+# the node helpers on STDIN (not env/argv), which has no such limit.
 
 # Project dir: explicit env wins, else the event's cwd, else PWD.
-_project_from_input="$(HOOK_JSON="$HOOK_INPUT" node -e 'try{const o=JSON.parse(process.env.HOOK_JSON||"{}");process.stdout.write(o.cwd||"")}catch(e){}' 2>/dev/null || true)"
+_project_from_input="$(printf '%s' "$HOOK_INPUT" | node -e 'let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s||"{}");process.stdout.write(o.cwd||"")}catch(e){}})' 2>/dev/null || true)"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${_project_from_input:-$PWD}}"
 FACTORY_DIR="$PROJECT_DIR/.factory"
 STATE_DIR="$FACTORY_DIR/state"
@@ -34,12 +48,18 @@ CONFIG_FILE="$FACTORY_DIR/config.json"
 
 # --- json helpers ----------------------------------------------------------
 # field <dotted.path> — extract a field from the event JSON as a plain string.
+# The event is piped on STDIN, never passed via env/argv, so a large
+# tool_response (big test output) cannot trip execve's E2BIG limit (see the
+# HOOK_INPUT note above).
 field() {
-  HOOK_JSON="$HOOK_INPUT" node -e '
-    const o = JSON.parse(process.env.HOOK_JSON || "{}");
-    let v = o;
-    for (const k of String(process.argv[1]).split(".")) v = (v == null ? undefined : v[k]);
-    process.stdout.write(v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v)));
+  printf '%s' "$HOOK_INPUT" | node -e '
+    let s = ""; process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (c) => { s += c; }).on("end", () => {
+      let o = {}; try { o = JSON.parse(s || "{}"); } catch (e) {}
+      let v = o;
+      for (const k of String(process.argv[1]).split(".")) v = (v == null ? undefined : v[k]);
+      process.stdout.write(v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v)));
+    });
   ' "$1" 2>/dev/null
 }
 
@@ -55,7 +75,9 @@ fc() {
 }
 
 # json_str <value> — emit a JSON-quoted string (for building stdout payloads).
-json_str() { HOOK_S="$1" node -e 'process.stdout.write(JSON.stringify(process.env.HOOK_S||""))'; }
+# The value is piped on STDIN (a roadmap file or a whole command string can be
+# large — see the HOOK_INPUT note); passing it via env would risk E2BIG.
+json_str() { printf '%s' "$1" | node -e 'let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(JSON.stringify(s)))'; }
 
 # --- config ----------------------------------------------------------------
 # config_get <key> [default] — read a key from .factory/config.json. <key> may
@@ -83,6 +105,26 @@ config_get() {
 #      Returns 0 (enforce) unless the key is explicitly the string "false".
 enforcement_on() {
   [ "$(config_get "enforcement.$1" true)" != "false" ]
+}
+
+# factory_initialized — is THIS repo opted into the factory? True only when
+# .factory/config.json exists (what /factory-init stamps). This is the switch
+# that turns the WORKFLOW gates (commit / release / roadmap / mcp-commit) from
+# hard boundaries into no-ops: an uninitialized repo has no config, so those
+# gates could demand a proof that no producer can mint here (no testCommand, no
+# release/roadmap proof) — an unsatisfiable DEADLOCK. Until a repo runs
+# /factory-init it has not opted in, so the workflow gates step aside (the
+# SessionStart banner already nudges "run /factory-init"). The trust-root /
+# forgery protections (guard-scope, guard-bash-writes) do NOT use this — they
+# stay on everywhere so the factory's own state can never be hand-forged.
+factory_initialized() { [ -f "$CONFIG_FILE" ]; }
+
+# require_initialized <hook-name> — call at the top of a WORKFLOW gate: if the
+# repo is not factory-initialized, allow (exit 0). No-op once initialized.
+require_initialized() {
+  factory_initialized && return 0
+  otel_emit factory_gate_uninitialized_total sum 1 "$(printf '{"hook":%s}' "$(json_str "${1:-unknown}")")"
+  allow
 }
 
 #   2. factory_paused / respect_pause — a session-local escape hatch. When a
@@ -114,11 +156,27 @@ respect_pause() {
 # accepts an explicit dir so a gate can hash the repo the command actually
 # targets, not just the one the session started in (issue #28).
 tree_hash() {
-  local dir="${1:-$PROJECT_DIR}" idx out
+  local dir="${1:-$PROJECT_DIR}" idx out rel
   idx="$(mktemp)"; rm -f "$idx"
+  # Exclude the SESSION's .factory wherever it actually lives relative to the
+  # hashed dir, not just a top-level .factory. When Claude is opened in a
+  # subdirectory of the repo (a monorepo package), FACTORY_DIR is
+  # <repo>/<subdir>/.factory but the receipt binds to the repo-root tree — so a
+  # ':(exclude).factory' pathspec (relative to the repo root) would miss it, the
+  # freshly-minted receipt would land INSIDE the hashed tree, and every commit
+  # would be denied "stale-tree" forever. Compute the receipt dir's path
+  # relative to the hashed dir (pure prefix strip, no node) and exclude it too.
+  case "$FACTORY_DIR" in
+    "$dir"/*) rel="${FACTORY_DIR#"$dir"/}" ;;
+    *) rel="" ;;
+  esac
   out="$(
     cd "$dir" 2>/dev/null || exit 0
-    GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1
+    if [ -n "$rel" ] && [ "$rel" != ".factory" ]; then
+      GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' ":(exclude)$rel" >/dev/null 2>&1
+    else
+      GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1
+    fi
     GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null
   )"
   rm -f "$idx"

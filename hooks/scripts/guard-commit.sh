@@ -22,6 +22,17 @@ is_commit="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>
 # so the green gate binds to it, not the fixed session project (issue #28).
 target_root="$(repo_root "$(command_target_dir "$cmd")")"
 
+# The factory is advisory only when NEITHER the session NOR the target repo is
+# initialized. Enforcing on session-init keeps the established model (the session
+# factory gates commits to any repo it touches, binding the receipt to the target
+# tree — issue #28); ALSO enforcing on target-init means an un-inited scratch
+# session cannot be used as a blanket bypass for an initialized sibling reached
+# via `cd`/`git -C`. Both un-inited → step aside (no producer can mint a receipt).
+if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
+  otel_emit factory_gate_uninitialized_total sum 1 '{"hook":"guard-commit"}'
+  allow
+fi
+
 # (a) bypass flags
 bypass="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).bypass))}catch(e){process.stdout.write("false")}})')"
 [ "$bypass" = "true" ] && { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"bypass"}'; deny "commit bypass flags (--no-verify/--no-gpg-sign) are not allowed — the gates are the point"; }
@@ -46,8 +57,12 @@ if { [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; } && enforcement_on requireT
   files="$(staged_files "$target_root")"
   # `git commit -a/-am` stages tracked modifications AT commit time, so nothing
   # is staged yet at PreToolUse — evaluate the tracked changeset instead, or the
-  # TDD check would be silently skipped.
-  if printf '%s' "$cmd" | grep -Eq 'commit[^|&;]*[[:space:]]-[A-Za-z]*a'; then
+  # TDD check would be silently skipped. The -a flag comes from the quote-aware
+  # parser (its `all` field), NOT a grep over the whole command: a message like
+  # `-m "handle the -a flag"` must not be misread as `commit -a` (which would
+  # evaluate the wrong changeset).
+  all="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).all))}catch(e){process.stdout.write("false")}})')"
+  if [ "$all" = "true" ]; then
     files="$( cd "$target_root" 2>/dev/null && git diff --name-only HEAD 2>/dev/null )"
   fi
   if [ -n "$files" ]; then

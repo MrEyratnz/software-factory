@@ -1,27 +1,34 @@
 #!/usr/bin/env node
 // Read a shell command string on stdin; emit JSON describing any `git commit`
-// in it: whether it is a commit, whether it uses a bypass flag, and the -m
-// message (best-effort, handles "…", '…', and bare tokens). Kept as a file
-// (not inline) so the quoting stays sane and it is unit-testable.
+// in it: whether it is a commit, whether it uses a bypass flag, and the commit
+// message (best-effort). Kept as a file (not inline) so the quoting stays sane
+// and it is unit-testable.
 //
-// isCommit is fail-conservative: it inspects the actual git subcommand token
-// rather than a loose "git ... commit" text adjacency (a static regex like
-// that is trivially evaded by an alias (`git ci`), a wrapper, or the commit
-// falling on the far side of an intervening newline). Any subcommand that is
-// not on the small allow-list of clearly-non-commit porcelain commands is
-// treated as a possible commit, so an unknown token or alias fails toward
-// "engage the gate" rather than "skip it". When a `git` token has no
-// parseable subcommand at all (e.g. it is the last token on the line) AND
-// the command uses a construct that can hand it a subcommand out of static
-// view (`xargs`, `eval`, `sh -c`/`bash -c`, command substitution), that is
-// exactly "mentions git and cannot be confidently parsed as a non-commit" —
-// see hasIndirection() below — so it also fails toward "engage the gate".
+// Parsing is QUOTE-AWARE and COMMAND-POSITION-AWARE (the tokenizer is shared in
+// spirit with parse-cmd-target.mjs / parse-bash-writes.mjs). We split the line
+// into simple commands on shell separators, then for each segment look only at
+// its command word. That single design choice fixes a cluster of defects the
+// old raw-regex scan had:
+//   - a `git commit` sitting inside a quoted string / commit message / echo is
+//     an ARGUMENT, not a command, so it is not treated as a real invocation
+//     (no more spurious blocks of `echo "...git commit..."`).
+//   - a `git`/`commit` substring glued into a path or filename
+//     (`/home/user/git/x`, `parse-git-commit.mjs`, `.git/config`) is likewise
+//     an argument of some other command, never the command word — so the #26
+//     false-positive class stays fixed without special path-glue heuristics.
+//   - bypass flags (--no-verify/--no-gpg-sign) are read ONLY from the commit's
+//     OWN argument span, so a message that merely mentions `--no-verify`, or a
+//     chained `git push --no-verify`, no longer hard-blocks a clean commit.
 //
-// This is BEST-EFFORT, local, fail-early UX, not a security boundary: a
-// determined agent can still obfuscate a commit past static text inspection
-// (shell quote-splitting the literal `git` token itself, base64, etc.).
-// That class is deliberately out of scope here — CI re-runs this identical
-// gate and is the authoritative boundary.
+// isCommit stays fail-conservative: any git subcommand token that is not on the
+// small allow-list of clearly-non-commit porcelain is treated as a possible
+// commit (an alias like `git ci`, or a bare `git` whose subcommand is supplied
+// indirectly via xargs/eval/sh -c/command-substitution, fails toward "engage
+// the gate" rather than skipping it).
+//
+// This is BEST-EFFORT, local, fail-early UX, not a security boundary — CI
+// re-runs this identical gate and is the authoritative boundary.
+
 const SAFE_SUBCOMMANDS = new Set([
   'status', 'diff', 'log', 'show', 'add', 'branch', 'checkout', 'switch',
   'fetch', 'pull', 'push', 'remote', 'config', 'blame', 'grep', 'ls-files',
@@ -33,85 +40,244 @@ const SAFE_SUBCOMMANDS = new Set([
   'request-pull', 'archive', 'bundle', 'instaweb', 'daemon', 'verify-tag',
   'name-rev', 'merge-base',
 ]);
-// Global options that take their value as a separate following token (as
-// opposed to `--foo=bar`, which is already one token).
-const OPTIONS_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
-
-// Literal markers of a construct that can supply a git subcommand (or an
-// entire git invocation) out of static view: piping tokens to `git` via
-// `xargs`, running a string through `eval`/`sh -c`/`bash -c`, or command
-// substitution. Deliberately a small, readable set of indicators rather than
-// real shell parsing — see the file header for why that's the right amount
-// of effort here.
+// git global options that consume the NEXT token as their value (so the
+// subcommand walk must skip that value too).
+const GIT_OPT_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
+// Command WRAPPERS — programs that run ANOTHER command given later in their argv
+// (`timeout 60 git commit`, `nice -n 5 git commit`, `sudo -u ci git commit`,
+// `env X=1 git commit`, `time -p git commit`). The wrapped `git` is found by
+// SCANNING the segment for the first unquoted `git` command token, NOT by
+// precisely skipping the wrapper's flags/values: a global value-flag list is
+// unsafe because the same flag letter is boolean for one wrapper and
+// value-taking for another (e.g. `time -p`, `env -i`, `sudo -i`), and wrongly
+// consuming the wrapped `git` reopens the commit gate (incl. the hard
+// --no-verify block). The scan needs no per-flag knowledge and is
+// fail-conservative: over-engaging on a stray `git` token is safe; missing a
+// real wrapped `git commit` is not.
+const WRAPPERS = new Set([
+  'timeout', 'nice', 'nohup', 'sudo', 'doas', 'env', 'stdbuf', 'ionice', 'chrt',
+  'setsid', 'unbuffer', 'time', 'command', 'builtin', 'exec', 'xargs',
+]);
+// Constructs that can supply a git subcommand (or whole invocation) out of
+// static view — a bare `git` alongside one of these fails toward the gate.
 const INDIRECTION_RE = /\bxargs\b|\beval\b|\bsh\s+-c\b|\bbash\s+-c\b|`|\$\(/;
-function hasIndirection(cmd) {
-  return INDIRECTION_RE.test(cmd);
-}
 
-// A `\bgit\b` match is only a real invocation candidate when the token is a
-// standalone shell word — not `git` glued into a filesystem path, a hyphenated
-// filename, or a hostname (`~/git/repo`, `parse-git-commit.mjs`, `.git/config`,
-// `git.example.com`). Those path mentions are the false-positive class in issue
-// #26: scanning the whole command text made a `find … /git/… -iname
-// parse-git-commit.mjs` look like a commit and wrongly engaged the gate. A
-// neighbor of `/`, `.`, or `-` on either side means path/word glue; every other
-// neighbor (whitespace, start/end, a shell separator or quote) is a real
-// command boundary. `\b` already guarantees the neighbor is a non-word char.
-const PATH_GLUE = new Set(['/', '.', '-']);
-function isPathGlued(cmd, idx) {
-  const before = idx > 0 ? cmd[idx - 1] : '';
-  const after = cmd[idx + 3] || ''; // char immediately after the 3-char "git"
-  return PATH_GLUE.has(before) || PATH_GLUE.has(after);
-}
-
-// Find every `git` subcommand token in the command string and report whether
-// any of them is a commit (or an unrecognized stand-in for one).
-function detectGitCommit(cmd) {
-  const gitTok = /\bgit\b/g;
-  let match;
-  while ((match = gitTok.exec(cmd)) !== null) {
-    if (isPathGlued(cmd, match.index)) continue; // a path/filename mention, not a command
-    let i = match.index + match[0].length;
-    const len = cmd.length;
-    let subcommand = null;
-    while (i < len) {
-      while (i < len && /\s/.test(cmd[i])) i++; // skip whitespace, incl. newlines
-      if (cmd[i] === '\\' && cmd[i + 1] === '\n') { i += 2; continue; } // line continuation
-      if (i >= len) break;
-      const start = i;
-      while (i < len && !/\s/.test(cmd[i])) i++;
-      const token = cmd.slice(start, i).replace(/^["']|["']$/g, '');
-      if (token === '') break;
-      if (token.startsWith('-')) {
-        if (OPTIONS_WITH_VALUE.has(token)) {
-          while (i < len && /\s/.test(cmd[i])) i++;
-          while (i < len && !/\s/.test(cmd[i])) i++; // skip the option's value token
-        }
-        continue; // keep looking for the subcommand
-      }
-      subcommand = token;
-      break;
+// Tokenize honoring single/double quotes and backslash escapes. Emits operator
+// tokens ({op}) for the shell separators we care about, and word tokens
+// ({v, quoted}) whose v is the UNQUOTED text and quoted=true if ANY part of the
+// word came from inside quotes (so a quoted `git` is never a command word).
+function tokenize(cmd) {
+  const toks = [];
+  let i = 0; const n = cmd.length;
+  while (i < n) {
+    const ch = cmd[i];
+    if (/\s/.test(ch)) { i++; continue; }
+    if (ch === '|') { if (cmd[i + 1] === '|') { toks.push({ op: '||' }); i += 2; } else { toks.push({ op: '|' }); i++; } continue; }
+    if (ch === '&') { if (cmd[i + 1] === '&') { toks.push({ op: '&&' }); i += 2; } else { toks.push({ op: '&' }); i++; } continue; }
+    if (ch === ';') { toks.push({ op: ';' }); i++; continue; }
+    if (ch === '(' || ch === ')') { toks.push({ op: ch }); i++; continue; }
+    if (ch === '>' || ch === '<') { toks.push({ op: ch }); i++; continue; }
+    let v = ''; let quoted = false;
+    while (i < n) {
+      const c = cmd[i];
+      if (/\s/.test(c)) break;
+      if (c === '"' || c === "'") { const q = c; quoted = true; i++; while (i < n && cmd[i] !== q) { v += cmd[i]; i++; } i++; continue; }
+      if (c === '\\') { if (i + 1 < n) { v += cmd[i + 1]; i += 2; } else { i++; } continue; }
+      if (c === '|' || c === '&' || c === ';' || c === '(' || c === ')' || c === '>' || c === '<') break;
+      v += c; i++;
     }
-    if (subcommand !== null && !SAFE_SUBCOMMANDS.has(subcommand)) return true;
-    // Bare `git`: no subcommand token is visible at all for this occurrence.
-    // If the command also carries an indirection construct, the real
-    // subcommand may be supplied elsewhere (xargs, eval, sh -c, ...) — that
-    // is "cannot be confidently parsed as a non-commit", so treat it as one.
-    if (subcommand === null && hasIndirection(cmd)) return true;
+    toks.push({ v, quoted });
   }
-  return false;
+  return toks;
+}
+
+const SEG_SEP = new Set(['|', '||', '&&', ';', '&', '(', ')']);
+// Shells whose `-c <string>` argument is itself a command line to execute — the
+// payload must be analyzed too, or `sh -c 'git commit …'` would hide the commit
+// behind a quoted string the top-level tokenizer treats as opaque.
+const SHELL_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+
+// Split a token list into simple-command segments on shell separators.
+function segments(toks) {
+  const segs = []; let cur = [];
+  for (const t of toks) {
+    if (t.op && SEG_SEP.has(t.op)) { if (cur.length) segs.push(cur); cur = []; }
+    else cur.push(t);
+  }
+  if (cur.length) segs.push(cur);
+  return segs;
+}
+
+// The command-word index: skip leading VAR=val assignments only. Command
+// wrappers are handled in analyze() by scanning for the wrapped command, so this
+// deliberately does NOT try to unwrap them here. Returns -1 if none.
+function commandWordIndex(seg) {
+  let k = 0;
+  while (k < seg.length && (seg[k].op || (!seg[k].quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[k].v)))) k += 1;
+  return k < seg.length ? k : -1;
+}
+
+// The index of the first unquoted `git` command token at or after `from`, or -1.
+function firstGitIndex(seg, from) {
+  for (let j = from; j < seg.length; j += 1) { const t = seg[j]; if (!t.op && !t.quoted && t.v === 'git') return j; }
+  return -1;
+}
+// The index of the first unquoted shell/eval command token at or after `from`.
+function firstShellIndex(seg, from) {
+  for (let j = from; j < seg.length; j += 1) { const t = seg[j]; if (!t.op && !t.quoted && (SHELL_WORDS.has(t.v) || t.v === 'eval')) return j; }
+  return -1;
+}
+
+// Given the git segment and the index of the `git` word, find the subcommand
+// token index (skipping global options), or -1 if none is visible.
+function gitSubcommandIndex(seg, gitIdx) {
+  for (let j = gitIdx + 1; j < seg.length; j++) {
+    const t = seg[j];
+    if (t.op) return -1;
+    if (GIT_OPT_WITH_VALUE.has(t.v)) { j++; continue; }
+    if (t.v.startsWith('-')) continue; // other global flag
+    return j;
+  }
+  return -1;
+}
+
+// Extract a commit message from a heredoc form — Claude Code's own default
+// commit style is `git commit -m "$(cat <<'EOF' … EOF)"`. The tokenizer would
+// otherwise capture the literal `$(cat <<'EOF'…)` text as the message; here we
+// pull the heredoc BODY so the conventional-commit lint sees the real subject.
+function heredocMessage(cmd) {
+  const m = cmd.match(/-m\b[^\n]*<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n([\s\S]*?)\n[ \t]*\2\b/);
+  return m ? m[3] : null;
+}
+
+// Parse the commit invocation's own argument tokens (everything after the
+// `commit` subcommand token, within the segment) for bypass flags, the -a/--all
+// flag, and the message.
+function parseCommitArgs(seg, commitIdx) {
+  let bypass = false;
+  let all = false;
+  let message = '';
+  let fromFile = false;
+  for (let j = commitIdx + 1; j < seg.length; j++) {
+    const t = seg[j];
+    if (t.op) break;
+    if (t.quoted) continue; // a quoted arg is never an option flag
+    const v = t.v;
+    if (v === '--no-verify' || v === '--no-gpg-sign') { bypass = true; continue; }
+    if (v === '--all') { all = true; continue; }
+    // long message forms
+    let mm = v.match(/^--message=(.*)$/s);
+    if (mm) { if (!message) message = mm[1]; continue; }
+    if (v === '--message' || v === '--reedit-message' || v === '--reuse-message') {
+      const nxt = seg[j + 1]; if (nxt && !nxt.op && !message) message = nxt.v; j++; continue;
+    }
+    if (v === '-F' || v === '--file' || /^--file=/.test(v) || /^-F.+/.test(v)) { fromFile = true; continue; }
+    // short-flag cluster ending in `m` (e.g. -m, -am, -vam): message is next token
+    if (/^-[A-Za-z]*m$/.test(v)) {
+      if (/a/.test(v)) all = true;
+      const nxt = seg[j + 1]; if (nxt && !nxt.op && !message) message = nxt.v; j++; continue;
+    }
+    // attached short message: -m<msg> or -m=<msg>
+    mm = v.match(/^-m=?(.+)$/s);
+    if (mm) { if (!message) message = mm[1]; continue; }
+    // any short-flag cluster containing `a` (e.g. -a, -av, -sa): sets --all
+    if (/^-[A-Za-z]*a[A-Za-z]*$/.test(v)) { all = true; continue; }
+  }
+  return { bypass, all, message, fromFile };
+}
+
+function analyze(rawCmd, depth = 0) {
+  // The shell removes backslash-newline line continuations before parsing, so
+  // `git \<newline>status` is just `git status`. Do the same before tokenizing,
+  // or the subcommand token would carry a stray newline and never match the
+  // safe-subcommand allow-list (spuriously engaging the gate).
+  const cmd = rawCmd.replace(/\\\r?\n/g, '');
+  const hasIndirection = INDIRECTION_RE.test(cmd);
+  const toks = tokenize(cmd);
+  const segs = segments(toks);
+  let isCommit = false;
+  let bypass = false;
+  let all = false;
+  let message = '';
+  let fromFile = false;
+
+  // Analyze a `git` invocation whose `git` token is at gitIdx.
+  const analyzeGitAt = (seg, gitIdx) => {
+    const subIdx = gitSubcommandIndex(seg, gitIdx);
+    if (subIdx < 0) {
+      // bare `git` with no visible subcommand: only commit-ish if the line can
+      // supply one indirectly (xargs/eval/sh -c/`…`/$(…)).
+      if (hasIndirection) isCommit = true;
+      return;
+    }
+    const sub = seg[subIdx].v;
+    if (SAFE_SUBCOMMANDS.has(sub)) return; // clearly not a commit
+    isCommit = true;
+    if (sub === 'commit') {
+      const a = parseCommitArgs(seg, subIdx);
+      bypass = bypass || a.bypass;
+      all = all || a.all;
+      fromFile = fromFile || a.fromFile;
+      if (!message && a.message) message = a.message;
+    }
+  };
+  // `sh -c '<payload>'` / `bash -c …` / `eval '<payload>'` at shellIdx: the
+  // payload is a command line — recurse (bounded depth) so a commit hidden there
+  // still engages the gate.
+  const recurseShell = (seg, shellIdx) => {
+    if (depth >= 4) return;
+    const w = seg[shellIdx];
+    let payload = '';
+    if (w.v === 'eval') payload = seg.slice(shellIdx + 1).filter((t) => !t.op).map((t) => t.v).join(' ');
+    else {
+      for (let j = shellIdx + 1; j < seg.length; j += 1) {
+        if (seg[j].op) break;
+        if (seg[j].v === '-c') { const nxt = seg[j + 1]; if (nxt && !nxt.op) payload = nxt.v; break; }
+      }
+    }
+    if (!payload) return;
+    const inner = analyze(payload, depth + 1);
+    if (inner.isCommit) {
+      isCommit = true;
+      bypass = bypass || inner.bypass;
+      all = all || inner.all;
+      fromFile = fromFile || inner.messageFromFile;
+      if (!message && inner.message) message = inner.message;
+    }
+  };
+
+  for (const seg of segs) {
+    const cwi = commandWordIndex(seg);
+    if (cwi < 0) continue;
+    const word = seg[cwi];
+    if (word.quoted) continue; // a quoted command word is not a real invocation
+    if (SHELL_WORDS.has(word.v) || word.v === 'eval') { recurseShell(seg, cwi); continue; }
+    if (word.v === 'git') { analyzeGitAt(seg, cwi); continue; }
+    // A command WRAPPER (timeout/nice/sudo/env/…): scan for the wrapped `git`
+    // (no per-flag-value knowledge — see the WRAPPERS comment), else a wrapped
+    // shell whose payload we can recurse into.
+    if (WRAPPERS.has(word.v)) {
+      const gi = firstGitIndex(seg, cwi + 1);
+      if (gi >= 0) { analyzeGitAt(seg, gi); continue; }
+      const si = firstShellIndex(seg, cwi + 1);
+      if (si >= 0) recurseShell(seg, si);
+      continue;
+    }
+  }
+  // Heredoc message wins over any literal $(cat <<…) token text — but ONLY when
+  // the commit's OWN -m argument is a heredoc (its extracted value still carries
+  // the `<<`). Otherwise an UNRELATED chained heredoc (`git commit -m "feat: x"
+  // && cat <<EOF > notes`) would overwrite the real message and fail the lint.
+  if (isCommit && /<</.test(message)) {
+    const hd = heredocMessage(cmd);
+    if (hd != null) message = hd;
+  }
+  return { isCommit, bypass, all, message, messageFromFile: fromFile };
 }
 
 let s = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => { s += c; });
 process.stdin.on('end', () => {
-  const cmd = s;
-  const isCommit = detectGitCommit(cmd);
-  const bypass = /(--no-verify|--no-gpg-sign)/.test(cmd);
-  const m =
-    cmd.match(/-m\s+"((?:[^"\\]|\\.)*)"/) ||
-    cmd.match(/-m\s+'([^']*)'/) ||
-    cmd.match(/-m\s+(\S+)/);
-  process.stdout.write(JSON.stringify({ isCommit, bypass, message: m ? m[1] : '' }));
+  process.stdout.write(JSON.stringify(analyze(s)));
 });

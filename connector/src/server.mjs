@@ -17,8 +17,9 @@
  *   node ${CLAUDE_PLUGIN_ROOT}/connector/src/server.mjs
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve, isAbsolute } from 'node:path';
+import { readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { join, resolve, isAbsolute, dirname, basename, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import {
   parseRoadmap, indexAdrs, lintTechDebt, lintCommit, planRelease,
@@ -31,14 +32,37 @@ const PROTOCOL_VERSION = '2024-11-05';
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
-/** Resolve a caller-supplied path against the project dir; reject escapes. */
+/** Resolve a caller-supplied path against the project dir; reject escapes.
+ * Canonicalizes with realpath so a symlink INSIDE the project that points
+ * outside it (e.g. .factory/ledger.jsonl -> ~/.ssh/id_rsa) cannot exfiltrate an
+ * out-of-tree file — a purely lexical resolve() would follow it. The check is
+ * done against realpath(projectDir) so both sides are canonical. */
 function safePath(p) {
   const abs = isAbsolute(p) ? resolve(p) : resolve(projectDir, p);
-  const root = resolve(projectDir);
-  if (abs !== root && !abs.startsWith(root + '/')) {
+  let root;
+  try { root = realpathSync(projectDir); } catch { root = resolve(projectDir); }
+  // Canonicalize as far as the path exists — walking up to the DEEPEST existing
+  // ancestor, then re-appending the not-yet-created tail — so symlinks anywhere
+  // on the path are followed even when several trailing segments don't exist yet.
+  let real = abs;
+  try {
+    real = realpathSync(abs);
+  } catch {
+    const tail = [];
+    let cur = abs;
+    real = abs;
+    for (let i = 0; i < 64; i += 1) {
+      const par = dirname(cur);
+      if (par === cur) break;
+      tail.unshift(basename(cur));
+      cur = par;
+      try { real = join(realpathSync(cur), ...tail); break; } catch { /* keep walking up */ }
+    }
+  }
+  if (real !== root && !real.startsWith(root + sep)) {
     throw new Error(`path escapes project directory: ${p}`);
   }
-  return abs;
+  return real;
 }
 
 function readRoadmap(args) {
@@ -259,7 +283,14 @@ const TOOLS = {
         .map((l) => l.trim())
         .filter(Boolean)
         .map((l) => { try { return JSON.parse(l); } catch { return { malformed: l }; } });
-      const limited = typeof args.limit === 'number' ? entries.slice(-args.limit) : entries;
+      // Guard the tail: slice(-0) is slice(0) (the WHOLE ledger), and a negative
+      // limit slices from a positive offset — both wrong. Clamp to a
+      // non-negative count so limit:0 returns nothing and limit:N the last N.
+      let limited = entries;
+      if (typeof args.limit === 'number' && Number.isFinite(args.limit)) {
+        const n = Math.max(0, Math.floor(args.limit));
+        limited = n === 0 ? [] : entries.slice(-n);
+      }
       return { entries: limited, count: entries.length };
     },
   },
@@ -363,6 +394,12 @@ function main() {
 // directly as a server.
 export { TOOLS, handle };
 
+// Compare DECODED filesystem paths. import.meta.url is a file:// URL whose
+// .pathname percent-encodes special characters (a space -> %20, '[' -> %5B), so
+// against the raw process.argv[1] the equality would fail whenever the plugin's
+// install path contains a space or bracket — and the server would start, read
+// nothing, and exit 0, exposing zero tools with no diagnostic. fileURLToPath
+// decodes correctly.
 const invokedDirectly =
-  process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (invokedDirectly) main();

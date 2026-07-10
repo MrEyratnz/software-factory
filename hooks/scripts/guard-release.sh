@@ -15,7 +15,12 @@ rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|do
 
 is_release=no
 case "$tn" in
-  Bash) printf '%s' "$cmd" | grep -Eq "$rel_re" && is_release=yes ;;
+  Bash)
+    # Command-position, quote-aware release detection: a release verb inside a
+    # commit message / echo / comment is NOT a release (so `git commit -m "...npm
+    # publish..."` is not false-blocked), and `git tag` counts only when it
+    # CREATES a tag — never for read-only listing (`git tag -l`) (issue #52).
+    [ -n "$rel_re" ] && [ "$(printf '%s' "$cmd" | node "$PLUGIN_ROOT/hooks/lib/classify-release.mjs" "$rel_re" 2>/dev/null | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).isRelease))}catch(e){process.stdout.write("false")}})')" = "true" ] && is_release=yes ;;
   mcp__github__merge_pull_request|mcp__github__push_files|mcp__github__create_or_update_file|mcp__github__delete_file)
     [ -f "$STATE_DIR/release-intent.json" ] && is_release=yes ;;
 esac
@@ -25,6 +30,15 @@ esac
 # so the branch/receipt/tree checks bind to it, not the fixed session project
 # (issue #28). For the MCP tools cmd is empty and this is the session project.
 target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
+# Advisory only when NEITHER the session NOR the target repo is initialized (see
+# guard-commit): enforcing on session-init keeps the issue-#28 model, and ALSO
+# on target-init stops an un-inited session bypassing an initialized sibling's
+# release gate. Both un-inited → step aside (no release-proof producer here).
+if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
+  otel_emit factory_gate_uninitialized_total sum 1 '{"hook":"guard-release"}'
+  allow
+fi
 
 relb="$(config_get releaseBranch 'main')"
 cur="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"

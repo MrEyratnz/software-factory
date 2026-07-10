@@ -12,10 +12,11 @@ const SERVER = join(__dirname, '..', 'src', 'server.mjs');
  * response lines, and resolve once we've seen a response for every request id.
  * Notifications (no id) get no response, so we only wait on id-bearing calls.
  */
-function rpc(requests) {
+function rpc(requests, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SERVER], {
       stdio: ['pipe', 'pipe', 'inherit'],
+      env: opts.env ? { ...process.env, ...opts.env } : process.env,
     });
     const wantIds = new Set(requests.filter((r) => r.id != null).map((r) => r.id));
     const responses = [];
@@ -111,4 +112,77 @@ test('a tool that throws is reported in-band as isError', async () => {
   }]);
   assert.equal(res.result.isError, true);
   assert.match(res.result.content[0].text, /escapes project directory/);
+});
+
+/* ── bug-hunt regressions (server robustness) ─────────────────────────── */
+
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+test('ledger_read: limit is clamped (0 → none, N → last N, none → all)', async () => {
+  const proj = mkdtempSync(join(tmpdir(), 'dsf-ledger-'));
+  mkdirSync(join(proj, '.factory'), { recursive: true });
+  writeFileSync(join(proj, '.factory', 'ledger.jsonl'),
+    ['{"sha":"a"}', '{"sha":"b"}', '{"sha":"c"}'].join('\n') + '\n');
+  const call = (limit) => rpc([{
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'ledger_read', arguments: limit === undefined ? {} : { limit } },
+  }], { env: { CLAUDE_PROJECT_DIR: proj } }).then(([r]) => JSON.parse(r.result.content[0].text));
+  try {
+    assert.equal((await call(0)).entries.length, 0);   // was slice(-0) === all
+    assert.equal((await call(2)).entries.length, 2);
+    assert.equal((await call(undefined)).entries.length, 3);
+    assert.equal((await call(0)).count, 3);            // count is the full total
+  } finally { rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('safePath: an in-project symlink pointing outside the tree cannot exfiltrate', async () => {
+  const proj = mkdtempSync(join(tmpdir(), 'dsf-proj-'));
+  const outside = mkdtempSync(join(tmpdir(), 'dsf-out-'));
+  writeFileSync(join(outside, 'secret.jsonl'), '{"secret":"exfiltrated"}\n');
+  mkdirSync(join(proj, '.factory'), { recursive: true });
+  symlinkSync(join(outside, 'secret.jsonl'), join(proj, '.factory', 'ledger.jsonl'));
+  try {
+    const [res] = await rpc([{
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'ledger_read', arguments: {} },
+    }], { env: { CLAUDE_PROJECT_DIR: proj } });
+    const text = res.result.content[0].text;
+    assert.doesNotMatch(text, /exfiltrated/); // the outside file's content must not leak
+  } finally {
+    rmSync(proj, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('server exposes its tools when installed under a path with a space and bracket', async () => {
+  // The invokedDirectly self-launch guard must compare DECODED paths — under a
+  // path containing a space or '[' the percent-encoded import.meta.url.pathname
+  // would not equal process.argv[1], so the server would start, serve nothing,
+  // and exit 0 (fileURLToPath fixes it).
+  const base = mkdtempSync(join(tmpdir(), 'dsf-sp-'));
+  const dir = join(base, 'a b [x]', 'src');
+  mkdirSync(dir, { recursive: true });
+  const here = dirname(fileURLToPath(import.meta.url));
+  const srcDir = join(here, '..', 'src');
+  for (const f of ['server.mjs', 'factory-core.mjs']) {
+    writeFileSync(join(dir, f), readFileSync(join(srcDir, f)));
+  }
+  try {
+    const out = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [join(dir, 'server.mjs')], { stdio: ['pipe', 'pipe', 'inherit'] });
+      let buf = '';
+      const timer = setTimeout(() => { child.kill(); reject(new Error('timeout')); }, 10000);
+      child.stdout.on('data', (c) => {
+        buf += c.toString();
+        const nl = buf.indexOf('\n');
+        if (nl >= 0) { clearTimeout(timer); child.kill(); resolve(JSON.parse(buf.slice(0, nl))); }
+      });
+      child.on('error', reject);
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) + '\n');
+    });
+    assert.ok(out.result.tools.length > 0, 'server under a special-char path must still advertise tools');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

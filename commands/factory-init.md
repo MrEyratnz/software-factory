@@ -30,4 +30,25 @@ config only):
 
 Under `--plan`, print exactly what you *would* write/create and stop.
 Dispatch the **architect** for the docs; load the `factory-config` and
-`docs-spine` skills. Add `.factory/` to `.gitignore` (runtime state).
+`docs-spine` skills.
+
+**Source control for `.factory/` (commit the config, ignore the runtime
+state).** `.factory/config.json` is the per-repo enforcement contract — the
+committed, reviewable source of truth for this repo's gates (testCommand, the
+regexes, the `enforcement` toggles). It MUST be committed, or a teammate's clone
+and CI run with the hardcoded defaults instead of the repo's intended settings,
+so the factory "sometimes" behaves differently per checkout. The runtime state
+under `.factory/` (green receipts, the ledger, review/panel artifacts, the
+active-agent marker) is session-local and regenerated, so it must NOT be
+committed. Add exactly these lines to `.gitignore` (do NOT ignore all of
+`.factory/`, which would un-track the config):
+
+```gitignore
+.factory/state/
+.factory/review/
+.factory/panel/
+.factory/ledger.jsonl
+.factory/active-agent
+```
+
+Then `git add .factory/config.json` so the enforcement contract is tracked.

@@ -679,6 +679,362 @@ EVENT="$(evt "$R" Write '{"file_path":"src/a.ts"}')"; assert_exit 0 "no generato
 SCRIPT="$S/bootstrap.sh"; EVENT='{"hook_event_name":"SessionStart","cwd":"'"$R"'"}'; assert_exit 0 "bootstrap exits 0"
 SCRIPT="$S/inject-status.sh"; EVENT='{"hook_event_name":"UserPromptSubmit","cwd":"'"$R"'"}'; assert_exit 0 "inject-status exits 0"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Bug-hunt regressions — every case below reproduces a defect found by the
+# multi-agent audit and asserts it stays fixed. Helpers: `assert_exit`, `evt`,
+# `mkrepo` (a git repo WITH .factory/config.json), `repo_tree_hash`. `mkbare`
+# (added here) is a git repo with NO config — an "un-initialized" repo.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# mkbare — a throwaway git repo that is NOT factory-initialized (no config.json).
+mkbare() {
+  local d; d="$(mktemp -d "$TMPROOT/bare.XXXXXX")"
+  ( cd "$d" && git init -q && git symbolic-ref HEAD refs/heads/main 2>/dev/null; \
+    git config user.email t@t && git config user.name t; \
+    mkdir -p src && echo x > src/a.ts && echo t > src/a.test.ts && git add -A && git commit -q -m init )
+  printf '%s' "$d"
+}
+# assert_file <exists|absent> <path> <label>
+assert_file() {
+  if { [ "$1" = exists ] && [ -f "$2" ]; } || { [ "$1" = absent ] && [ ! -f "$2" ]; }; then
+    PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - $3 (expected $2 to be $1)"; fi
+}
+# mint_receipt <repo> — run record-green for a clean `npm test` with exitCode 0.
+mint_receipt() {
+  SCRIPT="$S/record-green.sh"
+  EVENT="$(evt "$1" Bash '{"command":"npm test"}' ',"tool_response":{"exitCode":0}')"
+  printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+}
+
+echo "# regressions: uninitialized-repo gates are advisory (no deadlock)"
+# A repo with no .factory/config.json never opted in — the workflow gates must
+# step aside instead of demanding an unmintable proof.
+B="$(mkbare)"; export CLAUDE_PROJECT_DIR="$B"
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$B" Bash '{"command":"git commit -m \"feat: add a\""}')"
+assert_exit 0 "uninit: commit not deadlocked without a receipt"
+SCRIPT="$S/guard-release.sh"
+EVENT="$(evt "$B" Bash '{"command":"git tag v1.0.0"}')"
+assert_exit 0 "uninit: release verb not deadlocked without a proof"
+SCRIPT="$S/guard-roadmap.sh"
+EVENT="$(evt "$B" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] x","new_string":"- [x] x"}')"
+assert_exit 0 "uninit: roadmap flip not deadlocked without a proof"
+SCRIPT="$S/record-green.sh"
+EVENT="$(evt "$B" Bash '{"command":"npm test"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+assert_file absent "$B/.factory/state/gate-receipt.json" "uninit: record-green does not create .factory state"
+SCRIPT="$S/bootstrap.sh"
+EVENT='{"hook_event_name":"SessionStart","cwd":"'"$B"'"}'
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+assert_file absent "$B/.factory/config.json" "uninit: bootstrap leaves repo clean (no .factory)"
+[ ! -d "$B/.factory" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - uninit bootstrap must not create .factory dir"; }
+
+echo "# regressions: large event payload (E2BIG) must not fail the gate open"
+# A verbose tool_response once exceeded the 128KB env limit, making every node
+# exec fail and every gate silently no-op. Feeding it on stdin fixes that: a big
+# passing run still mints a receipt.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+BIG="$(head -c 200000 /dev/zero | tr '\0' x)"
+SCRIPT="$S/record-green.sh"
+EVENT="$(printf '{"tool_name":"Bash","hook_event_name":"PostToolUse","cwd":"%s","tool_input":{"command":"npm test"},"tool_response":{"exitCode":0,"stdout":"%s"}}' "$R" "$BIG")"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+assert_file exists "$R/.factory/state/gate-receipt.json" "E2BIG: 200KB tool_response still mints a receipt"
+
+echo "# regressions: record-green false-green vectors refuse to mint"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+SCRIPT="$S/record-green.sh"
+rg_no_mint() { # <cmd-json> <label>
+  rm -f "$R/.factory/state/gate-receipt.json"
+  EVENT="$(evt "$R" Bash "$1" ',"tool_response":{"exitCode":0}')"
+  printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+  assert_file absent "$R/.factory/state/gate-receipt.json" "$2"
+}
+rg_mint() { # <cmd-json> <label>
+  rm -f "$R/.factory/state/gate-receipt.json"
+  EVENT="$(evt "$R" Bash "$1" ',"tool_response":{"exitCode":0}')"
+  printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+  assert_file exists "$R/.factory/state/gate-receipt.json" "$2"
+}
+rg_no_mint '{"command":"npm test 2>&1 | tail -20"}'         "pipeline (| tail) masks exit status → no receipt"
+rg_no_mint '{"command":"npm test || echo failed"}'          "|| echo masks exit status → no receipt"
+rg_no_mint '{"command":"npm test; echo done"}'              "; echo masks exit status → no receipt"
+rg_no_mint '{"command":"grep -rn \"npm test\" README.md"}'  "test pattern as grep data → no receipt"
+rg_no_mint '{"command":"echo \"npm test passed\""}'         "echo forgery → no receipt"
+rg_no_mint '{"command":"FOO=1 echo \"npm test\""}'          "env-prefixed echo forgery → no receipt"
+rg_mint    '{"command":"npm test -- --grep \"#42\""}'       "legit test with # in an arg → mints (not skipped by bare-# guard)"
+rg_mint    '{"command":"npm test # ran the suite"}'         "trailing # comment on a real run → mints"
+rg_mint    '{"command":"cd . && npm test"}'                 "cd && npm test (last cmd is the suite) → mints"
+# widened default runner regex: yarn/pnpm/bun recognized (config has none set here)
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [] }
+JSON
+rg_mint '{"command":"yarn test"}' "default regex recognizes yarn test → mints"
+rg_mint '{"command":"bun test"}'  "default regex recognizes bun test → mints"
+# an explicitly-empty testCommandRegex must DISABLE detection, not match-all
+cat > "$R/.factory/config.json" <<'JSON'
+{ "testCommandRegex": "", "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [] }
+JSON
+rg_no_mint '{"command":"ls -la"}' "empty testCommandRegex disables detection (no match-all) → no receipt"
+# a non-numeric exit code must not corrupt the mint
+cat > "$R/.factory/config.json" <<'JSON'
+{ "testCommandRegex": "(npm test)", "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [] }
+JSON
+rm -f "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"npm test"}' ',"tool_response":{"code":"ENOENT"}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+assert_file absent "$R/.factory/state/gate-receipt.json" "non-numeric exit code (ENOENT) mints nothing"
+
+echo "# regressions: subdir session receipt does not self-invalidate"
+# Session opened in a repo SUBDIR: the receipt lands under <repo>/<sub>/.factory
+# but binds to the repo-root tree — tree_hash must exclude it or every commit is
+# denied 'stale-tree'.
+MONO="$(mktemp -d "$TMPROOT/mono.XXXXXX")"
+( cd "$MONO" && git init -q && git symbolic-ref HEAD refs/heads/main 2>/dev/null; git config user.email t@t && git config user.name t; \
+  mkdir -p pkg/src && echo x > pkg/src/a.ts && echo t > pkg/src/a.test.ts && git add -A && git commit -q -m init )
+SUB="$MONO/pkg"; mkdir -p "$SUB/.factory/state"
+cat > "$SUB/.factory/config.json" <<'JSON'
+{ "testCommandRegex": "(npm test)", "sourceRegex":"^src/", "testRegex":"(\\.test\\.)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [] }
+JSON
+export CLAUDE_PROJECT_DIR="$SUB"
+SCRIPT="$S/record-green.sh"; EVENT="$(evt "$SUB" Bash '{"command":"npm test"}' ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+SCRIPT="$S/guard-commit.sh"; EVENT="$(evt "$SUB" Bash '{"command":"git commit -m \"chore: x\""}')"
+assert_exit 0 "subdir session: commit allowed (receipt not self-invalidated)"
+
+echo "# regressions: receipt forgery via non-redirect write mutators"
+SCRIPT="$S/guard-bash-writes.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"touch .factory/state/paused"}')"; assert_exit 2 "touch .factory/state/paused (self-pause) blocked"
+EVENT="$(evt "$R" Bash '{"command":"mkdir -p .factory/state && touch .factory/state/paused"}')"; assert_exit 2 "mkdir+touch self-pause blocked"
+EVENT="$(evt "$R" Bash '{"command":"cp /tmp/x .factory/state/gate-receipt.json"}')"; assert_exit 2 "cp receipt forgery (leading verb) blocked"
+EVENT="$(evt "$R" Bash '{"command":"install -m644 /tmp/x .factory/state/gate-receipt.json"}')"; assert_exit 2 "install receipt forgery blocked"
+EVENT="$(evt "$R" Bash '{"command":"dd if=/dev/zero of=.factory/state/paused"}')"; assert_exit 2 "dd of= self-pause blocked"
+EVENT="$(evt "$R" Bash '{"command":"cp a.ts b.ts"}')"; assert_exit 0 "in-project cp allowed"
+EVENT="$(evt "$R" Bash '{"command":"touch src/new.ts"}')"; assert_exit 0 "in-project touch allowed"
+
+echo "# regressions: reviewer read-only quote/subcommand awareness"
+echo reviewer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Bash '{"command":"grep \"a > b\" file.txt"}')"; assert_exit 0 "reviewer: quoted > (not a redirect) allowed"
+EVENT="$(evt "$R" Bash '{"command":"git stash list"}')"; assert_exit 0 "reviewer: git stash list (read-only) allowed"
+EVENT="$(evt "$R" Bash '{"command":"git stash show"}')"; assert_exit 0 "reviewer: git stash show (read-only) allowed"
+EVENT="$(evt "$R" Bash '{"command":"git stash"}')"; assert_exit 2 "reviewer: bare git stash (push) blocked"
+EVENT="$(evt "$R" Bash '{"command":"git stash push -m x"}')"; assert_exit 2 "reviewer: git stash push blocked"
+rm -f "$R/.factory/active-agent"
+
+echo "# regressions: reviewer can emit its findings artifact; source stays denied"
+SCRIPT="$S/guard-scope.sh"; echo reviewer > "$R/.factory/active-agent"
+EVENT="$(evt "$R" Write '{"file_path":".factory/review/pr.json"}')"; assert_exit 0 "reviewer: Write .factory/review/*.json allowed (handoff)"
+EVENT="$(evt "$R" Write '{"file_path":"src/x.ts"}')"; assert_exit 2 "reviewer: Write source still denied"
+rm -f "$R/.factory/active-agent"
+
+echo "# regressions: /factory-init can create config; symlink evasion blocked"
+SCRIPT="$S/guard-scope.sh"; B="$(mkbare)"; export CLAUDE_PROJECT_DIR="$B"
+EVENT="$(evt "$B" Write '{"file_path":".factory/config.json"}')"; assert_exit 0 "init: create .factory/config.json (absent) allowed"
+mkdir -p "$B/.factory"; echo '{}' > "$B/.factory/config.json"
+EVENT="$(evt "$B" Write '{"file_path":".factory/config.json"}')"; assert_exit 2 "init: config.json protected once it exists"
+EVENT="$(evt "$B" Write '{"file_path":".factory/state/gate-receipt.json"}')"; assert_exit 2 "init: state is never creatable via the editor"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo implementer > "$R/.factory/active-agent"
+ln -s .factory/state "$R/sneak"
+EVENT="$(evt "$R" Write '{"file_path":"sneak/gate-receipt.json"}')"; assert_exit 2 "symlink into trust root (sneak/) blocked"
+rm -f "$R/.factory/active-agent" "$R/sneak"
+
+echo "# regressions: guard-roadmap Write bypass; guard-release read-only tag"
+SCRIPT="$S/guard-roadmap.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+printf '## M0\n- [ ] build the thing\n' > "$R/docs/ROADMAP.md"
+EVENT="$(evt "$R" Write '{"file_path":"docs/ROADMAP.md","content":"## M0\n- [x] build the thing\n"}')"
+assert_exit 2 "roadmap: Write-tool checkbox flip blocked without proof (bypass closed)"
+SCRIPT="$S/guard-release.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"git tag -l"}')"; assert_exit 0 "release: read-only 'git tag -l' allowed"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"docs: how to npm publish\""}')"; assert_exit 0 "release: verb inside a commit message not a release"
+EVENT="$(evt "$R" Bash '{"command":"git tag v9.9.9"}')"; assert_exit 2 "release: 'git tag <name>' (create) still gated without proof"
+
+echo "# regressions: collect-findings robustness (feeds debt-reconcile)"
+SCRIPT="$S/debt-reconcile.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT='{"hook_event_name":"Stop","cwd":"'"$R"'"}'
+GHEMPTY="$(mk_gh_shim '[]')"
+# a null file must not abort the scan and drop the real (unfiled) finding after it
+printf 'null' > "$R/.factory/review/a-null.json"
+printf '[{"location":"src/z.ts:1","impact":"bug","provenance":"introduced","suggestedFix":"fix","severity":"high","status":"open"}]' > "$R/.factory/review/z.json"
+( export PATH="$GHEMPTY:$PATH"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1 ); [ $? = 2 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - null review file must not drop a later unfiled finding"; }
+# the honest {clean:true} sentinel must NOT be counted as an unfixed finding
+rm -f "$R/.factory/review/"*.json
+printf '{"clean":true}' > "$R/.factory/review/clean.json"
+( export PATH="$GHEMPTY:$PATH"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1 ); [ $? = 0 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - clean sentinel must not block Stop"; }
+
+echo "# regressions: ledger de-dups a failed (HEAD-unchanged) commit"
+SCRIPT="$S/ledger-record.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+echo x > "$R/src/a.ts"; ( cd "$R" && git add -A && git commit -q -m "feat: real" )
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: real\""}' ',"tool_response":{"stdout":"nothing to commit"}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+LN="$(wc -l < "$R/.factory/ledger.jsonl" 2>/dev/null | tr -d ' ')"
+[ "${LN:-0}" = "1" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - ledger must not double-log a HEAD-unchanged commit (got $LN lines)"; }
+
+echo "# regressions: commit parser (heredoc / -am / bypass-scope / quote-awareness)"
+PGC="$ROOT/hooks/lib/parse-git-commit.mjs"
+pgc_field() { printf '%s' "$1" | node "$PGC" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s)["'"$2"'"])))'; }
+[ "$(pgc_field 'git commit -am "wip not conventional"' message)" = "wip not conventional" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - -am message must be extracted (lint not skipped)"; }
+[ "$(pgc_field 'git commit -am "x"' all)" = "true" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - -am must set the all flag"; }
+[ "$(pgc_field 'git commit -m "docs: mentions --no-verify"' bypass)" = "false" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - --no-verify inside the message is not a bypass"; }
+[ "$(pgc_field 'echo "reminder: git commit --no-verify"' isCommit)" = "false" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - git commit inside a quoted echo is not a commit"; }
+HEREDOC_MSG="$(printf 'git commit -m "$(cat <<%sEOF%s\nfeat: heredoc subject\n\nbody\nEOF\n)"' "'" "'" | node "$PGC" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(JSON.parse(s).message.split("\n")[0]))')"
+[ "$HEREDOC_MSG" = "feat: heredoc subject" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - heredoc commit subject must be extracted (got: $HEREDOC_MSG)"; }
+# end-to-end: a heredoc commit with a green receipt + staged test is ALLOWED
+SCRIPT="$S/guard-commit.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+echo x > "$R/src/a.ts"; echo x > "$R/src/a.test.ts"; ( cd "$R" && git add -A )
+TH="$(repo_tree_hash "$R")"; printf '{"tree":"%s","ok":true}' "$TH" > "$R/.factory/state/gate-receipt.json"
+HEREDOC_CMD='{"command":"git commit -m \"$(cat <<'"'"'EOF'"'"'\nfeat: add a\nEOF\n)\""}'
+EVENT="$(evt "$R" Bash "$HEREDOC_CMD")"; assert_exit 0 "heredoc commit with green receipt allowed (Claude Code default commit style)"
+
+echo "# regressions: record-release-proof mints on a build whose command contains '#'"
+SCRIPT="$S/record-release-proof.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "releaseProofCommandRegex": "(npm run build)" }
+JSON
+printf '{"active":true}' > "$R/.factory/state/release-intent.json"
+EVENT="$(evt "$R" Bash '{"command":"npm run build # release build"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+assert_file exists "$R/.factory/state/release-proof.json" "release proof mints on a green build with a trailing '#' comment"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Review-round regressions — defects the adversarial review of the fix diff
+# itself surfaced (command wrappers defeating the tokenized parsers, cp -t
+# forgery, cross-repo/config-delete bypasses, symlinked-root false-block).
+# ═══════════════════════════════════════════════════════════════════════════
+echo "# review-round: command wrappers no longer defeat the parsers"
+PGC="$ROOT/hooks/lib/parse-git-commit.mjs"
+CTR="$ROOT/hooks/lib/classify-test-run.mjs"
+CRL="$ROOT/hooks/lib/classify-release.mjs"
+# Use the EXACT DEFAULT_TEST_RE from record-green.sh (extracted, not re-declared)
+# so the classifier tests exercise the production regex and a revert/edit of it
+# fails CI — no divergeable mirror (retires the drift risk of tech-debt #54).
+DTR="$(sed -n "s/^DEFAULT_TEST_RE='\(.*\)'$/\1/p" "$ROOT/hooks/scripts/record-green.sh")"
+[ -n "$DTR" ] || { echo "FAIL - could not extract DEFAULT_TEST_RE from record-green.sh"; FAIL=$((FAIL+1)); }
+REL='(git tag|gh release create|npm publish|docker push|release-please|npm version )'
+jf() { printf '%s' "$1" | node "$2" ${3:+"$3"} | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s)["'"$4"'"])))'; }
+chk() { if [ "$1" = "$2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - $3 (got '$1', want '$2')"; fi; }
+# parse-git-commit: wrapped commits detected; bypass still scoped; heredoc scoped
+chk "$(jf 'timeout 60 git commit --no-verify -m x' "$PGC" '' isCommit)" true "wrapper: timeout git commit is a commit"
+chk "$(jf 'timeout 60 git commit --no-verify -m x' "$PGC" '' bypass)" true "wrapper: --no-verify under timeout still a bypass"
+chk "$(jf 'nice -n 5 git commit -m x' "$PGC" '' isCommit)" true "wrapper: nice -n 5 git commit is a commit"
+chk "$(jf 'sudo -u ci git commit -m x' "$PGC" '' isCommit)" true "wrapper: sudo -u ci git commit is a commit"
+chk "$(jf 'git commit -m "feat: real" && cat <<EOF > n.txt
+notes
+EOF' "$PGC" '' message)" "feat: real" "heredoc: unrelated chained heredoc does not overwrite the -m message"
+# classify-test-run: wrappers engage; python forms; playwright install excluded; && clean; & not clean
+chk "$(jf 'timeout 300 npm test' "$CTR" "$DTR" testCommand)" true "wrapper: timeout npm test is a test run"
+chk "$(jf 'python -m pytest' "$CTR" "$DTR" testCommand)" true "python -m pytest is a test run"
+chk "$(jf 'coverage run -m pytest' "$CTR" "$DTR" testCommand)" true "coverage run is a test run"
+chk "$(jf 'npx playwright install' "$CTR" "$DTR" testCommand)" false "npx playwright install is NOT a test run"
+chk "$(jf 'npm test && npm run lint' "$CTR" "$DTR" cleanInvocation)" true "&&-chained suite: exit code is authoritative"
+chk "$(jf 'npm test &' "$CTR" "$DTR" cleanInvocation)" false "backgrounded suite: exit code NOT authoritative"
+# classify-release: wrapped/sh-c releases detected
+chk "$(jf 'timeout 60 gh release create v1' "$CRL" "$REL" isRelease)" true "wrapper: timeout gh release create is a release"
+chk "$(jf "sh -c 'gh release create v1'" "$CRL" "$REL" isRelease)" true "sh -c hidden release is a release"
+chk "$(jf 'git tag -l' "$CRL" "$REL" isRelease)" false "git tag -l (read-only) still not a release"
+
+echo "# review-round: parse-bash-writes cp -t forgery + rm trust-root deletion"
+PBW="$ROOT/hooks/lib/parse-bash-writes.mjs"
+tcount() { printf '%s' "$1" | HOOK_PROJECT_DIR=/proj node "$PBW" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String((JSON.parse(s).trustRoot||[]).length)))'; }
+chk "$(tcount 'cp -t .factory/state gate-receipt.json')" 1 "cp -t DIR flags the trust-root target dir"
+chk "$(tcount 'cp -rt .factory/state x')" 1 "cp -rt cluster flags the trust-root dir"
+chk "$(tcount 'cd .factory && rm config.json')" 1 "cd-relative rm of config flagged as trust-root delete"
+chk "$(tcount 'rm src/x.ts')" 0 "rm of an in-project non-trust file is not over-flagged"
+
+echo "# review-round: guard-bash-writes carve-out + cross-repo + nested symlink"
+SCRIPT="$S/guard-bash-writes.sh"
+B="$(mkbare)"; export CLAUDE_PROJECT_DIR="$B"   # uninit (no config)
+EVENT="$(evt "$B" Bash '{"command":"cd .factory && mkdir -p state && printf {} > config.json; : > state/paused"}')"
+assert_exit 2 "carve-out: config-create that ALSO plants state/paused is blocked"
+EVENT="$(evt "$B" Bash '{"command":"mkdir -p .factory && printf {} > .factory/config.json"}')"
+assert_exit 0 "carve-out: first-run config-only creation still allowed"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"    # init
+EVENT="$(evt "$R" Bash '{"command":"cd .factory && rm config.json"}')"
+assert_exit 2 "cd-relative rm of config in an inited repo is blocked (no kill-switch)"
+# cross-repo union: uninit session A committing to inited sibling B is still gated
+A2="$(mkbare)"; B2="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$A2"
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$A2" Bash '{"command":"cd '"$B2"' && git commit -m \"feat: sneaky\""}')"
+assert_exit 2 "cross-repo: uninit session cannot bypass an inited sibling's commit gate"
+EVENT="$(evt "$A2" Bash '{"command":"git commit -m \"feat: local\""}')"
+assert_exit 0 "cross-repo: uninit session + uninit target stays advisory (no deadlock)"
+# guard-scope: a new nested file under a SYMLINKED project root is allowed
+SCRIPT="$S/guard-scope.sh"
+SYMBASE="$(mktemp -d "$TMPROOT/symp.XXXXXX")"; mkdir -p "$SYMBASE/real/.factory" "$SYMBASE/real/src"
+printf '{}' > "$SYMBASE/real/.factory/config.json"; ( cd "$SYMBASE/real" && git init -q )
+ln -s "$SYMBASE/real" "$SYMBASE/sym"; echo implementer > "$SYMBASE/real/.factory/active-agent"
+export CLAUDE_PROJECT_DIR="$SYMBASE/sym"
+EVENT="$(evt "$SYMBASE/sym" Write '{"file_path":"'"$SYMBASE"'/sym/src/comp/NewThing/index.tsx"}')"
+assert_exit 0 "symlinked root: new file in a not-yet-created nested dir is allowed"
+EVENT="$(evt "$SYMBASE/sym" Write '{"file_path":".factory/state/gate-receipt.json"}')"
+assert_exit 2 "symlinked root: trust-root write still blocked"
+
+echo "# review-round: record-green recognizes python/wrapper suites, rejects background"
+SCRIPT="$S/record-green.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [] }
+JSON
+rgm() { rm -f "$R/.factory/state/gate-receipt.json"; EVENT="$(evt "$R" Bash "$1" ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1; }
+rgm '{"command":"python -m pytest"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "python -m pytest mints a receipt"
+rgm '{"command":"timeout 300 npm test"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "timeout npm test mints a receipt"
+rgm '{"command":"npm test && npm run lint"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "npm test && lint mints (exit authoritative)"
+rgm '{"command":"npx playwright install"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "npx playwright install mints nothing"
+rgm '{"command":"npm test &"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "backgrounded npm test mints nothing"
+
+echo "# review-round-2: boolean-flag wrappers must not defeat the parsers"
+# The wrapper unwrap must use PER-WRAPPER value flags, not a global union: a flag
+# that is boolean for one wrapper (time -p, env -i, sudo -i) must not swallow the
+# wrapped command word. parse-git-commit scans for the wrapped `git` instead.
+chk "$(jf 'time -p git commit --no-verify -m x' "$PGC" '' isCommit)" true "time -p git commit is a commit (boolean -p)"
+chk "$(jf 'time -p git commit --no-verify -m x' "$PGC" '' bypass)" true "time -p git commit --no-verify is a bypass"
+chk "$(jf 'env -i git commit -m x' "$PGC" '' isCommit)" true "env -i git commit is a commit (boolean -i)"
+chk "$(jf 'sudo -i git commit -m x' "$PGC" '' isCommit)" true "sudo -i git commit is a commit (boolean -i)"
+chk "$(jf 'sudo -n git commit -m x' "$PGC" '' isCommit)" true "sudo -n git commit is a commit (boolean -n)"
+chk "$(jf 'sudo -u ci git commit -m x' "$PGC" '' isCommit)" true "sudo -u ci git commit still a commit (value -u consumed)"
+chk "$(jf 'timeout 60 echo hi' "$PGC" '' isCommit)" false "timeout echo hi is not a commit"
+chk "$(jf 'time -p npm test' "$CTR" "$DTR" testCommand)" true "time -p npm test is a test run (boolean -p)"
+chk "$(jf 'env -i npm test' "$CTR" "$DTR" testCommand)" true "env -i npm test is a test run (boolean -i)"
+chk "$(jf 'sudo -u ci npm test' "$CTR" "$DTR" testCommand)" true "sudo -u ci npm test still a test run (value -u)"
+chk "$(jf 'sudo -u pytest-user echo hi' "$CTR" "$DTR" testCommand)" false "a test-tool name as a flag VALUE is not a test run (no false green)"
+chk "$(jf 'sudo -i gh release create v1' "$CRL" "$REL" isRelease)" true "sudo -i gh release create is a release (boolean -i)"
+chk "$(jf 'time -p npm publish' "$CRL" "$REL" isRelease)" true "time -p npm publish is a release (boolean -p)"
+chk "$(jf 'sudo grep npm README' "$CRL" "$REL" isRelease)" false "sudo grep npm README is not a release"
+# record-green default regex: coverage/tox tightened so a non-test does not false-green
+chk "$(jf 'coverage run manage.py migrate' "$CTR" "$DTR" testCommand)" false "coverage run <non-test> is not a test run"
+chk "$(jf 'coverage run -m pytest' "$CTR" "$DTR" testCommand)" true "coverage run -m pytest IS a test run"
+chk "$(jf 'tox -l' "$CTR" "$DTR" testCommand)" false "tox -l (list) is not a test run"
+chk "$(jf 'tox' "$CTR" "$DTR" testCommand)" true "bare tox IS a test run"
+chk "$(jf 'tox -e lint' "$CTR" "$DTR" testCommand)" false "tox -e <env> is not auto-classed as a test (env may be lint/docs)"
+# xargs -l is boolean-optional-arg, not value-taking — must not swallow the wrapped command
+chk "$(jf 'xargs -l npm test' "$CTR" "$DTR" testCommand)" true "xargs -l npm test is a test run (-l does not consume npm)"
+chk "$(jf 'xargs -l gh release create' "$CRL" "$REL" isRelease)" true "xargs -l gh release create is a release (-l does not consume gh)"
+chk "$(jf 'xargs -L 1 gh release create' "$CRL" "$REL" isRelease)" true "xargs -L 1 (value flag) still resolves the wrapped release"
+
+echo "# review-round-2: end-to-end record-green + rsync -t forgery"
+# Drive record-green.sh ITSELF (not just the classifier) so a revert of its
+# DEFAULT_TEST_RE is caught — the false-green vectors must mint NOTHING.
+SCRIPT="$S/record-green.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [] }
+JSON
+e2e() { rm -f "$R/.factory/state/gate-receipt.json"; EVENT="$(evt "$R" Bash "$1" ',"tool_response":{"exitCode":0}')"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1; }
+e2e '{"command":"coverage run manage.py migrate"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "e2e: coverage run <non-test> mints nothing"
+e2e '{"command":"tox -e lint"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "e2e: tox -e lint mints nothing"
+e2e '{"command":"tox -l"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "e2e: tox -l mints nothing"
+e2e '{"command":"coverage run -m pytest"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "e2e: coverage run -m pytest mints"
+e2e '{"command":"tox"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "e2e: bare tox mints"
+# rsync -t is --times (boolean), NOT --target-directory: the dest is the last
+# operand, so a receipt forgery via rsync must be caught.
+SCRIPT="$S/guard-bash-writes.sh"; R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"rsync -t /tmp/forged.json .factory/state/gate-receipt.json"}')"
+assert_exit 2 "rsync -t receipt forgery is blocked (dest is the last operand, not -t's value)"
+EVENT="$(evt "$R" Bash '{"command":"rsync -a src/ dst/"}')"; assert_exit 0 "legit rsync between in-project dirs allowed"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
