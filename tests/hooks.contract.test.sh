@@ -906,7 +906,8 @@ echo "# review-round: command wrappers no longer defeat the parsers"
 PGC="$ROOT/hooks/lib/parse-git-commit.mjs"
 CTR="$ROOT/hooks/lib/classify-test-run.mjs"
 CRL="$ROOT/hooks/lib/classify-release.mjs"
-DTR='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run|tox)'
+# Mirror of record-green.sh DEFAULT_TEST_RE (kept in sync; see tech-debt #54).
+DTR='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run -m (pytest|unittest|nose2)|tox( +(-e|-p|-r|-f|[a-z])|$))'
 REL='(git tag|gh release create|npm publish|docker push|release-please|npm version )'
 jf() { printf '%s' "$1" | node "$2" ${3:+"$3"} | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s)["'"$4"'"])))'; }
 chk() { if [ "$1" = "$2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - $3 (got '$1', want '$2')"; fi; }
@@ -979,6 +980,30 @@ rgm '{"command":"timeout 300 npm test"}'; assert_file exists "$R/.factory/state/
 rgm '{"command":"npm test && npm run lint"}'; assert_file exists "$R/.factory/state/gate-receipt.json" "npm test && lint mints (exit authoritative)"
 rgm '{"command":"npx playwright install"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "npx playwright install mints nothing"
 rgm '{"command":"npm test &"}'; assert_file absent "$R/.factory/state/gate-receipt.json" "backgrounded npm test mints nothing"
+
+echo "# review-round-2: boolean-flag wrappers must not defeat the parsers"
+# The wrapper unwrap must use PER-WRAPPER value flags, not a global union: a flag
+# that is boolean for one wrapper (time -p, env -i, sudo -i) must not swallow the
+# wrapped command word. parse-git-commit scans for the wrapped `git` instead.
+chk "$(jf 'time -p git commit --no-verify -m x' "$PGC" '' isCommit)" true "time -p git commit is a commit (boolean -p)"
+chk "$(jf 'time -p git commit --no-verify -m x' "$PGC" '' bypass)" true "time -p git commit --no-verify is a bypass"
+chk "$(jf 'env -i git commit -m x' "$PGC" '' isCommit)" true "env -i git commit is a commit (boolean -i)"
+chk "$(jf 'sudo -i git commit -m x' "$PGC" '' isCommit)" true "sudo -i git commit is a commit (boolean -i)"
+chk "$(jf 'sudo -n git commit -m x' "$PGC" '' isCommit)" true "sudo -n git commit is a commit (boolean -n)"
+chk "$(jf 'sudo -u ci git commit -m x' "$PGC" '' isCommit)" true "sudo -u ci git commit still a commit (value -u consumed)"
+chk "$(jf 'timeout 60 echo hi' "$PGC" '' isCommit)" false "timeout echo hi is not a commit"
+chk "$(jf 'time -p npm test' "$CTR" "$DTR" testCommand)" true "time -p npm test is a test run (boolean -p)"
+chk "$(jf 'env -i npm test' "$CTR" "$DTR" testCommand)" true "env -i npm test is a test run (boolean -i)"
+chk "$(jf 'sudo -u ci npm test' "$CTR" "$DTR" testCommand)" true "sudo -u ci npm test still a test run (value -u)"
+chk "$(jf 'sudo -u pytest-user echo hi' "$CTR" "$DTR" testCommand)" false "a test-tool name as a flag VALUE is not a test run (no false green)"
+chk "$(jf 'sudo -i gh release create v1' "$CRL" "$REL" isRelease)" true "sudo -i gh release create is a release (boolean -i)"
+chk "$(jf 'time -p npm publish' "$CRL" "$REL" isRelease)" true "time -p npm publish is a release (boolean -p)"
+chk "$(jf 'sudo grep npm README' "$CRL" "$REL" isRelease)" false "sudo grep npm README is not a release"
+# record-green default regex: coverage/tox tightened so a non-test does not false-green
+chk "$(jf 'coverage run manage.py migrate' "$CTR" "$DTR" testCommand)" false "coverage run <non-test> is not a test run"
+chk "$(jf 'coverage run -m pytest' "$CTR" "$DTR" testCommand)" true "coverage run -m pytest IS a test run"
+chk "$(jf 'tox -l' "$CTR" "$DTR" testCommand)" false "tox -l (list) is not a test run"
+chk "$(jf 'tox' "$CTR" "$DTR" testCommand)" true "bare tox IS a test run"
 
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"

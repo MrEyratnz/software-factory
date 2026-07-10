@@ -59,10 +59,22 @@ const WRAPPERS = new Set([
   'timeout', 'nice', 'nohup', 'sudo', 'doas', 'env', 'stdbuf', 'ionice', 'chrt',
   'setsid', 'unbuffer', 'time', 'command', 'builtin', 'exec', 'xargs',
 ]);
-const WRAPPER_VALUE_FLAGS = new Set([
-  '-s', '--signal', '-k', '--kill-after', '-n', '-u', '-g', '-C', '-h', '-p',
-  '-r', '-t', '-U', '-o', '-e', '-i', '-c', '-D', '-R', '-S', '--user', '--group',
-]);
+// Value-taking flags PER WRAPPER (not a global union): the same flag letter is
+// boolean for one wrapper and value-taking for another (`time -p` is boolean but
+// `sudo -p` takes a prompt; `env -i` is boolean but `stdbuf -i` takes a mode), so
+// a union wrongly swallows the wrapped command word — misclassifying the run.
+const WRAPPER_VALUE_FLAGS_BY = {
+  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
+  nice: new Set(['-n', '--adjustment']),
+  sudo: new Set(['-u', '--user', '-g', '--group', '-C', '--close-from', '-p', '--prompt', '-U', '--other-user', '-r', '--role', '-t', '--type', '-h', '--host', '-R', '--chroot', '-D', '--chdir']),
+  doas: new Set(['-u', '-C']),
+  env: new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string']),
+  stdbuf: new Set(['-i', '--input', '-o', '--output', '-e', '--error']),
+  ionice: new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid']),
+  time: new Set(['-o', '--output', '-f', '--format']),
+  exec: new Set(['-a']),
+  xargs: new Set(['-I', '-i', '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '-L', '-l', '-d', '--delimiter', '-E', '-e', '-a', '--arg-file']),
+};
 const WRAPPER_POSITIONALS = { timeout: 1, chrt: 1 };
 
 // Drop leading env assignments, shell-keyword prefixes, and command wrappers
@@ -74,11 +86,12 @@ function stripLeadingWrappers(words) {
     while (i < w.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i]) || PREFIX_WORDS.has(w[i]))) i += 1;
     if (i >= w.length) return [];
     if (!WRAPPERS.has(w[i])) return w.slice(i);
+    const vflags = WRAPPER_VALUE_FLAGS_BY[w[i]] || new Set();
     let j = i + 1;
     let pos = WRAPPER_POSITIONALS[w[i]] || 0;
     while (j < w.length) {
       const t = w[j];
-      if (t.startsWith('-')) { j += 1; if (WRAPPER_VALUE_FLAGS.has(t) && j < w.length && !w[j].startsWith('-')) j += 1; continue; }
+      if (t.startsWith('-')) { j += 1; if (vflags.has(t) && j < w.length && !w[j].startsWith('-')) j += 1; continue; }
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) { j += 1; continue; }
       if (pos > 0) { pos -= 1; j += 1; continue; }
       break;

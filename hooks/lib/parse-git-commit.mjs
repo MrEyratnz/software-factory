@@ -43,26 +43,21 @@ const SAFE_SUBCOMMANDS = new Set([
 // git global options that consume the NEXT token as their value (so the
 // subcommand walk must skip that value too).
 const GIT_OPT_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
-// Command WRAPPERS — programs that run ANOTHER command given later in their
-// argv (`timeout 60 git commit`, `nice -n 5 git commit`, `sudo -u ci git
-// commit`, `env X=1 git commit`). The wrapped command must be found past the
-// wrapper's own flags/values/positionals, or a wrapped `git commit` (and its
-// hard --no-verify block) would slip the gate — the pre-rewrite whole-text scan
-// caught these, so missing them is a regression.
+// Command WRAPPERS — programs that run ANOTHER command given later in their argv
+// (`timeout 60 git commit`, `nice -n 5 git commit`, `sudo -u ci git commit`,
+// `env X=1 git commit`, `time -p git commit`). The wrapped `git` is found by
+// SCANNING the segment for the first unquoted `git` command token, NOT by
+// precisely skipping the wrapper's flags/values: a global value-flag list is
+// unsafe because the same flag letter is boolean for one wrapper and
+// value-taking for another (e.g. `time -p`, `env -i`, `sudo -i`), and wrongly
+// consuming the wrapped `git` reopens the commit gate (incl. the hard
+// --no-verify block). The scan needs no per-flag knowledge and is
+// fail-conservative: over-engaging on a stray `git` token is safe; missing a
+// real wrapped `git commit` is not.
 const WRAPPERS = new Set([
   'timeout', 'nice', 'nohup', 'sudo', 'doas', 'env', 'stdbuf', 'ionice', 'chrt',
   'setsid', 'unbuffer', 'time', 'command', 'builtin', 'exec', 'xargs',
 ]);
-// Wrapper flags that consume the NEXT token as their value (so it is not the
-// wrapped command). Superset across the wrappers above; a false skip only makes
-// isCommit MORE conservative (engage the gate), never less.
-const WRAPPER_VALUE_FLAGS = new Set([
-  '-s', '--signal', '-k', '--kill-after', '-n', '-u', '-g', '-C', '-h', '-p',
-  '-r', '-t', '-U', '-o', '-e', '-i', '-c', '-D', '-R', '-S', '--user', '--group',
-]);
-// Wrappers that take a positional argument BEFORE the wrapped command (timeout's
-// DURATION, chrt's PRIORITY).
-const WRAPPER_POSITIONALS = { timeout: 1, chrt: 1 };
 // Constructs that can supply a git subcommand (or whole invocation) out of
 // static view — a bare `git` alongside one of these fails toward the gate.
 const INDIRECTION_RE = /\bxargs\b|\beval\b|\bsh\s+-c\b|\bbash\s+-c\b|`|\$\(/;
@@ -113,38 +108,24 @@ function segments(toks) {
   return segs;
 }
 
-// From a segment's word tokens, return the index of the EFFECTIVE command word:
-// skip leading VAR=val assignments, then unwrap any command wrappers (past their
-// flags/values/positionals) so `timeout 60 git …` / `nice -n 5 git …` resolve to
-// the `git` token. Returns -1 if none.
+// The command-word index: skip leading VAR=val assignments only. Command
+// wrappers are handled in analyze() by scanning for the wrapped command, so this
+// deliberately does NOT try to unwrap them here. Returns -1 if none.
 function commandWordIndex(seg) {
-  // Drop operator tokens up front so index math over words is simple.
   let k = 0;
-  let guard = 0;
-  while (k < seg.length && guard < 8) {
-    guard += 1;
-    // skip env assignments
-    while (k < seg.length && (seg[k].op || (!seg[k].quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[k].v)))) k += 1;
-    if (k >= seg.length) return -1;
-    const t = seg[k];
-    if (t.quoted || !WRAPPERS.has(t.v)) return k; // real command word (or a quoted one)
-    // unwrap: advance past the wrapper's own flags/values/positionals
-    let j = k + 1;
-    let pos = WRAPPER_POSITIONALS[t.v] || 0;
-    while (j < seg.length && !seg[j].op) {
-      const a = seg[j];
-      if (a.v.startsWith('-')) {
-        j += 1;
-        if (WRAPPER_VALUE_FLAGS.has(a.v) && j < seg.length && !seg[j].op && !seg[j].v.startsWith('-')) j += 1;
-        continue;
-      }
-      if (!a.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a.v)) { j += 1; continue; } // env's VAR=val
-      if (pos > 0) { pos -= 1; j += 1; continue; }
-      break;
-    }
-    k = j;
-  }
+  while (k < seg.length && (seg[k].op || (!seg[k].quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[k].v)))) k += 1;
   return k < seg.length ? k : -1;
+}
+
+// The index of the first unquoted `git` command token at or after `from`, or -1.
+function firstGitIndex(seg, from) {
+  for (let j = from; j < seg.length; j += 1) { const t = seg[j]; if (!t.op && !t.quoted && t.v === 'git') return j; }
+  return -1;
+}
+// The index of the first unquoted shell/eval command token at or after `from`.
+function firstShellIndex(seg, from) {
+  for (let j = from; j < seg.length; j += 1) { const t = seg[j]; if (!t.op && !t.quoted && (SHELL_WORDS.has(t.v) || t.v === 'eval')) return j; }
+  return -1;
 }
 
 // Given the git segment and the index of the `git` word, find the subcommand
@@ -219,45 +200,18 @@ function analyze(rawCmd, depth = 0) {
   let all = false;
   let message = '';
   let fromFile = false;
-  for (const seg of segs) {
-    const cwi = commandWordIndex(seg);
-    if (cwi < 0) continue;
-    const word = seg[cwi];
-    // `sh -c '<payload>'` / `bash -c …` / `eval '<payload>'`: the payload is a
-    // command line — recurse into it (bounded depth) so a commit hidden there
-    // still engages the gate.
-    if (!word.quoted && depth < 4 && (SHELL_WORDS.has(word.v) || word.v === 'eval')) {
-      let payload = '';
-      if (word.v === 'eval') {
-        payload = seg.slice(cwi + 1).filter((t) => !t.op).map((t) => t.v).join(' ');
-      } else {
-        for (let j = cwi + 1; j < seg.length; j++) {
-          if (seg[j].op) break;
-          if (seg[j].v === '-c') { const nxt = seg[j + 1]; if (nxt && !nxt.op) payload = nxt.v; break; }
-        }
-      }
-      if (payload) {
-        const inner = analyze(payload, depth + 1);
-        if (inner.isCommit) {
-          isCommit = true;
-          bypass = bypass || inner.bypass;
-          all = all || inner.all;
-          fromFile = fromFile || inner.messageFromFile;
-          if (!message && inner.message) message = inner.message;
-        }
-      }
-      continue;
-    }
-    if (word.quoted || word.v !== 'git') continue; // command word must be an unquoted `git`
-    const subIdx = gitSubcommandIndex(seg, cwi);
+
+  // Analyze a `git` invocation whose `git` token is at gitIdx.
+  const analyzeGitAt = (seg, gitIdx) => {
+    const subIdx = gitSubcommandIndex(seg, gitIdx);
     if (subIdx < 0) {
       // bare `git` with no visible subcommand: only commit-ish if the line can
       // supply one indirectly (xargs/eval/sh -c/`…`/$(…)).
       if (hasIndirection) isCommit = true;
-      continue;
+      return;
     }
     const sub = seg[subIdx].v;
-    if (SAFE_SUBCOMMANDS.has(sub)) continue; // clearly not a commit
+    if (SAFE_SUBCOMMANDS.has(sub)) return; // clearly not a commit
     isCommit = true;
     if (sub === 'commit') {
       const a = parseCommitArgs(seg, subIdx);
@@ -265,6 +219,49 @@ function analyze(rawCmd, depth = 0) {
       all = all || a.all;
       fromFile = fromFile || a.fromFile;
       if (!message && a.message) message = a.message;
+    }
+  };
+  // `sh -c '<payload>'` / `bash -c …` / `eval '<payload>'` at shellIdx: the
+  // payload is a command line — recurse (bounded depth) so a commit hidden there
+  // still engages the gate.
+  const recurseShell = (seg, shellIdx) => {
+    if (depth >= 4) return;
+    const w = seg[shellIdx];
+    let payload = '';
+    if (w.v === 'eval') payload = seg.slice(shellIdx + 1).filter((t) => !t.op).map((t) => t.v).join(' ');
+    else {
+      for (let j = shellIdx + 1; j < seg.length; j += 1) {
+        if (seg[j].op) break;
+        if (seg[j].v === '-c') { const nxt = seg[j + 1]; if (nxt && !nxt.op) payload = nxt.v; break; }
+      }
+    }
+    if (!payload) return;
+    const inner = analyze(payload, depth + 1);
+    if (inner.isCommit) {
+      isCommit = true;
+      bypass = bypass || inner.bypass;
+      all = all || inner.all;
+      fromFile = fromFile || inner.messageFromFile;
+      if (!message && inner.message) message = inner.message;
+    }
+  };
+
+  for (const seg of segs) {
+    const cwi = commandWordIndex(seg);
+    if (cwi < 0) continue;
+    const word = seg[cwi];
+    if (word.quoted) continue; // a quoted command word is not a real invocation
+    if (SHELL_WORDS.has(word.v) || word.v === 'eval') { recurseShell(seg, cwi); continue; }
+    if (word.v === 'git') { analyzeGitAt(seg, cwi); continue; }
+    // A command WRAPPER (timeout/nice/sudo/env/…): scan for the wrapped `git`
+    // (no per-flag-value knowledge — see the WRAPPERS comment), else a wrapped
+    // shell whose payload we can recurse into.
+    if (WRAPPERS.has(word.v)) {
+      const gi = firstGitIndex(seg, cwi + 1);
+      if (gi >= 0) { analyzeGitAt(seg, gi); continue; }
+      const si = firstShellIndex(seg, cwi + 1);
+      if (si >= 0) recurseShell(seg, si);
+      continue;
     }
   }
   // Heredoc message wins over any literal $(cat <<…) token text — but ONLY when
