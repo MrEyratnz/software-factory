@@ -63,7 +63,12 @@ fi
 
 case "$active" in
   reviewer)
-    deny "the reviewer is read-only by construction — it may not write files (findings go to its return artifact)" ;;
+    # Read-only w.r.t. SOURCE, but it must be able to emit its findings artifact
+    # — validate-handoff blocks the reviewer's stop until that file exists, and
+    # it has no other sanctioned way to produce it (its Bash writes are fenced).
+    # So: allow ONLY .factory/review/*.json (mirrors the panelist's .factory/panel
+    # carve-out); every other path, including source, stays denied.
+    case "$rel" in .factory/review/*) allow ;; *) deny "the reviewer writes only its findings under .factory/review/ (no source edits — attempted: $rel)" ;; esac ;;
   panelist)
     # The panelist writes exactly one ballot artifact; nothing else.
     case "$rel" in .factory/panel/*) allow ;; *) deny "a panelist writes only its ballot under .factory/panel/ (attempted: $rel)" ;; esac ;;

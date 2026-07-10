@@ -18,7 +18,12 @@ rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|do
 
 is_release=no
 case "$tn" in
-  Bash) printf '%s' "$cmd" | grep -Eq "$rel_re" && is_release=yes ;;
+  Bash)
+    # Command-position, quote-aware release detection: a release verb inside a
+    # commit message / echo / comment is NOT a release (so `git commit -m "...npm
+    # publish..."` is not false-blocked), and `git tag` counts only when it
+    # CREATES a tag — never for read-only listing (`git tag -l`) (issue #52).
+    [ -n "$rel_re" ] && [ "$(printf '%s' "$cmd" | node "$PLUGIN_ROOT/hooks/lib/classify-release.mjs" "$rel_re" 2>/dev/null | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).isRelease))}catch(e){process.stdout.write("false")}})')" = "true" ] && is_release=yes ;;
   mcp__github__merge_pull_request|mcp__github__push_files|mcp__github__create_or_update_file|mcp__github__delete_file)
     [ -f "$STATE_DIR/release-intent.json" ] && is_release=yes ;;
 esac

@@ -13,6 +13,7 @@
 # CI the authoritative boundary.
 . "$(dirname "$0")/../lib/common.sh"
 
+factory_initialized || allow
 [ "$(field tool_name)" = "Bash" ] || allow
 # Only while a release is in progress.
 [ -f "$STATE_DIR/release-intent.json" ] || allow
@@ -20,17 +21,19 @@
 cmd="$(field tool_input.command)"
 proof_re="$(config_get releaseProofCommandRegex '')"
 # No configured build+smoke command → nothing to key the proof on (fail safe).
+# An explicitly-blanked regex must not match everything either.
 [ -n "$proof_re" ] || allow
-printf '%s' "$cmd" | grep -Eq "$proof_re" || allow
 
-# Same forgery guards as record-green: a command that only *mentions* the build
-# or neutralizes its exit status must not mint a proof.
-trimmed="$(printf '%s' "$cmd" | sed -E 's/^[[:space:]]+//')"
-case "$trimmed" in
-  echo\ *|printf\ *|:\ *|true\ *|:|true) allow ;;
-esac
-printf '%s' "$cmd" | grep -Eq '(\|\||;|&&)[[:space:]]*(true|:)([[:space:]]|$)' && allow
-printf '%s' "$cmd" | grep -Eq '#' && allow
+# Command-position, quote-aware classification (shared with record-green): the
+# build must be a real command, not the pattern used as data ('grep "npm run
+# build" …'), and its exit code certifies the build only if it is the last
+# simple command (not masked by a pipe/`|| true`/`; echo`). This replaces the
+# old blanket '#'/'|| true'/echo guards, which also refused a legitimate green
+# build whose command merely contained a '#'.
+cls="$(printf '%s' "$cmd" | node "$PLUGIN_ROOT/hooks/lib/classify-test-run.mjs" "$proof_re" 2>/dev/null)"
+is_build="$(printf '%s' "$cls" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).testCommand))}catch(e){process.stdout.write("false")}})')"
+[ "$is_build" = "true" ] || allow
+clean="$(printf '%s' "$cls" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).cleanInvocation))}catch(e){process.stdout.write("false")}})')"
 
 # The repo this build actually targets (issue #28), for the branch + tree.
 target_root="$(repo_root "$(command_target_dir "$cmd")")"
@@ -40,14 +43,16 @@ relb="$(config_get releaseBranch 'main')"
 cur_branch="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -n "$cur_branch" ] && [ "$cur_branch" = "$relb" ] || allow
 
-# Read the build+smoke exit status. No exit-code evidence → do not fabricate a
-# proof (fail safe); we never re-execute an arbitrary build command.
+# Read the build+smoke exit status (numeric only). No exit-code evidence, or a
+# masked pipeline the exit code doesn't certify → do not fabricate a proof (fail
+# safe); we never re-execute an arbitrary build command.
 ec="$(field tool_response.exitCode)"
 [ -n "$ec" ] || ec="$(field tool_response.exit_code)"
 [ -n "$ec" ] || ec="$(field tool_response.code)"
 [ -n "$ec" ] || ec="$(field tool_response.returnCode)"
-[ -n "$ec" ] || allow
+case "$ec" in ''|*[!0-9]*) allow ;; esac
 [ "$ec" = "0" ] || allow
+[ "$clean" = "true" ] || allow
 
 tree="$(tree_hash "$target_root")"
 [ -n "$tree" ] || allow
