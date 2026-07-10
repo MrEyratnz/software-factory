@@ -56,7 +56,13 @@ if enforcement_on protectTrustRoots; then
   case "$rel" in
     .factory/state/release-intent.json)
       [ "$active" = "release-captain" ] || deny "release-intent.json is written only by the release-captain (via /ship)" ;;
-    .factory/state/*|.factory/config.json)
+    .factory/config.json)
+      # First-run creation is the sanctioned /factory-init step; once the config
+      # exists it is protected (edit + commit it as source, not via a live
+      # gate bypass). Without this carve-out, /factory-init could never stamp the
+      # config it is documented to create (issues #1, #54).
+      [ -f "$CONFIG_FILE" ] && deny "$rel already exists and is the committed enforcement contract — edit it in a normal commit, not as a live gate change" ;;
+    .factory/state/*)
       deny "$rel is factory-managed state — it may not be written via the editor tools" ;;
   esac
 fi

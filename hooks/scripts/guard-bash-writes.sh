@@ -75,6 +75,16 @@ if [ "$active" = "release-captain" ] \
   allow
 fi
 
+# First-run /factory-init may create .factory/config.json via the shell (heredoc
+# redirect). Allow it ONLY while the config does not yet exist and config.json is
+# the sole trust-root target — never state/review, never once the config exists
+# (issues #1, #54). Once created, the config is edited as committed source.
+if [ ! -f "$CONFIG_FILE" ] \
+   && printf '%s' "$troot" | grep -q '/\.factory/config\.json$' \
+   && ! printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/'; then
+  allow
+fi
+
 # A redirect/tee target that RESOLVES into a trust root — even via a `cd` the
 # raw-text grep below would miss (issue #3: `cd .factory/state && > paused`) — is
 # a forgery attempt. Hard boundary.
