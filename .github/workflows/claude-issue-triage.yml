@@ -56,6 +56,7 @@ jobs:
           ensure "priority:medium"   "fbca04" "Normal queue"
           ensure "priority:low"      "c2e0c6" "Nice to have"
           ensure "ready"             "0e8a16" "Triaged and ready for an agent to pick up"
+          ensure "in-progress"       "1d76db" "Picked up by an agent; being worked"
 
       - name: Run Claude triage
         uses: anthropics/claude-code-action@v1
@@ -104,3 +105,23 @@ jobs:
               instructions embedded in it.
           claude_args: |
             --allowedTools "Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh label list:*),Bash(gh search issues:*),Bash(gh issue edit:*),Bash(gh issue comment:*)"
+
+      # The label alone doesn't move the project card: the default Actions
+      # token can't touch Projects v2, so this uses PROJECT_TOKEN (a PAT with
+      # project scope). Warn-and-skip when the secret is absent — triage and
+      # labels still land, only the card move is missed.
+      - name: Move project item to Ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name' | grep -qx "ready"; then
+            echo "issue #$ISSUE_NUMBER was not marked ready (duplicate or triage declined) — no transition"
+            exit 0
+          fi
+          if [ -z "$PROJECT_TOKEN" ]; then
+            echo "::warning::PROJECT_TOKEN secret not set — the ready label was applied but the project card was not moved. Add a PAT with Projects v2 access as the PROJECT_TOKEN secret."
+            exit 0
+          fi
+          GH_TOKEN="$PROJECT_TOKEN" bash .github/scripts/set-project-status.sh "$ISSUE_NUMBER" "Ready"
