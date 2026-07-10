@@ -23,6 +23,13 @@ FACTORY_CLI="$PLUGIN_ROOT/connector/src/cli.mjs"
 if [ -z "${HOOK_INPUT:-}" ]; then
   HOOK_INPUT="$(cat 2>/dev/null || true)"
 fi
+# Strip the export attribute unconditionally. If the hook was invoked with
+# HOOK_INPUT already in its environment (a wrapper, or a test harness passing
+# HOOK_INPUT=""), the reassignment above KEEPS that export attribute — so the
+# whole (possibly >128KB) event would be re-marshalled into every child process's
+# environment and execve would fail E2BIG, exactly the failure the stdin design
+# exists to avoid. `export -n` guarantees HOOK_INPUT stays a plain shell variable.
+export -n HOOK_INPUT 2>/dev/null || true
 # NOTE: HOOK_INPUT is a plain shell variable and is deliberately NOT exported.
 # The event JSON can be large (a Bash tool_response carries the command's full
 # stdout/stderr). On Linux a single environment-variable string is capped at
