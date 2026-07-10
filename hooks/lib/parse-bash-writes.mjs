@@ -85,6 +85,19 @@ function tokenize(cmd) {
   return toks;
 }
 
+// Command-position write mutators whose target(s) a redirect-only parser missed
+// — a leading `cp forged .factory/state/gate-receipt.json` forged a green
+// receipt, and `touch .factory/state/paused` self-disabled every gate, because
+// neither is a redirect or `tee`. Model each one's write target(s):
+//   last  — the final non-flag argument is the destination (cp/mv/install/rsync/ln)
+//   all   — every non-flag argument is created/updated (touch)
+//   trunc — truncate's file arg(s) (skip the -s size value)
+//   ddof  — dd's `of=<path>`
+const MUTATOR_TARGET = {
+  cp: 'last', mv: 'last', install: 'last', rsync: 'last', ln: 'last',
+  touch: 'all', truncate: 'trunc', dd: 'ddof',
+};
+
 function collect(cmd) {
   const toks = tokenize(cmd);
   const targets = [];
@@ -95,23 +108,51 @@ function collect(cmd) {
     if (toks[k].v === 'cd' && toks[k + 1] && !toks[k + 1].op) cwd = toks[k + 1];
     break;
   }
-  // `tee` is the tee command only in command position (first token, or right
-  // after a pipe/`;`/`&&`/`||`/`&`/`(`); as a bare argument (`grep tee f`) it is
-  // not a write construct.
+  // A command is in command position at the first token, or right after a
+  // pipe/`;`/`&&`/`||`/`&`/`(`; as a bare argument (`grep tee f`) it is not a
+  // write construct.
   const CMD_SEP = new Set(['|', '||', '&&', ';', '&', '(']);
   const cmdPos = (k) => k === 0 || (toks[k - 1].op && CMD_SEP.has(toks[k - 1].op));
+  // Gather the word-token args of the simple command that starts at index k
+  // (stops at the next operator), separating flags from operands.
+  const commandArgs = (k) => {
+    const args = [];
+    for (let j = k + 1; j < toks.length; j++) {
+      if (toks[j].op) break;
+      args.push(toks[j]);
+    }
+    return args;
+  };
   for (let k = 0; k < toks.length; k++) {
     const t = toks[k];
     if (t.op === '>' || t.op === '>>') {
       const nxt = toks[k + 1];
       if (nxt && !nxt.op) targets.push(nxt); // an operator after > (e.g. >&1, >(…)) is not a file
-    } else if (!t.op && t.v === 'tee' && cmdPos(k)) {
-      for (let j = k + 1; j < toks.length; j++) {
-        const w = toks[j];
-        if (w.op) break;
-        if (w.v.startsWith('-')) continue; // skip flags
-        targets.push(w); break;
+      continue;
+    }
+    if (t.op || !cmdPos(k)) continue;
+    if (t.v === 'tee') {
+      for (const w of commandArgs(k)) { if (w.v.startsWith('-')) continue; targets.push(w); break; }
+      continue;
+    }
+    const rule = MUTATOR_TARGET[t.v];
+    if (!rule) continue;
+    const args = commandArgs(k);
+    if (rule === 'all') {
+      for (const w of args) if (!w.v.startsWith('-')) targets.push(w);
+    } else if (rule === 'ddof') {
+      for (const w of args) { const m = /^of=(.+)$/.exec(w.v); if (m) targets.push({ v: m[1], unresolvable: w.unresolvable }); }
+    } else if (rule === 'trunc') {
+      for (let j = 0; j < args.length; j++) {
+        const w = args[j];
+        if (w.v === '-s' || w.v === '--size') { j++; continue; } // skip the size value
+        if (w.v.startsWith('-')) continue;
+        targets.push(w);
       }
+    } else { // 'last' — the final non-flag operand is the destination
+      let dest = null;
+      for (const w of args) { if (!w.v.startsWith('-')) dest = w; }
+      if (dest) targets.push(dest);
     }
   }
   return { targets, cwd };
@@ -124,12 +165,16 @@ process.stdin.on('end', () => {
   const { targets, cwd } = collect(s);
   let base = PROJECT_DIR;
   if (cwd && !cwd.unresolvable && cwd.v) base = path.resolve(PROJECT_DIR, expandHome(cwd.v));
-  const outside = []; const trustRoot = [];
+  const outside = []; const trustRoot = []; const all = [];
   for (const t of targets) {
     if (!t.v || t.unresolvable) continue;
     const abs = path.resolve(base, expandHome(t.v));
+    all.push(abs); // every resolved write target, for callers that fence ALL writes
     if (underTrustRoot(abs)) trustRoot.push(abs);
     else if (!underAllowedRoot(abs)) outside.push(abs);
   }
-  process.stdout.write(JSON.stringify({ outside, trustRoot }));
+  // `all` lets the reviewer fence (read-only-by-construction) reject ANY
+  // tree-mutating write construct quote-awarely, so a `>` inside a quoted
+  // argument (e.g. `grep "a > b" f`) is not mistaken for a redirect.
+  process.stdout.write(JSON.stringify({ outside, trustRoot, all }));
 });

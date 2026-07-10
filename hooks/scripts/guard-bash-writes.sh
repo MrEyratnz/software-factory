@@ -33,7 +33,17 @@ cmd="$(field tool_input.command)"
 active="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
 case "$active" in
   reviewer)
-    if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]]|[0-9]|&)>>?|(^|[;&|[:space:]])(cp|mv|dd|install|ln|truncate|rm|tee|patch)([[:space:]]|$)|sed[[:space:]]+-i|git[[:space:]]+(checkout|add|commit|apply|reset|stash|restore|rm|clean)'; then
+    # Any quote-aware write target (redirect/tee/cp/mv/dd/install/ln/touch/…)
+    # means a tree mutation — the parser resolves these, so a `>` inside a quoted
+    # arg (`grep "a > b" f`, `awk "$1 > 5"`) is NOT a false positive (issue #39).
+    rev_writes="$(printf '%s' "$cmd" | HOOK_PROJECT_DIR="$PROJECT_DIR" node "$PLUGIN_ROOT/hooks/lib/parse-bash-writes.mjs" 2>/dev/null \
+      | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String((JSON.parse(s).all||[]).length))}catch(e){process.stdout.write("0")}})')"
+    [ "${rev_writes:-0}" -gt 0 ] 2>/dev/null && deny "the reviewer is read-only by construction — its Bash may not mutate the tree (attempted: $cmd)"
+    # Plus deleters and MUTATING git subcommands the write-target parser does not
+    # model. Read-only git (`diff`/`log`/`status`/`show`/`stash list`/`stash
+    # show`) must stay allowed (issue #57): `stash` matches only when bare or a
+    # mutating subverb, never `stash list`/`stash show`.
+    if printf '%s' "$cmd" | grep -Eq '(^|[;&|[:space:]])(rm|patch|shred)([[:space:]]|$)|sed[[:space:]]+-i|git[[:space:]]+((checkout|switch|add|commit|apply|reset|restore|rm|clean|mv|cherry-pick|revert|merge|rebase|am)([[:space:]]|$)|stash([[:space:]]*([;&|]|$)|[[:space:]]+(push|pop|apply|drop|clear|save|create|store)))'; then
       deny "the reviewer is read-only by construction — its Bash may not mutate the tree (attempted: $cmd)"
     fi
     ;;
@@ -70,10 +80,15 @@ fi
 # a forgery attempt. Hard boundary.
 [ -n "$troot" ] && deny "writing to the factory's trust roots via the shell is not allowed — these are hook-managed and cannot be hand-forged (attempted: $troot)"
 
-# Belt-and-suspenders for literal trust-root references via a mutating construct
-# the redirect parser does not model (cp/mv/sed -i/git checkout/…).
+# Belt-and-suspenders for literal trust-root references via a mutating construct.
+# The redirect/tee/cp/mv/dd/install/ln/touch/truncate targets are already
+# resolved by parse-bash-writes above; this literal-text fallback additionally
+# covers sed -i / git checkout / rm and anchors every verb at command start OR
+# after a separator/whitespace (not a REQUIRED leading space), so a command that
+# STARTS with the verb (`cp forged .factory/state/gate-receipt.json`,
+# `touch .factory/state/paused`) is caught too (issues #2, #50).
 printf '%s' "$cmd" | grep -Eq '\.factory/(state|review)/|\.factory/config\.json' || allow
-if printf '%s' "$cmd" | grep -Eq '(>>?|[[:space:]]tee([[:space:]]|$)|[[:space:]](cp|mv|dd|install|ln|truncate|rm)[[:space:]]|sed[[:space:]]+-i|git[[:space:]]+checkout|>\|)'; then
+if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]]|[0-9]|&)>>?|(^|[;&|[:space:]])(tee|cp|mv|dd|install|ln|truncate|rm|touch)([[:space:]]|$)|sed[[:space:]]+-i|git[[:space:]]+checkout|>\|'; then
   deny "writing to the factory's trust roots (.factory/state, .factory/config.json, .factory/review) via the shell is not allowed — these are hook-managed. (The green receipt, release/roadmap proofs, and config cannot be hand-forged.)"
 fi
 allow

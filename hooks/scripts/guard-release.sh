@@ -9,6 +9,9 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-release
+# Un-inited repo → step aside (no release-proof producer exists here, so every
+# release verb would be permanently denied). /factory-init arms the gate.
+require_initialized guard-release
 tn="$(field tool_name)"
 cmd="$(field tool_input.command)"
 rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|docker push|release-please|npm version )')"

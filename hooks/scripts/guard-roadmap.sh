@@ -6,7 +6,8 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-roadmap
-case "$(field tool_name)" in Edit|MultiEdit) ;; *) allow ;; esac
+require_initialized guard-roadmap
+case "$(field tool_name)" in Edit|MultiEdit|Write) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 roadmap="$(config_get roadmapPath 'docs/ROADMAP.md')"
 case "$fp" in
@@ -14,17 +15,33 @@ case "$fp" in
   *) allow ;;
 esac
 
-# Extract old/new text for BOTH Edit (new_string/old_string) and MultiEdit
-# (edits[].new_string / old_string, concatenated) — else a flip inside a
-# MultiEdit is invisible and slips through.
-new="$(HOOK_JSON="$HOOK_INPUT" node -e '
-  const ti=(JSON.parse(process.env.HOOK_JSON||"{}").tool_input)||{};
-  if(Array.isArray(ti.edits)) process.stdout.write(ti.edits.map(e=>e.new_string||"").join("\n"));
-  else process.stdout.write(ti.new_string||"");' 2>/dev/null)"
-old="$(HOOK_JSON="$HOOK_INPUT" node -e '
-  const ti=(JSON.parse(process.env.HOOK_JSON||"{}").tool_input)||{};
-  if(Array.isArray(ti.edits)) process.stdout.write(ti.edits.map(e=>e.old_string||"").join("\n"));
-  else process.stdout.write(ti.old_string||"");' 2>/dev/null)"
+# Extract old/new text across Edit (new_string/old_string), MultiEdit
+# (edits[].new_string / old_string), AND Write (the whole `content` replaces the
+# file, so there is no old_string — compare against the CURRENT on-disk roadmap).
+# Without the Write branch an agent could Read the roadmap and Write it back with
+# a box flipped, bypassing the gate entirely (the hook now also matches Write).
+# Event JSON is piped on stdin (never env) to avoid E2BIG on a large file body.
+tool_name="$(field tool_name)"
+new="$(printf '%s' "$HOOK_INPUT" | node -e '
+  let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{
+    const ti=((()=>{try{return JSON.parse(s)}catch(e){return {}}})().tool_input)||{};
+    if(Array.isArray(ti.edits)) process.stdout.write(ti.edits.map(e=>e.new_string||"").join("\n"));
+    else if(typeof ti.content==="string") process.stdout.write(ti.content);
+    else process.stdout.write(ti.new_string||"");
+  });' 2>/dev/null)"
+if [ "$tool_name" = "Write" ]; then
+  # Resolve the roadmap file the Write targets and read its current contents.
+  ondisk="$fp"
+  case "$fp" in /*) ;; *) ondisk="$PROJECT_DIR/$fp" ;; esac
+  old="$(cat "$ondisk" 2>/dev/null)"
+else
+  old="$(printf '%s' "$HOOK_INPUT" | node -e '
+    let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{
+      const ti=((()=>{try{return JSON.parse(s)}catch(e){return {}}})().tool_input)||{};
+      if(Array.isArray(ti.edits)) process.stdout.write(ti.edits.map(e=>e.old_string||"").join("\n"));
+      else process.stdout.write(ti.old_string||"");
+    });' 2>/dev/null)"
+fi
 newx="$(printf '%s' "$new" | grep -oiE '\[x\]' | wc -l | tr -d ' ')"
 oldx="$(printf '%s' "$old" | grep -oiE '\[x\]' | wc -l | tr -d ' ')"
 

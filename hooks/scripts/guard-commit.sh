@@ -10,6 +10,10 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-commit
+# Not factory-initialized (no .factory/config.json) → the workflow gate steps
+# aside rather than demanding a green receipt no producer can mint here, which
+# would deadlock every commit in an un-inited repo (run /factory-init to arm it).
+require_initialized guard-commit
 [ "$(field tool_name)" = "Bash" ] || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow

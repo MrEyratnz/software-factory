@@ -100,6 +100,26 @@ enforcement_on() {
   [ "$(config_get "enforcement.$1" true)" != "false" ]
 }
 
+# factory_initialized — is THIS repo opted into the factory? True only when
+# .factory/config.json exists (what /factory-init stamps). This is the switch
+# that turns the WORKFLOW gates (commit / release / roadmap / mcp-commit) from
+# hard boundaries into no-ops: an uninitialized repo has no config, so those
+# gates could demand a proof that no producer can mint here (no testCommand, no
+# release/roadmap proof) — an unsatisfiable DEADLOCK. Until a repo runs
+# /factory-init it has not opted in, so the workflow gates step aside (the
+# SessionStart banner already nudges "run /factory-init"). The trust-root /
+# forgery protections (guard-scope, guard-bash-writes) do NOT use this — they
+# stay on everywhere so the factory's own state can never be hand-forged.
+factory_initialized() { [ -f "$CONFIG_FILE" ]; }
+
+# require_initialized <hook-name> — call at the top of a WORKFLOW gate: if the
+# repo is not factory-initialized, allow (exit 0). No-op once initialized.
+require_initialized() {
+  factory_initialized && return 0
+  otel_emit factory_gate_uninitialized_total sum 1 "$(printf '{"hook":%s}' "$(json_str "${1:-unknown}")")"
+  allow
+}
+
 #   2. factory_paused / respect_pause — a session-local escape hatch. When a
 #      human drops a marker at $STATE_DIR/paused (or paused.json), every hard
 #      gate steps aside for this worktree, independent of Claude Code's
