@@ -3,6 +3,16 @@
 This repo runs the **Dark Software Factory**. The laws below are enforced by
 hooks locally and re-enforced by CI as the authoritative boundary.
 
+## Use the factory proactively
+
+- If this repo is **not initialized yet** (no `.factory/config.json` — the
+  SessionStart banner says so), run **`/factory-init`** before doing feature
+  work, so the gates are armed rather than advisory.
+- Prefer the factory's commands over ad-hoc git: **`/commit`** (drives the green
+  gate), **`/review`** (adversarial panel → tech-debt), **`/roadmap`** (advance
+  the plan). Treat the injected status line (next roadmap item, gate state, open
+  tech-debt) as the source of truth for "where am I on the line."
+
 ## The laws
 
 - **TDD is law.** Write the failing test first. `npm test` (typecheck →
