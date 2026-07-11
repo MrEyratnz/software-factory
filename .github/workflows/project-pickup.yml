@@ -1,0 +1,55 @@
+name: Project Pickup
+
+# The other half of the triage pipeline (see claude-issue-triage.yml): triage
+# parks an issue in the ready queue; an agent picking it up must move the
+# project card to In Progress. Pickup is signaled by either assignment of an
+# issue that is sitting in the queue, or an explicit `in-progress` label.
+
+on:
+  issues:
+    types: [assigned, labeled]
+
+concurrency:
+  group: project-pickup-${{ github.event.issue.number }}
+
+jobs:
+  in-progress:
+    if: >
+      (github.event.action == 'assigned' && contains(github.event.issue.labels.*.name, 'ready')) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'in-progress')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # An issue is in exactly one queue state: leaving `ready` in place after
+      # pickup would let a second agent grab the same issue.
+      - name: Swap queue labels (ready -> in-progress)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh label create "in-progress" --color "1d76db" --description "Picked up by an agent; being worked" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "ready" --add-label "in-progress"
+
+      # Same Projects v2 constraint as the triage workflow: the default token
+      # can't move cards, so this needs the PROJECT_TOKEN secret (PAT with
+      # project scope). Warn-and-skip when absent.
+      - name: Move project item to In Progress
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$PROJECT_TOKEN" ]; then
+            echo "::warning::PROJECT_TOKEN secret not set — labels were swapped but the project card was not moved. Add a PAT with Projects v2 access as the PROJECT_TOKEN secret."
+            exit 0
+          fi
+          GH_TOKEN="$PROJECT_TOKEN" bash .github/scripts/set-project-status.sh "$ISSUE_NUMBER" "In Progress"
