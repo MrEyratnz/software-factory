@@ -19,4 +19,11 @@ else
   exit 2
 fi
 
+# Reject an empty body at the contract layer — gh would only fail later with
+# an opaque API 422, which reads as "commenting is broken" to a session.
+if [ -z "$body" ]; then
+  echo "error: --body must be non-empty" >&2
+  exit 2
+fi
+
 exec gh issue comment "$ISSUE" --body "$body"
