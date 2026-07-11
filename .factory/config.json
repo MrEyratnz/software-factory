@@ -1,0 +1,24 @@
+{
+  "stack": "custom",
+  "roadmapPath": "docs/ROADMAP.md",
+  "adrDir": "docs/adr",
+  "releaseBranch": "main",
+  "sourceRegex": "^(connector/src/|hooks/(scripts|lib)/|scripts/)",
+  "testRegex": "(^connector/test/|^tests/|^scripts/test-)",
+  "testCommandRegex": "(node --test|hooks\\.contract\\.test\\.sh|test-triage-scripts\\.sh)",
+  "releaseVerbRegex": "(git tag v|gh release create|npm publish|release-please)",
+  "maxIterations": 10,
+  "enforcement": {
+    "requireGreenReceiptOnCommit": true,
+    "requireTestsFirst": true,
+    "conventionalCommitLint": true,
+    "requireReleaseProof": true,
+    "enforceProjectDirScope": true,
+    "protectTrustRoots": true
+  },
+  "gates": {
+    "unit": "cd connector && node --test 'test/**/*.test.mjs'",
+    "bdd": "bash tests/hooks.contract.test.sh"
+  },
+  "generators": []
+}
