@@ -21,10 +21,37 @@ respect_pause guard-commit
 # `--no-verify` bypass. Un-inited repos keep their advisory posture (the
 # target-aware init union needs the parser; session init is the signal here).
 if ! node_guard guard-commit; then
-  if factory_initialized; then
-    case "$HOOK_INPUT" in
+  # POSIX-only fallback (the quote-aware parser needs node); it may use only what
+  # a node-less PATH is assumed to have — grep + shell builtins, no sed/jq. Two
+  # refinements over a whole-event grep (issue #70):
+  #  1. Narrow the match surface to the tool_input.command VALUE, not the entire
+  #     raw event (which also carries cwd / transcript_path) — so a bypass flag or
+  #     "commit" sitting in a path/field, not the command, no longer trips it. If
+  #     extraction finds nothing (format drift), fall back to the whole event, so
+  #     a change can only WIDEN the surface, never blind the check (fail-safe).
+  #  2. Engage the boundary when the SESSION repo is initialized OR the command
+  #     targets an initialized repo via `cd <dir>`/`git -C <dir>` — without node
+  #     the target parser is gone, so an un-inited scratch session cannot be a
+  #     blanket bypass for an initialized sibling reached via cd/git -C. The dir
+  #     scan is best-effort: an absolute target resolves reliably; a relative one
+  #     is tested against the hook's CWD.
+  fb_cmd="$(printf '%s' "$HOOK_INPUT" | grep -oE '"command"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' 2>/dev/null)"
+  [ -n "$fb_cmd" ] || fb_cmd="$HOOK_INPUT"
+  fb_engaged=no
+  factory_initialized && fb_engaged=yes
+  if [ "$fb_engaged" = no ]; then
+    while IFS= read -r fb_m; do
+      [ -n "$fb_m" ] || continue
+      fb_d="${fb_m##* }"   # the dir token after `cd `/`-C `
+      [ -n "$fb_d" ] && [ -f "$fb_d/.factory/config.json" ] && { fb_engaged=yes; break; }
+    done <<EOF
+$(printf '%s' "$fb_cmd" | grep -oE '(cd|-C)[[:space:]]+[^[:space:];&|)"]+' 2>/dev/null)
+EOF
+  fi
+  if [ "$fb_engaged" = yes ]; then
+    case "$fb_cmd" in
       *--no-verify*|*--no-gpg-sign*)
-        case "$HOOK_INPUT" in
+        case "$fb_cmd" in
           *commit*) deny "node is unavailable on the hook PATH, so the quote-aware commit parser cannot run — refusing an event that mentions both a commit and a bypass flag (--no-verify/--no-gpg-sign). Restore node or drop the flag." ;;
         esac ;;
     esac
