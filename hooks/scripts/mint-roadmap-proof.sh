@@ -83,7 +83,7 @@ if [ -z "$pr" ]; then
   nwo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)"
   [ -n "$nwo" ] || die "cannot resolve the repository (gh repo view failed)"
   pr="$(gh api graphql \
-        -f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){closedByPullRequestsReferences(first:20,includeClosedPrs:true){nodes{number merged mergedAt}}}}}' \
+        -f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){closedByPullRequestsReferences(first:100,includeClosedPrs:true){nodes{number merged mergedAt}}}}}' \
         -f owner="${nwo%%/*}" -f name="${nwo##*/}" -F num="$num" \
         --jq '[.data.repository.issue.closedByPullRequestsReferences.nodes[] | select(.merged)] | sort_by(.mergedAt) | reverse | .[0].number // empty' 2>/dev/null)"
   [ -n "$pr" ] || die "no merged PR is linked as closing #$num — pass --pr explicitly"
