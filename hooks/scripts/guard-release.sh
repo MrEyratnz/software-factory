@@ -20,15 +20,19 @@ cmd="$(field tool_input.command)"
 # CUSTOM releaseVerbRegex verb (e.g. `make deploy`) would not be detected until
 # the config is fixed. It is left open because:
 #   - the config is a protected trust root (guard-scope / guard-bash-writes deny
-#     the policed agent any write to it, incl. a target repo's — issue #73), so
+#     the policed agent any write to it, incl. a target repo's — issue #53), so
 #     the corrupt-config precondition is an honest mistake, not an attacker move;
 #   - the DEFAULT release verbs (git tag / gh release create / npm publish / …)
 #     ARE still detected on a malformed config, and require_config_sane below
 #     then fails them CLOSED — only a custom-only verb slips;
 #   - closing it can't be done in this gate's role: guard-release matches EVERY
 #     Bash command, so failing closed before detection would deny innocent reads
-#     and the `git checkout .factory/config.json` recovery alike (guard-commit
-#     avoids this only because its check sits behind an is_commit gate);
+#     (ls / git status) on every command — betraying a gate that exists to gate
+#     RELEASES — and it would buy nothing, because the agent can't repair a
+#     corrupt config through its hooked tools anyway (guard-bash-writes already
+#     denies `git checkout .factory/config.json` and guard-scope denies editing
+#     it), so the fix comes out-of-band from a human regardless. guard-commit's
+#     analogous check is safe only because it sits behind an is_commit gate;
 #   - CI re-runs the release gate as the authoritative boundary regardless.
 rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|docker push|release-please|npm version )')"
 
