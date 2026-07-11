@@ -27,7 +27,8 @@ source of truth agents read before acting. Runtime verdicts come from the connec
 ## ADR procedure
 
 1. `adr_index` → get the next number `NNNN` (zero-padded, e.g. `0009`) and confirm no collision.
-2. Create `docs/adr/NNNN-kebab-title.md` from the template below.
+   It scans the repo's configured `adrDir` (default `docs/adr`), so numbering honors a non-default ADR location.
+2. Create `<adrDir>/NNNN-kebab-title.md` (default `docs/adr/…`) from the template below.
 3. Start at `Status: Proposed`; flip to `Accepted` when the decision is merged.
 4. If it changes system shape, reflect the outcome in `docs/ARCHITECTURE.md` in the same PR.
 5. For contested design, use the judge-panel method (ADR-0009): 3 stance proposals → adversarial

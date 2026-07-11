@@ -65,6 +65,22 @@ function safePath(p) {
   return real;
 }
 
+/** Read a string field from the project's .factory/config.json, or a fallback.
+ * The connector is otherwise config-agnostic (callers pass explicit paths), but
+ * a tool's DEFAULT should honor the repo's declared location — e.g. adr_index
+ * scans the configured `adrDir` when no `dir` arg is given (issue #78), so the
+ * config key is no longer inert. Read-only and fail-safe: any missing file,
+ * parse error, or non-string value yields the fallback. */
+function configField(key, fallback) {
+  try {
+    const cfg = JSON.parse(readFileSync(safePath('.factory/config.json'), 'utf8'));
+    const v = cfg && cfg[key];
+    return typeof v === 'string' && v ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function readRoadmap(args) {
   return typeof args.markdown === 'string'
     ? args.markdown
@@ -150,7 +166,7 @@ const TOOLS = {
     inputSchema: {
       type: 'object',
       properties: {
-        dir: { type: 'string', description: 'ADR directory (default docs/adr)' },
+        dir: { type: 'string', description: "ADR directory (default: the repo's configured adrDir, else docs/adr)" },
         entries: {
           type: 'array',
           description: 'inline [{filename, content}] (overrides dir)',
@@ -161,7 +177,7 @@ const TOOLS = {
     handler: (args) => {
       const entries = Array.isArray(args.entries)
         ? args.entries
-        : readAdrDir(args.dir || 'docs/adr');
+        : readAdrDir(args.dir || configField('adrDir', 'docs/adr'));
       return indexAdrs(entries);
     },
   },
