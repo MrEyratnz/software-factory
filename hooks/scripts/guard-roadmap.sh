@@ -7,6 +7,8 @@
 
 respect_pause guard-roadmap
 require_initialized guard-roadmap
+# issue #52: degrade LOUDLY (never silently) when node is unavailable.
+node_guard guard-roadmap || allow
 case "$(field tool_name)" in Edit|MultiEdit|Write) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 roadmap="$(config_get roadmapPath 'docs/ROADMAP.md')"

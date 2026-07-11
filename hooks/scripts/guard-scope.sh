@@ -9,6 +9,8 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-scope
+# issue #52: degrade LOUDLY (never silently) when node is unavailable.
+node_guard guard-scope || allow
 case "$(field tool_name)" in Write|Edit|MultiEdit) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 [ -n "$fp" ] || allow

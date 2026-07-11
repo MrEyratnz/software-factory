@@ -13,6 +13,8 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-bash-writes
+# issue #52: degrade LOUDLY (never silently) when node is unavailable.
+node_guard guard-bash-writes || allow
 [ "$(field tool_name)" = "Bash" ] || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow

@@ -148,6 +148,38 @@ respect_pause() {
   allow
 }
 
+# --- node degradation (issue #52) -------------------------------------------
+# Every parser and every fc verdict needs node. Without it, field() reads come
+# back empty and each guard's early "[ tool_name = … ] || allow" fails OPEN —
+# silently. Failing fully closed instead was rejected (it would deny every
+# Bash call, even `ls`, in a node-less environment), so the contract is:
+# degrade to advisory, but NEVER silently.
+#
+# node_guard <hook-name> — enforcing guards call this before their first
+# field() read. With node present it clears any stale degradation marker and
+# returns 0 (enforce normally). Without node it surfaces ONE loud
+# systemMessage per session (throttled via a state marker — the marker lives
+# under the trust root, so the policed agent cannot pre-plant it to mute the
+# warning) and returns 1; the caller then allows, after applying whatever
+# POSIX-only fallback boundary it can still hold (see guard-commit's
+# bypass-flag check). The message is static JSON on stdout — json_str would
+# need node.
+node_guard() {
+  if command -v node >/dev/null 2>&1; then
+    rm -f "$STATE_DIR/node-degraded-notified" 2>/dev/null
+    return 0
+  fi
+  # Only surface (and throttle) the notice where the factory is actually in
+  # play: a repo that never opted in gets no notice and — critically — no
+  # .factory/state creation (same invariant record-green holds).
+  if [ -d "$FACTORY_DIR" ] && [ ! -f "$STATE_DIR/node-degraded-notified" ]; then
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    : > "$STATE_DIR/node-degraded-notified" 2>/dev/null || true
+    printf '{"systemMessage":"dark-software-factory (%s): node is unavailable on the hook PATH, so event parsing and gate verdicts cannot run — enforcement is DEGRADED to advisory for this session (only a conservative commit-bypass check remains active). Restore node to re-arm the gates; CI remains the authoritative boundary."}\n' "${1:-unknown}"
+  fi
+  return 1
+}
+
 # --- git plumbing ----------------------------------------------------------
 # tree_hash [dir] — deterministic hash of a working tree (tracked + untracked),
 # EXCLUDING .factory/, computed via a throwaway index so the real index is

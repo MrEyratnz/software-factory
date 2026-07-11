@@ -9,6 +9,8 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-release
+# issue #52: degrade LOUDLY (never silently) when node is unavailable.
+node_guard guard-release || allow
 tn="$(field tool_name)"
 cmd="$(field tool_input.command)"
 rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|docker push|release-please|npm version )')"
