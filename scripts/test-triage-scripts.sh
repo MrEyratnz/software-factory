@@ -85,6 +85,17 @@ assert_argv "comment =-form" issue comment 155 --body "see #142"
 run 2 "positional issue number rejected (comment)" -- ./scripts/triage-comment.sh 161 --body hi
 run 2 "no arguments rejected (comment)" -- ./scripts/triage-comment.sh
 run 2 "second comment flag rejected" -- ./scripts/triage-comment.sh --body hi --body again
+run 2 "empty body rejected (comment)" -- ./scripts/triage-comment.sh --body ""
+run 2 "empty body rejected (= form, comment)" -- ./scripts/triage-comment.sh --body=
+[ ! -s "$GH_STUB_OUT" ] || fail "gh was invoked despite an empty triage-comment body"
+
+# A dash-leading body is DATA, not a flag: gh (pflag) consumes the next argv
+# element as --body's value unconditionally, so this must pass through as
+# literal comment text — a rewrite that treats it as an option (e.g. getopts)
+# would silently change the wrapper's contract.
+run 0 "dash-leading body passes through as data (comment)" -- \
+  ./scripts/triage-comment.sh --body --edit-last
+assert_argv "comment dash-leading body" issue comment 155 --body --edit-last
 
 # --- missing TRIAGE_ISSUE fails loudly, gh never invoked ---
 : > "$GH_STUB_OUT"
@@ -109,7 +120,14 @@ run 2 "positional PR number rejected (review)" -- ./scripts/review-comment.sh 61
 run 2 "no arguments rejected (review)" -- ./scripts/review-comment.sh
 run 2 "second flag rejected (review)" -- ./scripts/review-comment.sh --body hi --body again
 run 2 "--edit-last rejected (review)" -- ./scripts/review-comment.sh --body hi --edit-last
+run 2 "empty body rejected (review)" -- ./scripts/review-comment.sh --body ""
+run 2 "empty body rejected (= form, review)" -- ./scripts/review-comment.sh --body=
 [ ! -s "$GH_STUB_OUT" ] || fail "gh was invoked despite a rejected review-comment invocation"
+
+# Dash-leading body is data, not a flag (see the triage-comment case above).
+run 0 "dash-leading body passes through as data (review)" -- \
+  ./scripts/review-comment.sh --body --edit-last
+assert_argv "review dash-leading body" pr comment 62 --body --edit-last
 
 # --- missing REVIEW_PR fails loudly, gh never invoked ---
 : > "$GH_STUB_OUT"
