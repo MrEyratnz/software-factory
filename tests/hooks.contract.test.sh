@@ -1340,6 +1340,19 @@ EVENT="$(evt "$RU" Bash '{"command":"git -C '"$BU"' commit --no-verify -m \"feat
 out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
 if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent git -C into an UN-inited repo stays advisory (got exit $rc)"; fi
 
+# (8c) the target scan must not be dodged by whitespace choice: a TAB between
+# `-C` and the dir (valid JSON encodes it as a literal backslash-t, which a
+# [[:space:]] grep would never match) must still engage the bypass boundary.
+EVENT="$(evt "$RU" Bash '{"command":"git -C\t'"$BI"' commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent tab-separated git -C into an INITIALIZED repo denied (got exit $rc)"; fi
+
+# (8d) ...nor by a cd flag: `cd -L <dir>` / `cd --` put the dir one token later,
+# which a "token right after cd" assumption would miss.
+EVENT="$(evt "$RU" Bash '{"command":"cd -L '"$BI"' && git commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent 'cd -L <initialized>' bypass denied (got exit $rc)"; fi
+
 # (9) the match surface is the tool_input.command VALUE, not the whole raw event:
 # a bypass flag sitting in transcript_path (NOT the command) must not trip the
 # fallback. Session R is initialized; the command is a commit with NO bypass flag,

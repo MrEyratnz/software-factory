@@ -40,19 +40,34 @@ if ! node_guard guard-commit; then
   fb_engaged=no
   factory_initialized && fb_engaged=yes
   if [ "$fb_engaged" = no ]; then
-    while IFS= read -r fb_m; do
-      [ -n "$fb_m" ] || continue
-      fb_d="${fb_m##* }"   # the dir token after `cd `/`-C `
-      [ -n "$fb_d" ] && [ -f "$fb_d/.factory/config.json" ] && { fb_engaged=yes; break; }
+    # Normalize JSON whitespace-escapes (\t \n \r) to spaces first, so a
+    # tab-separated `git -C\t<dir>` — which valid JSON encodes as a literal
+    # backslash-t the grep's [[:space:]] would never match — tokenizes like a
+    # space-separated one. Then for each `cd …`/`git -C …` region test EVERY
+    # argument token as a candidate dir: read -ra splits on any real whitespace
+    # (space OR tab) without glob-expanding, and skipping the verb + `-…` flags
+    # covers `cd -L`/`cd -P`/`cd --` and a real-tab separator alike, so the
+    # target-init check can't be dodged by whitespace or flag choice (issue #70
+    # follow-up). Best-effort: an absolute target resolves reliably; a relative
+    # one is tested against the hook's CWD.
+    fb_scan="$fb_cmd"
+    fb_scan="${fb_scan//\\t/ }"; fb_scan="${fb_scan//\\n/ }"; fb_scan="${fb_scan//\\r/ }"
+    while IFS= read -r fb_seg; do
+      [ -n "$fb_seg" ] || continue
+      read -ra fb_toks <<<"$fb_seg"
+      for fb_d in "${fb_toks[@]}"; do
+        case "$fb_d" in cd|-C|-*) continue ;; esac
+        [ -f "$fb_d/.factory/config.json" ] && { fb_engaged=yes; break 2; }
+      done
     done <<EOF
-$(printf '%s' "$fb_cmd" | grep -oE '(cd|-C)[[:space:]]+[^[:space:];&|)"]+' 2>/dev/null)
+$(printf '%s' "$fb_scan" | grep -oE '(cd|-C)[[:space:]]+[^;&|)"]+' 2>/dev/null)
 EOF
   fi
   if [ "$fb_engaged" = yes ]; then
     case "$fb_cmd" in
       *--no-verify*|*--no-gpg-sign*)
         case "$fb_cmd" in
-          *commit*) deny "node is unavailable on the hook PATH, so the quote-aware commit parser cannot run — refusing an event that mentions both a commit and a bypass flag (--no-verify/--no-gpg-sign). Restore node or drop the flag." ;;
+          *commit*) deny "node is unavailable on the hook PATH, so the quote-aware commit parser cannot run — refusing a command that mentions both a commit and a bypass flag (--no-verify/--no-gpg-sign). Restore node or drop the flag." ;;
         esac ;;
     esac
   fi
