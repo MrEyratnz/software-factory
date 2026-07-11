@@ -22,7 +22,8 @@
 # Usage: mint-roadmap-proof.sh [--repo <dir>] [--pr <number>] <exact item text>
 #   --repo  repo to mint for (default: $CLAUDE_PROJECT_DIR or the cwd)
 #   --pr    the PR that shipped the item; when omitted, derived from the item's
-#           "(#N)" issue reference via the most recently merged PR mentioning it
+#           "(#N)" issue reference via GitHub's linked-issue data (the most
+#           recently merged PR that GitHub records as closing issue N)
 # Exit: 0 minted · 2 refused (reason on stderr).
 set -u
 
@@ -62,21 +63,30 @@ command -v gh >/dev/null 2>&1 || die "gh is required (the proof is verified agai
 command -v node >/dev/null 2>&1 || die "node is required"
 factory_initialized || die "this repo is not factory-initialized (no .factory/config.json)"
 
-# 1. The item must exist in the roadmap — a proof for a phantom item is noise
-#    at best, a confusion vector at worst.
+# 1. The item must exist in the roadmap AS A CHECKBOX ITEM — a raw substring
+#    match could hit a heading or another item's prose; anchor to checkbox
+#    lines (the same shape guard-roadmap extracts) and exact-match the text.
 roadmap="$PROJECT_DIR/$(config_get roadmapPath 'docs/ROADMAP.md')"
 [ -f "$roadmap" ] || die "no roadmap at $roadmap"
-grep -qF -- "$item" "$roadmap" || die "item text not found in $roadmap: $item"
+grep -E '^[[:space:]]*[-*][[:space:]]+\[[ xX]\]' "$roadmap" \
+  | sed -E 's/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]*//' \
+  | grep -qFx -- "$item" || die "no checkbox item with this exact text in $roadmap: $item"
 
-# 2. Resolve the PR. Convenience path: the roadmap convention suffixes items
-#    with their issue "(#N)"; find the most recently merged PR mentioning it.
-#    --pr is the explicit, deterministic path (CI knows its own PR number).
+# 2. Resolve the PR. --pr is the explicit, deterministic path (CI knows its own
+#    PR number). Without it, the item's "(#N)" issue reference is resolved via
+#    GitHub's LINKED-ISSUE data (closedByPullRequestsReferences) — not a
+#    free-text body search, which would bind the proof to any merged PR that
+#    merely mentions #N (a follow-up, a revert, a "see #N for context").
 if [ -z "$pr" ]; then
   num="$(printf '%s' "$item" | grep -oE '\(#[0-9]+\)' | head -1 | tr -dc '0-9')"
   [ -n "$num" ] || die "no --pr given and the item carries no (#N) issue reference to derive one"
-  pr="$(gh pr list --state merged --search "#$num in:body" --json number,mergedAt \
-        --jq 'sort_by(.mergedAt) | reverse | .[0].number // empty' 2>/dev/null)"
-  [ -n "$pr" ] || die "no merged PR found referencing #$num — pass --pr explicitly"
+  nwo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)"
+  [ -n "$nwo" ] || die "cannot resolve the repository (gh repo view failed)"
+  pr="$(gh api graphql \
+        -f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){closedByPullRequestsReferences(first:20,includeClosedPrs:true){nodes{number merged mergedAt}}}}}' \
+        -f owner="${nwo%%/*}" -f name="${nwo##*/}" -F num="$num" \
+        --jq '[.data.repository.issue.closedByPullRequestsReferences.nodes[] | select(.merged)] | sort_by(.mergedAt) | reverse | .[0].number // empty' 2>/dev/null)"
+  [ -n "$pr" ] || die "no merged PR is linked as closing #$num — pass --pr explicitly"
 fi
 
 # 3. GitHub facts: merged, into the release branch, with a merge commit.
@@ -107,5 +117,9 @@ bad="$(printf '%s\n' "$checks" | grep -vE '^completed:(success|neutral|skipped)$
 mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
 printf '{"mergedGreenSha":%s,"item":%s}' "$(json_str "$sha")" "$(json_str "$item")" \
   | roadmap_proof_embed_sig > "$STATE_DIR/roadmap-proof.json"
+# Never report "minted" on a write that produced nothing (a future change to
+# the sig helper must not be able to turn this into a silent success).
+grep -q '"mergedGreenSha"' "$STATE_DIR/roadmap-proof.json" 2>/dev/null \
+  || die "proof write failed — $STATE_DIR/roadmap-proof.json is empty or malformed"
 printf 'minted roadmap proof: %s ← PR #%s (%s)\n' "$sha" "$pr" "$item"
 exit 0

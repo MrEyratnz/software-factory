@@ -1043,9 +1043,10 @@ mk_gh_proof_stub() {
   cat > "$dir/gh" <<'EOF'
 #!/usr/bin/env bash
 case "$1 $2" in
-  "pr list"*) printf '%s' "${STUB_PR_LIST:-}" ;;
-  "pr view"*) printf '%s' "${STUB_PR_VIEW:-}" ;;
-  "api "*)    printf '%s' "${STUB_CHECKS:-}" ;;
+  "repo view"*)  printf '%s' "${STUB_REPO_VIEW:-}" ;;
+  "api graphql") printf '%s' "${STUB_LINKED:-}" ;;
+  "pr view"*)    printf '%s' "${STUB_PR_VIEW:-}" ;;
+  "api "*)       printf '%s' "${STUB_CHECKS:-}" ;;
 esac
 EOF
   chmod +x "$dir/gh"; printf '%s' "$dir"
@@ -1053,7 +1054,7 @@ EOF
 MINT="$S/mint-roadmap-proof.sh"
 GHP="$(mk_gh_proof_stub)"
 R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
-printf '## M1\n- [ ] Ship the widget (#47)\n- [ ] Another thing (#48)\n' > "$R/docs/ROADMAP.md"
+printf '## M1\n- [ ] Ship the widget (#47)\n- [ ] Another thing (#48)\nSee also: Retired thing (#40)\n' > "$R/docs/ROADMAP.md"
 ITEM="Ship the widget (#47)"
 mint() { # mint <expected-exit> <desc> <args...>
   local expected="$1" desc="$2"; shift 2
@@ -1089,12 +1090,17 @@ export STUB_CHECKS=""
 mint 2 "mint: zero check runs refused (not green)" --pr 12 "$ITEM"
 export STUB_CHECKS="completed:success"
 mint 2 "mint: item text not in roadmap refused" --pr 12 "No such item (#99)"
+mint 2 "mint: non-checkbox prose match refused (anchored to checkbox lines)" --pr 12 "Retired thing (#40)"
 assert_file absent "$PROOF" "mint: no proof written on any refusal"
 mint 2 "mint: empty item refused" --pr 12
-# derivation: no --pr → the (#N) reference finds the merged PR via gh pr list
-export STUB_PR_LIST="12"
-mint 0 "mint: PR derived from (#N) when --pr omitted" "$ITEM"
+# derivation: no --pr → the (#N) reference resolves via GitHub's linked-issue
+# data (closedByPullRequestsReferences), not a free-text body search
+export STUB_REPO_VIEW="MrEyratnz/software-factory" STUB_LINKED="12"
+mint 0 "mint: PR derived from linked-issue data when --pr omitted" "$ITEM"
 assert_file exists "$PROOF" "mint: derived-PR proof written"
+export STUB_LINKED=""
+rm -f "$PROOF"
+mint 2 "mint: no linked closing PR → refused (no body-text fallback)" "$ITEM"
 
 # signing: with a runner key, the proof carries a payload-bound signature and
 # guard-roadmap rejects hand-written or tampered proofs outright
@@ -1112,7 +1118,7 @@ assert_exit 2 "unsigned proof rejected when a key is configured"
 node -e 'const fs=require("fs");const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));o.item="Another thing (#48)";fs.writeFileSync(p,JSON.stringify(o));' "$PROOF"
 EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] Another thing (#48)","new_string":"- [x] Another thing (#48)"}')"
 assert_exit 2 "tampered proof (item swapped, stale sig) rejected"
-unset FACTORY_RECEIPT_KEY STUB_PR_VIEW STUB_CHECKS STUB_PR_LIST
+unset FACTORY_RECEIPT_KEY STUB_PR_VIEW STUB_CHECKS STUB_REPO_VIEW STUB_LINKED
 
 echo "# issue #52: node-absent degradation (POSIX bypass fallback + loud notice)"
 # A PATH with the shell utilities the hooks need but NO node: the gates must
