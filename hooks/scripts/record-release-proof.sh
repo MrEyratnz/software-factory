@@ -19,7 +19,17 @@ factory_initialized || allow
 [ -f "$STATE_DIR/release-intent.json" ] || allow
 
 cmd="$(field tool_input.command)"
-proof_re="$(config_get releaseProofCommandRegex '')"
+
+# The repo this build actually targets (issue #28), resolved up front so the
+# proof's contract (proof-command regex + release branch) is read from the SAME
+# repo guard-release gates it against (issue #53). Without this the producer
+# read releaseBranch/releaseProofCommandRegex from the SESSION config while
+# guard-release read them target-aware — so a sibling repo whose releaseBranch
+# differs from the session's could never mint its proof, deadlocking
+# requireReleaseProof for that repo.
+target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
+proof_re="$(config_get_for "$target_root" releaseProofCommandRegex '')"
 # No configured build+smoke command → nothing to key the proof on (fail safe).
 # An explicitly-blanked regex must not match everything either.
 [ -n "$proof_re" ] || allow
@@ -35,11 +45,8 @@ is_build="$(printf '%s' "$cls" | node -e 'let s="";process.stdin.on("data",c=>s+
 [ "$is_build" = "true" ] || allow
 clean="$(printf '%s' "$cls" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).cleanInvocation))}catch(e){process.stdout.write("false")}})')"
 
-# The repo this build actually targets (issue #28), for the branch + tree.
-target_root="$(repo_root "$(command_target_dir "$cmd")")"
-
-# Only on the configured release branch.
-relb="$(config_get releaseBranch 'main')"
+# Only on the TARGET repo's configured release branch (issue #53).
+relb="$(config_get_for "$target_root" releaseBranch 'main')"
 cur_branch="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -n "$cur_branch" ] && [ "$cur_branch" = "$relb" ] || allow
 

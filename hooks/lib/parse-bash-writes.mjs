@@ -43,9 +43,21 @@ function underAllowedRoot(abs) {
   return allowedRoots.some((r) => abs === r || abs.startsWith(r + path.sep));
 }
 function underTrustRoot(abs) {
-  return abs === TRUST_CONFIG
+  // The session repo's own trust roots — kept explicit because guard-bash-writes
+  // keys its carve-outs (release-intent, first-run config) on these exact paths.
+  if (abs === TRUST_CONFIG
     || abs === TRUST_STATE || abs.startsWith(TRUST_STATE + path.sep)
-    || abs === TRUST_REVIEW || abs.startsWith(TRUST_REVIEW + path.sep);
+    || abs === TRUST_REVIEW || abs.startsWith(TRUST_REVIEW + path.sep)) return true;
+  // Any OTHER repo's trust roots, reached via cd/relative/absolute path (issue
+  // #53): config_get_for reads a TARGET repo's .factory/config.json (whose
+  // testCommand record-green pipes to `sh -c`), so a nested or sibling repo's
+  // config + state must be as unforgeable as the session's own. Matched
+  // structurally by suffix so it holds regardless of which repo the write lands
+  // in; the leading `/` before .factory means the session's depth-0 roots above
+  // are already covered by the explicit check, not double-matched here.
+  const norm = abs.split(path.sep).join('/');
+  return /\/\.factory\/config\.json$/.test(norm)
+    || /\/\.factory\/state(\/|$)/.test(norm);
 }
 function expandHome(p) {
   if (p === '~') return HOME || p;

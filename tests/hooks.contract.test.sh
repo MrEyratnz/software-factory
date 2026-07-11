@@ -1176,6 +1176,41 @@ EVENT="$(evt "$R" Bash '{"command":"cd '"$B3"' && git tag v1.0.0"}')"
 assert_exit 0 "#53: release allowed from the TARGET's releaseBranch (session's 'main' would deny)"
 SCRIPT="$S/guard-commit.sh"
 
+# (4) a TARGET repo's .factory/config.json is now a trust source (its toggles
+# and testCommand govern gates), so it must be as unwritable as the session's
+# own — else the agent plants an opt-out or a `sh -c` testCommand one dir over.
+# Editor path (guard-scope): a NESTED sub-repo's config/state is denied even
+# though it resolves INSIDE the session tree (the outside-project rule misses
+# it). Session-relative depth-0 paths keep their existing carve-outs.
+SCRIPT="$S/guard-scope.sh"
+EVENT="$(evt "$R" Write '{"file_path":"sub/pkg/.factory/config.json"}')"
+assert_exit 2 "#53: editor write to a NESTED repo's .factory/config.json denied (session-tree, not outside)"
+EVENT="$(evt "$R" Write '{"file_path":"sub/pkg/.factory/state/gate-receipt.json"}')"
+assert_exit 2 "#53: editor write to a NESTED repo's .factory/state denied"
+EVENT="$(evt "$R" Write '{"file_path":"sub/pkg/src/app.ts"}')"
+assert_exit 0 "#53: editor write to a nested repo's ordinary source still allowed (only trust roots fenced)"
+# Bash path (guard-bash-writes): a nested-repo config write via a redirect is
+# a trust-root write regardless of which repo it lands in.
+SCRIPT="$S/guard-bash-writes.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd sub/pkg && printf %s {} > .factory/config.json"}')"
+assert_exit 2 "#53: Bash redirect into a NESTED repo's .factory/config.json denied"
+SCRIPT="$S/guard-commit.sh"
+
+# (5) finding-2 (adversarial review of PR #73): record-release-proof must read
+# releaseBranch + releaseProofCommandRegex from the TARGET too, or a sibling
+# whose releaseBranch differs from the session's can never mint its proof and
+# requireReleaseProof deadlocks. B4 releases from 'release'; the session says
+# 'main', so a session-scoped producer would refuse to mint here.
+SCRIPT="$S/record-release-proof.sh"
+B4="$(mk_sibling '{"sourceRegex":"^src/","testRegex":"(\\.test\\.)","roadmapPath":"docs/ROADMAP.md","releaseBranch":"release","releaseProofCommandRegex":"(make release-smoke)","generators":[]}')"
+( cd "$B4" && git checkout -q -b release )
+: > "$R/.factory/state/release-intent.json"   # a release is in progress
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B4"' && make release-smoke"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+assert_file exists "$R/.factory/state/release-proof.json" "#53: record-release-proof reads the TARGET's releaseBranch+proof regex (session 'main' would deadlock)"
+rm -f "$R/.factory/state/release-proof.json" "$R/.factory/state/release-intent.json"
+SCRIPT="$S/guard-commit.sh"
+
 echo "# issue #52: node-absent degradation (POSIX bypass fallback + loud notice)"
 # A PATH with the shell utilities the hooks need but NO node: the gates must
 # not fail open SILENTLY — guard-commit still denies a visible bypass flag,
