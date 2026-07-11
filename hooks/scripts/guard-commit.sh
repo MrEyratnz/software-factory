@@ -10,6 +10,28 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-commit
+
+# issue #52: without node, the quote-aware parsers and fc verdicts below cannot
+# run and every field() read comes back empty — the gate would fail OPEN
+# silently. node_guard makes the degradation loud; this guard additionally
+# holds the hardest boundary with a POSIX-only fallback: the raw event (the
+# parsed command is unreachable without node) mentioning both a commit and a
+# bypass flag is denied. Quote-blind by design — in a node-less (broken)
+# environment a rare false positive with a clear message beats a silent
+# `--no-verify` bypass. Un-inited repos keep their advisory posture (the
+# target-aware init union needs the parser; session init is the signal here).
+if ! node_guard guard-commit; then
+  if factory_initialized; then
+    case "$HOOK_INPUT" in
+      *--no-verify*|*--no-gpg-sign*)
+        case "$HOOK_INPUT" in
+          *commit*) deny "node is unavailable on the hook PATH, so the quote-aware commit parser cannot run — refusing an event that mentions both a commit and a bypass flag (--no-verify/--no-gpg-sign). Restore node or drop the flag." ;;
+        esac ;;
+    esac
+  fi
+  allow
+fi
+
 [ "$(field tool_name)" = "Bash" ] || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow

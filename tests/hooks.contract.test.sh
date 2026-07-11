@@ -1035,6 +1035,75 @@ EVENT="$(evt "$R" Bash '{"command":"rsync -t /tmp/forged.json .factory/state/gat
 assert_exit 2 "rsync -t receipt forgery is blocked (dest is the last operand, not -t's value)"
 EVENT="$(evt "$R" Bash '{"command":"rsync -a src/ dst/"}')"; assert_exit 0 "legit rsync between in-project dirs allowed"
 
+echo "# issue #52: node-absent degradation (POSIX bypass fallback + loud notice)"
+# A PATH with the shell utilities the hooks need but NO node: the gates must
+# not fail open SILENTLY — guard-commit still denies a visible bypass flag,
+# everything else allows loudly (one systemMessage per session, throttled via
+# a trust-root marker that clears itself once node is back).
+NODELESS="$(mktemp -d "$TMPROOT/nodeless.XXXXXX")"
+for t in bash sh git grep cat dirname mktemp rm mkdir cksum cut ls; do
+  p="$(command -v "$t" 2>/dev/null)" && [ -n "$p" ] && ln -s "$p" "$NODELESS/$t"
+done
+run_nodeless() { # run_nodeless <script>; uses $EVENT; echoes stdout, returns exit
+  printf '%s' "$EVENT" | HOOK_INPUT="" PATH="$NODELESS" bash "$1" 2>/dev/null
+}
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+
+# (1) the POSIX fallback holds the hardest boundary without node
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: commit --no-verify denied (got exit $rc)"; fi
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-gpg-sign -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: commit --no-gpg-sign denied (got exit $rc)"; fi
+
+# (2) everything else allows — but LOUDLY: first degraded event carries the
+# systemMessage, and the throttle marker lands under .factory/state
+rm -f "$R/.factory/state/node-degraded-notified"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q '"systemMessage".*node is unavailable'; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - node-absent: clean commit allows with loud notice (exit $rc, out: $out)"; fi
+[ -f "$R/.factory/state/node-degraded-notified" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - node-absent: throttle marker minted"; }
+
+# (3) the notice is once-per-session: a second degraded event stays quiet
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 0 ] && [ -z "$out" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - node-absent: second notice throttled (exit $rc, out: $out)"; fi
+
+# (4) the other enforcing guards degrade to allow (not error) without node —
+# including writes that WOULD be denied with node present (documented residual)
+EVENT="$(evt "$R" Write '{"file_path":".factory/config.json"}')"
+out="$(run_nodeless "$S/guard-scope.sh")"; rc=$?
+if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: guard-scope degrades to allow (got exit $rc)"; fi
+EVENT="$(evt "$R" Bash '{"command":"ls"}')"
+out="$(run_nodeless "$S/guard-bash-writes.sh")"; rc=$?
+if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: guard-bash-writes degrades to allow (got exit $rc)"; fi
+
+# (5) record-green mints NOTHING without node (no false receipts) and allows
+rm -f "$R/.factory/state/gate-receipt.json"
+EVENT="$(evt "$R" Bash '{"command":"npm test"}' ',"tool_response":{"exitCode":0}')"
+out="$(run_nodeless "$S/record-green.sh")"; rc=$?
+if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: record-green allows (got exit $rc)"; fi
+assert_file absent "$R/.factory/state/gate-receipt.json" "node-absent: record-green mints nothing"
+
+# (6) un-inited repo: guard-commit keeps its advisory posture without node
+# (no deny, even with a bypass flag visible)
+RU="$(mktemp -d "$TMPROOT/repo.XXXXXX")"; ( cd "$RU" && git init -q )
+export CLAUDE_PROJECT_DIR="$RU"
+EVENT="$(evt "$RU" Bash '{"command":"git commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: un-inited repo stays advisory (got exit $rc)"; fi
+# ...and never creates .factory state in a repo that hasn't opted in
+if [ ! -d "$RU/.factory" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - node-absent: no .factory created in un-inited repo"; fi
+
+# (7) node back → the degradation marker self-clears on the next guard pass
+export CLAUDE_PROJECT_DIR="$R"
+[ -f "$R/.factory/state/node-degraded-notified" ] || { : > "$R/.factory/state/node-degraded-notified"; }
+EVENT="$(evt "$R" Bash '{"command":"git status"}')"
+SCRIPT="$S/guard-commit.sh"; assert_exit 0 "node restored: git status allowed"
+assert_file absent "$R/.factory/state/node-degraded-notified" "node restored: degradation marker cleared"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

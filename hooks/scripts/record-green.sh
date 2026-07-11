@@ -11,6 +11,11 @@
 # so do not mint receipts or create .factory state in a repo that never opted in.
 factory_initialized || allow
 
+# issue #52: without node no receipt can be classified or minted — say so
+# loudly (once per session) instead of leaving "no receipt" indistinguishable
+# from "tests were red".
+node_guard record-green || allow
+
 [ "$(field tool_name)" = "Bash" ] || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow
