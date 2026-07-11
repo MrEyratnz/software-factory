@@ -13,6 +13,23 @@ respect_pause guard-release
 node_guard guard-release || allow
 tn="$(field tool_name)"
 cmd="$(field tool_input.command)"
+# releaseVerbRegex is read fail-OPEN here (config_get returns the built-in
+# default on a malformed config), and this read runs BEFORE require_config_sane
+# below. That is a DELIBERATE, documented residual (issue #79): a present-but-
+# corrupt .factory/config.json falls back to the default verbs, so a repo's
+# CUSTOM releaseVerbRegex verb (e.g. `make deploy`) would not be detected until
+# the config is fixed. It is left open because:
+#   - the config is a protected trust root (guard-scope / guard-bash-writes deny
+#     the policed agent any write to it, incl. a target repo's — issue #73), so
+#     the corrupt-config precondition is an honest mistake, not an attacker move;
+#   - the DEFAULT release verbs (git tag / gh release create / npm publish / …)
+#     ARE still detected on a malformed config, and require_config_sane below
+#     then fails them CLOSED — only a custom-only verb slips;
+#   - closing it can't be done in this gate's role: guard-release matches EVERY
+#     Bash command, so failing closed before detection would deny innocent reads
+#     and the `git checkout .factory/config.json` recovery alike (guard-commit
+#     avoids this only because its check sits behind an is_commit gate);
+#   - CI re-runs the release gate as the authoritative boundary regardless.
 rel_re="$(config_get releaseVerbRegex '(git tag|gh release create|npm publish|docker push|release-please|npm version )')"
 
 is_release=no
