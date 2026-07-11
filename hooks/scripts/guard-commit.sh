@@ -67,15 +67,18 @@ if [ -n "$message" ]; then
   lint="$(printf '{"message":%s}' "$(json_str "$message")" | fc commit-lint)"
   ok="$(printf '%s' "$lint" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).ok))}catch(e){process.stdout.write("true")}})')"
   ctype="$(printf '%s' "$lint" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).type||"")}catch(e){}})')"
-  if enforcement_on conventionalCommitLint; then
+  # target-aware (issue #53): the TARGET repo's enforcement contract governs
+  if enforcement_on_for "$target_root" conventionalCommitLint; then
     [ "$ok" = "false" ] && { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"lint"}'; deny_soft "commit message is not a valid Conventional Commit (feat/fix/…): $message"; }
   fi
 fi
 
 # (c) tests-first for feat/fix
-src_re="$(config_get sourceRegex '^src/')"
-test_re="$(config_get testRegex '(\.test\.|\.spec\.|_test\.|/tests?/|\.feature$)')"
-if { [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; } && enforcement_on requireTestsFirst; then
+# target-aware (issue #53): a commit to sibling repo B is classified by B's
+# regexes, not the session repo's (different stacks → different contracts).
+src_re="$(config_get_for "$target_root" sourceRegex '^src/')"
+test_re="$(config_get_for "$target_root" testRegex '(\.test\.|\.spec\.|_test\.|/tests?/|\.feature$)')"
+if { [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; } && enforcement_on_for "$target_root" requireTestsFirst; then
   files="$(staged_files "$target_root")"
   # `git commit -a/-am` stages tracked modifications AT commit time, so nothing
   # is staged yet at PreToolUse — evaluate the tracked changeset instead, or the
@@ -98,7 +101,7 @@ if { [ "$ctype" = "feat" ] || [ "$ctype" = "fix" ]; } && enforcement_on requireT
 fi
 
 # (d) green receipt, bound to the current tree
-if enforcement_on requireGreenReceiptOnCommit; then
+if enforcement_on_for "$target_root" requireGreenReceiptOnCommit; then
   receipt="$(receipt_file "$target_root")"
   [ -f "$receipt" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-receipt"}'; deny_soft "no green gate receipt — run the full test suite; it must pass on this exact tree before committing"; }
   # When a signing key is configured, a hand-written receipt (no/invalid

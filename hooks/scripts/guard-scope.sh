@@ -82,6 +82,18 @@ if enforcement_on protectTrustRoots; then
       [ -f "$CONFIG_FILE" ] && deny "$rel already exists and is the committed enforcement contract — edit it in a normal commit, not as a live gate change" ;;
     .factory/state/*)
       deny "$rel is factory-managed state — it may not be written via the editor tools" ;;
+    # A NESTED or SIBLING repo's enforcement contract / hook state (issue #53).
+    # config_get_for / enforcement_on_for now read a TARGET repo's
+    # .factory/config.json (and record-green pipes its testCommand to `sh -c`),
+    # so a sub-repo's contract must be as unwritable as the session's own — else
+    # an agent plants an opt-out or a malicious testCommand one directory over
+    # and defeats every target-aware gate. These patterns match only a path with
+    # a segment BEFORE .factory (a different repo); the session's own depth-0
+    # .factory/… is handled by the cases above, so its carve-outs are unaffected.
+    */.factory/config.json)
+      deny "$rel is a target repo's enforcement contract — a sub-repo's .factory/config.json is not writable via the editor tools (issue #53)" ;;
+    */.factory/state|*/.factory/state/*)
+      deny "$rel is a target repo's factory-managed state — not writable via the editor tools (issue #53)" ;;
   esac
 fi
 

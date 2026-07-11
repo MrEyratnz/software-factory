@@ -42,11 +42,13 @@ if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
   allow
 fi
 
-relb="$(config_get releaseBranch 'main')"
+# target-aware (issue #53). NOTE: releaseVerbRegex above is deliberately the
+# SESSION config's — release detection runs before the target repo is known.
+relb="$(config_get_for "$target_root" releaseBranch 'main')"
 cur="$(cd "$target_root" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -n "$cur" ] && [ "$cur" != "$relb" ] && { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny_soft "releases are cut only from '$relb' (currently on '$cur')"; }
 
-if enforcement_on requireReleaseProof; then
+if enforcement_on_for "$target_root" requireReleaseProof; then
   proof="$STATE_DIR/release-proof.json"
   [ -f "$proof" ] || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny_soft "no release-gate proof — the full suite must be green on the BUILT artifact and history Conventional-Commit clean before releasing"; }
   receipt_verify "$proof" || { otel_emit factory_gate_release_total sum 1 '{"result":"deny"}'; deny "the release proof's signature is missing or invalid — a hand-written proof cannot authorize a release"; }
