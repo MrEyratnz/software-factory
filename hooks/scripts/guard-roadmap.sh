@@ -51,7 +51,11 @@ oldx="$(printf '%s' "$old" | grep -oiE '\[x\]' | wc -l | tr -d ' ')"
 [ "${newx:-0}" -gt "${oldx:-0}" ] 2>/dev/null || allow
 
 proof_file="$STATE_DIR/roadmap-proof.json"
-[ -f "$proof_file" ] || deny "cannot check off a roadmap item without a merged-green proof (CI must be green on the merged branch first)"
+[ -f "$proof_file" ] || deny "cannot check off a roadmap item without a merged-green proof (run mint-roadmap-proof.sh after the item's PR merges green)"
+# When a runner-only signing key is configured, a hand-written proof (missing/
+# invalid signature) cannot certify the merge — a hard boundary mirroring
+# guard-commit's receipt check (issue #51). No key → nothing to verify.
+roadmap_proof_verify "$proof_file" || deny "the roadmap proof's signature is missing or invalid — it was not minted by the sanctioned producer (mint-roadmap-proof.sh)"
 
 item="$(printf '%s' "$new" | grep -iE '^\s*[-*]\s+\[x\]' | head -1 | sed -E 's/^\s*[-*]\s+\[[xX]\]\s*//')"
 proof_json="$(cat "$proof_file" 2>/dev/null)"

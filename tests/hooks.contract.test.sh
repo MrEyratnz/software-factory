@@ -1035,6 +1035,91 @@ EVENT="$(evt "$R" Bash '{"command":"rsync -t /tmp/forged.json .factory/state/gat
 assert_exit 2 "rsync -t receipt forgery is blocked (dest is the last operand, not -t's value)"
 EVENT="$(evt "$R" Bash '{"command":"rsync -a src/ dst/"}')"; assert_exit 0 "legit rsync between in-project dirs allowed"
 
+echo "# issue #51: mint-roadmap-proof (sanctioned producer) + proof signing"
+# The producer trusts GITHUB, not its caller: a stub gh serves canned facts and
+# each case asserts mint-or-refuse. STUB_* env vars drive the stub per case.
+mk_gh_proof_stub() {
+  local dir; dir="$(mktemp -d "$TMPROOT/ghproof.XXXXXX")"
+  cat > "$dir/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "repo view"*)  printf '%s' "${STUB_REPO_VIEW:-}" ;;
+  "api graphql") printf '%s' "${STUB_LINKED:-}" ;;
+  "pr view"*)    printf '%s' "${STUB_PR_VIEW:-}" ;;
+  "api "*)       printf '%s' "${STUB_CHECKS:-}" ;;
+esac
+EOF
+  chmod +x "$dir/gh"; printf '%s' "$dir"
+}
+MINT="$S/mint-roadmap-proof.sh"
+GHP="$(mk_gh_proof_stub)"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+printf '## M1\n- [ ] Ship the widget (#47)\n- [ ] Another thing (#48)\nSee also: Retired thing (#40)\n' > "$R/docs/ROADMAP.md"
+ITEM="Ship the widget (#47)"
+mint() { # mint <expected-exit> <desc> <args...>
+  local expected="$1" desc="$2"; shift 2
+  local rc=0
+  ( export PATH="$GHP:$PATH"; bash "$MINT" --repo "$R" "$@" ) >/dev/null 2>&1 || rc=$?
+  if [ "$rc" = "$expected" ]; then PASS=$((PASS+1));
+  else FAIL=$((FAIL+1)); echo "FAIL - $desc (expected exit $expected, got $rc)"; fi
+}
+PROOF="$R/.factory/state/roadmap-proof.json"
+
+# happy path: merged into main, all checks green → mints an item-bound proof
+export STUB_PR_VIEW="MERGED main abc123def456" STUB_CHECKS=$'completed:success\ncompleted:skipped'
+mint 0 "mint: merged-green PR mints" --pr 12 "$ITEM"
+assert_file exists "$PROOF" "mint: proof file written"
+grep -q '"mergedGreenSha":"abc123def456"' "$PROOF" && grep -qF "$ITEM" "$PROOF" \
+  && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - mint: proof carries sha + item"; }
+# ...and guard-roadmap accepts exactly that item, refuses any other
+SCRIPT="$S/guard-roadmap.sh"
+EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] Ship the widget (#47)","new_string":"- [x] Ship the widget (#47)"}')"
+assert_exit 0 "mint→guard: flip of the minted item allowed"
+EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] Another thing (#48)","new_string":"- [x] Another thing (#48)"}')"
+assert_exit 2 "mint→guard: flip of a DIFFERENT item still blocked"
+
+# refusals: every GitHub fact must hold, and the item must be real
+rm -f "$PROOF"
+export STUB_PR_VIEW="OPEN main abc123def456"
+mint 2 "mint: unmerged PR refused" --pr 12 "$ITEM"
+export STUB_PR_VIEW="MERGED develop abc123def456"
+mint 2 "mint: wrong base branch refused" --pr 12 "$ITEM"
+export STUB_PR_VIEW="MERGED main abc123def456" STUB_CHECKS=$'completed:success\ncompleted:failure'
+mint 2 "mint: red check run refused" --pr 12 "$ITEM"
+export STUB_CHECKS=""
+mint 2 "mint: zero check runs refused (not green)" --pr 12 "$ITEM"
+export STUB_CHECKS="completed:success"
+mint 2 "mint: item text not in roadmap refused" --pr 12 "No such item (#99)"
+mint 2 "mint: non-checkbox prose match refused (anchored to checkbox lines)" --pr 12 "Retired thing (#40)"
+assert_file absent "$PROOF" "mint: no proof written on any refusal"
+mint 2 "mint: empty item refused" --pr 12
+# derivation: no --pr → the (#N) reference resolves via GitHub's linked-issue
+# data (closedByPullRequestsReferences), not a free-text body search
+export STUB_REPO_VIEW="MrEyratnz/software-factory" STUB_LINKED="12"
+mint 0 "mint: PR derived from linked-issue data when --pr omitted" "$ITEM"
+assert_file exists "$PROOF" "mint: derived-PR proof written"
+export STUB_LINKED=""
+rm -f "$PROOF"
+mint 2 "mint: no linked closing PR → refused (no body-text fallback)" "$ITEM"
+
+# signing: with a runner key, the proof carries a payload-bound signature and
+# guard-roadmap rejects hand-written or tampered proofs outright
+export FACTORY_RECEIPT_KEY="test-secret-key"
+mint 0 "mint: signs when key configured" --pr 12 "$ITEM"
+grep -q '"sig":"' "$PROOF" && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "FAIL - mint: signed proof carries sig"; }
+SCRIPT="$S/guard-roadmap.sh"
+EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] Ship the widget (#47)","new_string":"- [x] Ship the widget (#47)"}')"
+assert_exit 0 "signed proof: flip allowed with valid signature"
+# hand-written (unsigned) proof under a configured key → hard deny
+printf '{"mergedGreenSha":"abc123def456","item":"Ship the widget (#47)"}' > "$PROOF"
+assert_exit 2 "unsigned proof rejected when a key is configured"
+# tampered item under a configured key → hard deny (sig is payload-bound)
+( export PATH="$GHP:$PATH"; bash "$MINT" --repo "$R" --pr 12 "$ITEM" ) >/dev/null 2>&1
+node -e 'const fs=require("fs");const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));o.item="Another thing (#48)";fs.writeFileSync(p,JSON.stringify(o));' "$PROOF"
+EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] Another thing (#48)","new_string":"- [x] Another thing (#48)"}')"
+assert_exit 2 "tampered proof (item swapped, stale sig) rejected"
+unset FACTORY_RECEIPT_KEY STUB_PR_VIEW STUB_CHECKS STUB_REPO_VIEW STUB_LINKED
+
 echo "# issue #52: node-absent degradation (POSIX bypass fallback + loud notice)"
 # A PATH with the shell utilities the hooks need but NO node: the gates must
 # not fail open SILENTLY — guard-commit still denies a visible bypass flag,
