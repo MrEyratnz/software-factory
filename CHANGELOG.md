@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.7](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.6...dark-software-factory-v0.1.7) (2026-07-11)
+
+
+### Features
+
+* **connector:** adr_index honors the repo's configured adrDir ([#85](https://github.com/MrEyratnz/software-factory/issues/85)) ([151e7d7](https://github.com/MrEyratnz/software-factory/commit/151e7d73b3a612712f57247cf98291cdfe357cba)), closes [#78](https://github.com/MrEyratnz/software-factory/issues/78)
+* dogfood the plugin from the working tree + factory init ([#62](https://github.com/MrEyratnz/software-factory/issues/62)) ([f45b9a8](https://github.com/MrEyratnz/software-factory/commit/f45b9a8baa9e17097be9c0f70fe94eb2b96c9156))
+* **hooks:** sanctioned producer for roadmap-proof.json — mint-roadmap-proof.sh ([#71](https://github.com/MrEyratnz/software-factory/issues/71)) ([91a0b6d](https://github.com/MrEyratnz/software-factory/commit/91a0b6df5449c2b1d103734f6d8a967256547bd5))
+
+
+### Bug Fixes
+
+* **hooks:** close the node-absent fallback residuals in guard-commit ([#81](https://github.com/MrEyratnz/software-factory/issues/81)) ([2cd01a8](https://github.com/MrEyratnz/software-factory/commit/2cd01a8f04c31ee53248493f6fcacc9e01d12fba)), closes [#70](https://github.com/MrEyratnz/software-factory/issues/70)
+* **hooks:** degrade loudly and hold the bypass boundary when node is unavailable ([#69](https://github.com/MrEyratnz/software-factory/issues/69)) ([3172785](https://github.com/MrEyratnz/software-factory/commit/3172785d951a8e54534f16938ebe3ec307eab82f))
+* **hooks:** fail closed on a malformed .factory/config.json; correct the skill's validation claim ([#75](https://github.com/MrEyratnz/software-factory/issues/75)) ([d70010f](https://github.com/MrEyratnz/software-factory/commit/d70010f9fdb332ce10f23a1cfd9f930ae2aff472)), closes [#65](https://github.com/MrEyratnz/software-factory/issues/65)
+* **hooks:** resolve enforcement config against the target repo, not the session repo ([#73](https://github.com/MrEyratnz/software-factory/issues/73)) ([aae1868](https://github.com/MrEyratnz/software-factory/commit/aae1868a0fabd3d6033796d0c5f1db12c6056cd4)), closes [#53](https://github.com/MrEyratnz/software-factory/issues/53)
+* **skills:** node adapter regexes cover .tsx/.jsx and call out monorepo source roots ([#72](https://github.com/MrEyratnz/software-factory/issues/72)) ([0791f5c](https://github.com/MrEyratnz/software-factory/commit/0791f5c412cef5e11ea75f5b791f92bd6636ff6a))
+
 ## [0.1.6](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.5...dark-software-factory-v0.1.6) (2026-07-10)
 
 
