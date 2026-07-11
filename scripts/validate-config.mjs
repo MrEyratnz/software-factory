@@ -40,14 +40,10 @@ export function validate(value, schema, path = '$', errors = []) {
     errors.push(`${path}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`);
   }
 
-  // number/integer bounds
-  if (typeof value === 'number') {
-    if (schema.type === 'integer' && !Number.isInteger(value)) {
-      errors.push(`${path}: expected an integer, got ${value}`);
-    }
-    if (typeof schema.minimum === 'number' && value < schema.minimum) {
-      errors.push(`${path}: ${value} is below the minimum ${schema.minimum}`);
-    }
+  // minimum (integer-ness is already enforced by the type check above, which
+  // returns on failure, so a separate integer test here would be unreachable).
+  if (typeof value === 'number' && typeof schema.minimum === 'number' && value < schema.minimum) {
+    errors.push(`${path}: ${value} is below the minimum ${schema.minimum}`);
   }
 
   // object
@@ -88,7 +84,10 @@ function typeMatches(v, t) {
     case 'integer': return typeof v === 'number' && Number.isInteger(v);
     case 'number': return typeof v === 'number';
     case 'null': return v === null;
-    default: return true;
+    // Fail CLOSED on a schema type this validator doesn't recognize: a typo in
+    // the schema (e.g. "sting") must surface as a validation failure, not
+    // silently disable checking for that field — this is the CI backstop.
+    default: return false;
   }
 }
 

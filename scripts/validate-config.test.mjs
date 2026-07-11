@@ -23,8 +23,15 @@ test("this repo's own committed .factory/config.json validates", () => {
   assert.deepEqual(validate(cfg, schema), []);
 });
 
-test('all three stack templates would validate (well-formed baseline)', () => {
-  assert.deepEqual(validate(base(), schema), []);
+test('a well-formed baseline validates for every stack in the enum', () => {
+  for (const stack of schema.properties.stack.enum) {
+    assert.deepEqual(validate({ ...base(), stack }, schema), [], `stack=${stack}`);
+  }
+});
+
+test("the shipped templates/factory/config.json.tmpl validates", () => {
+  const tmpl = JSON.parse(readFileSync(join(ROOT, 'templates/factory/config.json.tmpl'), 'utf8'));
+  assert.deepEqual(validate(tmpl, schema), []);
 });
 
 test('a missing required key is reported', () => {
