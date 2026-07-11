@@ -43,6 +43,21 @@ jobs:
           git config --global user.name ci
           bash tests/hooks.contract.test.sh
 
+  triage-scripts:
+    name: triage wrapper scripts (shellcheck + argument-contract tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: shellcheck the triage + project-status scripts
+        run: shellcheck -S warning scripts/*.sh
+      # The triage wrapper scripts are the Issue Triage workflow's enforcement
+      # boundary (see .github/workflows/claude-issue-triage.yml) — the only
+      # thing preventing a prompt-injected triage session from retargeting
+      # another issue/PR — and their argument contract regresses silently
+      # without this. Hermetic: a stub gh records argv, no network, no Node.
+      - name: triage wrapper argument-contract tests
+        run: ./scripts/test-triage-scripts.sh
+
   manifests:
     name: manifest + component validation (claude plugin validate --strict)
     runs-on: ubuntu-latest
