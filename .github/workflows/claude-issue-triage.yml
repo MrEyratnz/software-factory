@@ -123,6 +123,38 @@ jobs:
         with:
           fetch-depth: 1
 
+      # The full label taxonomy is ensured DETERMINISTICALLY, before the model
+      # runs, so the Claude session below needs no label-create tool at all
+      # (issue #61: a prompt-injected triage run could otherwise create spam
+      # labels or recolor/redescribe existing ones via `gh label create
+      # --force`). This restores the pre-parity design's stronger pattern.
+      # `gh label create` without --force fails on an existing label — that is
+      # the idempotence we want (no recoloring) — so each create is `|| true`.
+      - name: Ensure the triage label taxonomy exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -u
+          ensure() { gh label create "$1" --color "$2" --description "$3" 2>/dev/null || true; }
+          ensure bug                d73a4a "Something isn't working"
+          ensure enhancement        a2eeef "New feature or request"
+          ensure question           d876e3 "Further information is requested"
+          ensure documentation      0075ca "Improvements or additions to documentation"
+          ensure tech-debt          d4c5f9 "Deferred review finding / known debt"
+          ensure "priority:critical" b60205 "Drop everything"
+          ensure "priority:high"    d93f0b "Next up"
+          ensure "priority:medium"  fbca04 "Scheduled"
+          ensure "priority:low"     0e8a16 "When convenient"
+          ensure "area:commands"    c5def5 "commands/ slash-command stations"
+          ensure "area:agents"      c5def5 "agents/ crew definitions"
+          ensure "area:skills"      c5def5 "skills/"
+          ensure "area:hooks"       c5def5 "hooks/ enforcement scripts"
+          ensure "area:connector"   c5def5 "connector/ MCP server"
+          ensure "area:build"       c5def5 "CI, release tooling, Docker/otel"
+          ensure "area:docs"        c5def5 "Documentation"
+          ensure triaged            22863a "Triage complete (see claude-issue-triage.yml)"
+
       - name: Triage with Claude
         uses: anthropics/claude-code-action@v1
         env:
@@ -163,12 +195,9 @@ jobs:
                issue clearly duplicates one, leave ONE comment naming the
                original: `./scripts/triage-comment.sh --body "..."`.
                Do not close anything.
-            5. Create any chosen label that doesn't exist yet, e.g.
-               `gh label create "priority:high" --color d93f0b --description "..."`.
-               Colors: d73a4a bug, a2eeef enhancement, d876e3 question,
-               0075ca documentation, d4c5f9 tech-debt, b60205 priority:critical,
-               d93f0b priority:high, fbca04 priority:medium,
-               0e8a16 priority:low, c5def5 area:*, 22863a triaged.
+            5. Only apply labels that already exist (the workflow's
+               "Ensure the triage label taxonomy exists" step pre-creates the
+               full taxonomy before you run — never create a label).
             6. Apply the labels in one call:
                `./scripts/triage-add-labels.sh --add-label "<type>" --add-label "<priority>" [--add-label "<area>" ...]`
                (The script targets this issue automatically and accepts
@@ -200,14 +229,13 @@ jobs:
           # Each script is listed under its equivalent invocation spellings
           # (./x, x, bash x) so a session can't be denied over the same
           # class of phrasing variation this design exists to eliminate.
-          # `gh label create` is the one direct write allowed outside the
-          # wrappers (first-use label creation); its blast radius is the
-          # repo's label vocabulary, not issue state. The wrappers
-          # additionally reject the queue-control labels `ready` /
-          # `in-progress` so a triage session can never drive the pickup
-          # automation (project-pickup.yml).
+          # No direct repo write is granted at all: label creation is a
+          # deterministic workflow step (above), not a model tool (issue
+          # #61). The wrappers additionally reject the queue-control labels
+          # `ready` / `in-progress` so a triage session can never drive the
+          # pickup automation (project-pickup.yml).
           claude_args: |
-            --allowedTools "Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh label list:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(./scripts/triage-add-labels.sh:*),Bash(scripts/triage-add-labels.sh:*),Bash(bash scripts/triage-add-labels.sh:*),Bash(bash ./scripts/triage-add-labels.sh:*),Bash(./scripts/triage-comment.sh:*),Bash(scripts/triage-comment.sh:*),Bash(bash scripts/triage-comment.sh:*),Bash(bash ./scripts/triage-comment.sh:*)"
+            --allowedTools "Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh label list:*),Bash(gh search issues:*),Bash(./scripts/triage-add-labels.sh:*),Bash(scripts/triage-add-labels.sh:*),Bash(bash scripts/triage-add-labels.sh:*),Bash(bash ./scripts/triage-add-labels.sh:*),Bash(./scripts/triage-comment.sh:*),Bash(scripts/triage-comment.sh:*),Bash(bash scripts/triage-comment.sh:*),Bash(bash ./scripts/triage-comment.sh:*)"
 
       - name: Move the issue to Ready on the project board
         env:
