@@ -136,6 +136,33 @@ test('ledger_read: limit is clamped (0 → none, N → last N, none → all)', a
   } finally { rmSync(proj, { recursive: true, force: true }); }
 });
 
+test('adr_index: default directory honors the repo\'s configured adrDir (issue #78)', async () => {
+  // A repo whose ADRs live at a NON-default location declared in adrDir. With no
+  // `dir` arg, adr_index must scan there (previously it hardcoded docs/adr and
+  // adrDir was inert).
+  const proj = mkdtempSync(join(tmpdir(), 'dsf-adrdir-'));
+  mkdirSync(join(proj, '.factory'), { recursive: true });
+  writeFileSync(join(proj, '.factory', 'config.json'), JSON.stringify({ adrDir: 'docs/decisions' }));
+  mkdirSync(join(proj, 'docs', 'decisions'), { recursive: true });
+  writeFileSync(join(proj, 'docs', 'decisions', '0001-x.md'),
+    '# ADR 0001 — X\n\nStatus: accepted · Date: 2026-01-01\n');
+  const callAdr = (args) => rpc([{
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'adr_index', arguments: args },
+  }], { env: { CLAUDE_PROJECT_DIR: proj } }).then(([r]) => JSON.parse(r.result.content[0].text));
+  try {
+    // No dir arg → reads the configured docs/decisions and sees the ADR there.
+    const viaConfig = await callAdr({});
+    assert.equal(viaConfig.nextNumber, 2);
+    assert.ok(viaConfig.adrs.some((a) => a.number === 1));
+    // An explicit dir still overrides the config default (empty docs/adr → 0001).
+    mkdirSync(join(proj, 'docs', 'adr'), { recursive: true });
+    const viaArg = await callAdr({ dir: 'docs/adr' });
+    assert.equal(viaArg.nextNumber, 1);
+    assert.equal(viaArg.adrs.length, 0);
+  } finally { rmSync(proj, { recursive: true, force: true }); }
+});
+
 test('safePath: an in-project symlink pointing outside the tree cannot exfiltrate', async () => {
   const proj = mkdtempSync(join(tmpdir(), 'dsf-proj-'));
   const outside = mkdtempSync(join(tmpdir(), 'dsf-out-'));
