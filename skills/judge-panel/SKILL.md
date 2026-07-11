@@ -75,15 +75,18 @@ Cheapest fix direction: <hint for the synthesizer, optional>
 ```markdown
 # ADR 0042 — <decision title>
 
-Status: Accepted · Date: YYYY-MM-DD
+Status: accepted · Date: YYYY-MM-DD
 
 ## Context
+
 <the decision, the N stances, why a panel was warranted>
 
 ## Decision
+
 <the synthesized design>
 
 ## Flaws resolved
+
 | Proposal | Confirmed flaw | How the synthesis resolves it |
 |----------|----------------|-------------------------------|
 | contract-first | <flaw> | <mechanism that neutralizes it> |
@@ -91,10 +94,11 @@ Status: Accepted · Date: YYYY-MM-DD
 | dx-first | <flaw> | <mechanism that neutralizes it> |
 
 ## Consequences
+
 <new trade-offs, incl. any PLAUSIBLE risk knowingly accepted>
 ```
 
-## Synthesis checklist (gate before writing Status: Accepted)
+## Synthesis checklist (gate before writing Status: accepted)
 
 - [ ] Every proposal has a ballot from every OTHER axis (proposer never judged own work).
 - [ ] Each ballot names exactly ONE fatal flaw with evidence and a CONFIRMED|PLAUSIBLE verdict.
