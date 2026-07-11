@@ -4,6 +4,10 @@ stack: node
 roadmapPath: docs/ROADMAP.md
 adrDir: docs/adr
 releaseBranch: main
+# ^src/ is extension-agnostic (.ts/.tsx/.js/.jsx all count) but SINGLE-ROOT:
+# in an npm-workspaces / monorepo layout, cover every real source root or the
+# tests-first gate silently under-fires (issue #47), e.g.
+#   sourceRegex: "^(src|packages/[^/]+/src|apps/[^/]+/src)/"
 sourceRegex: "^src/"
 testRegex: "(\\.test\\.|\\.spec\\.|_test\\.|/tests?/|\\.feature$)"
 testCommandRegex: "(npm ((run|-s) )?test|node --test|vitest)"
