@@ -114,6 +114,31 @@ config_get_for() {
   fi
 }
 
+# require_config_sane <target-root> — the enforcement contract must be valid JSON
+# before it can govern (issue #65). config_get* degrade a malformed config to the
+# built-in defaults: for an ABSENT config that is the uninitialized repo (fine,
+# handled by factory_initialized), but for a PRESENT-but-corrupt one it silently
+# reverts a repo's committed gates to defaults — a fail-OPEN for any repo that
+# configured stricter-than-default gates (a broader sourceRegex, a custom
+# testRegex). So the DENYING workflow gates fail CLOSED here, matching the
+# factory-config skill's "malformed JSON fails the hook closed". Resolves the
+# same file config_get_for reads (the target's config when it has one, else the
+# session's). Structural completeness beyond "is it JSON" (required keys, a
+# command that is a string) is validated when /factory-init authors the config
+# and re-checked by CI — the authoritative boundary — not on every hook. Uses
+# node, so callers must be PAST node_guard (node-absent is issue #52's path).
+require_config_sane() {
+  local root="$1" file
+  if [ -n "$root" ] && [ -f "$root/.factory/config.json" ]; then
+    file="$root/.factory/config.json"
+  else
+    file="$CONFIG_FILE"
+  fi
+  [ -f "$file" ] || return 0
+  CFG_FILE="$file" node -e 'const fs=require("fs");try{JSON.parse(fs.readFileSync(process.env.CFG_FILE,"utf8"))}catch(e){process.exit(1)}' 2>/dev/null && return 0
+  deny "the enforcement contract $file is not valid JSON — a corrupt config would silently revert this repo's gates to the built-in defaults, so the gate fails closed. Fix the JSON (do not --no-verify); CI validates it as the authoritative boundary."
+}
+
 # --- enforcement levers (issues #29, #30) ----------------------------------
 # The hard gates are ON by default. Two levers relax them without the binary
 # all-or-nothing plugin toggle:

@@ -42,6 +42,10 @@ if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
   allow
 fi
 
+# The governing config must be valid JSON, or a corrupt contract would silently
+# revert this repo's gates to defaults (issue #65) — fail closed here.
+require_config_sane "$target_root"
+
 # target-aware (issue #53). NOTE: releaseVerbRegex above is deliberately the
 # SESSION config's — release detection runs before the target repo is known.
 relb="$(config_get_for "$target_root" releaseBranch 'main')"
