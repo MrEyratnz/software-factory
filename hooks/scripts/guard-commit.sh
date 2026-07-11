@@ -21,11 +21,53 @@ respect_pause guard-commit
 # `--no-verify` bypass. Un-inited repos keep their advisory posture (the
 # target-aware init union needs the parser; session init is the signal here).
 if ! node_guard guard-commit; then
-  if factory_initialized; then
-    case "$HOOK_INPUT" in
+  # POSIX-only fallback (the quote-aware parser needs node); it may use only what
+  # a node-less PATH is assumed to have — grep + shell builtins, no sed/jq. Two
+  # refinements over a whole-event grep (issue #70):
+  #  1. Narrow the match surface to the tool_input.command VALUE, not the entire
+  #     raw event (which also carries cwd / transcript_path) — so a bypass flag or
+  #     "commit" sitting in a path/field, not the command, no longer trips it. If
+  #     extraction finds nothing (format drift), fall back to the whole event, so
+  #     a change can only WIDEN the surface, never blind the check (fail-safe).
+  #  2. Engage the boundary when the SESSION repo is initialized OR the command
+  #     targets an initialized repo via `cd <dir>`/`git -C <dir>` — without node
+  #     the target parser is gone, so an un-inited scratch session cannot be a
+  #     blanket bypass for an initialized sibling reached via cd/git -C. The dir
+  #     scan is best-effort: an absolute target resolves reliably; a relative one
+  #     is tested against the hook's CWD.
+  fb_cmd="$(printf '%s' "$HOOK_INPUT" | grep -oE '"command"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' 2>/dev/null)"
+  [ -n "$fb_cmd" ] || fb_cmd="$HOOK_INPUT"
+  fb_engaged=no
+  factory_initialized && fb_engaged=yes
+  if [ "$fb_engaged" = no ]; then
+    # Normalize JSON whitespace-escapes (\t \n \r) to spaces first, so a
+    # tab-separated `git -C\t<dir>` — which valid JSON encodes as a literal
+    # backslash-t the grep's [[:space:]] would never match — tokenizes like a
+    # space-separated one. Then for each `cd …`/`git -C …` region test EVERY
+    # argument token as a candidate dir: read -ra splits on any real whitespace
+    # (space OR tab) without glob-expanding, and skipping the verb + `-…` flags
+    # covers `cd -L`/`cd -P`/`cd --` and a real-tab separator alike, so the
+    # target-init check can't be dodged by whitespace or flag choice (issue #70
+    # follow-up). Best-effort: an absolute target resolves reliably; a relative
+    # one is tested against the hook's CWD.
+    fb_scan="$fb_cmd"
+    fb_scan="${fb_scan//\\t/ }"; fb_scan="${fb_scan//\\n/ }"; fb_scan="${fb_scan//\\r/ }"
+    while IFS= read -r fb_seg; do
+      [ -n "$fb_seg" ] || continue
+      read -ra fb_toks <<<"$fb_seg"
+      for fb_d in "${fb_toks[@]}"; do
+        case "$fb_d" in cd|-C|-*) continue ;; esac
+        [ -f "$fb_d/.factory/config.json" ] && { fb_engaged=yes; break 2; }
+      done
+    done <<EOF
+$(printf '%s' "$fb_scan" | grep -oE '(cd|-C)[[:space:]]+[^;&|)"]+' 2>/dev/null)
+EOF
+  fi
+  if [ "$fb_engaged" = yes ]; then
+    case "$fb_cmd" in
       *--no-verify*|*--no-gpg-sign*)
-        case "$HOOK_INPUT" in
-          *commit*) deny "node is unavailable on the hook PATH, so the quote-aware commit parser cannot run — refusing an event that mentions both a commit and a bypass flag (--no-verify/--no-gpg-sign). Restore node or drop the flag." ;;
+        case "$fb_cmd" in
+          *commit*) deny "node is unavailable on the hook PATH, so the quote-aware commit parser cannot run — refusing a command that mentions both a commit and a bypass flag (--no-verify/--no-gpg-sign). Restore node or drop the flag." ;;
         esac ;;
     esac
   fi

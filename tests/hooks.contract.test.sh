@@ -1320,6 +1320,53 @@ EVENT="$(evt "$RU" Bash '{"command":"git commit -m \"chore: z\""}')"
 assert_exit 0 "#65: uninitialized repo (no config) stays advisory — no false JSON-check block"
 export CLAUDE_PROJECT_DIR="$R"; SCRIPT="$S/guard-commit.sh"
 
+echo "# issue #70: node-absent fallback — target-aware bypass + narrowed match surface"
+# (8) an un-inited SESSION must not be a blanket bypass for an INITIALIZED repo
+# reached via `git -C <dir>` — without node the target parser is gone, so the
+# fallback scans the command for cd/git -C dirs and engages when one is a factory
+# repo. RU (session) is un-inited; BI (target) is initialized.
+RU="$(mktemp -d "$TMPROOT/nsess.XXXXXX")"; ( cd "$RU" && git init -q )
+export CLAUDE_PROJECT_DIR="$RU"
+BI="$(mkrepo)"   # initialized sibling (has .factory/config.json)
+EVENT="$(evt "$RU" Bash '{"command":"git -C '"$BI"' commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent git -C into an INITIALIZED repo with --no-verify denied (got exit $rc)"; fi
+
+# (8b) but a `git -C <dir>` into an UN-inited repo stays advisory — the scan
+# engages ONLY for a target that actually opted in, so a scratch repo is not a
+# false positive.
+BU="$(mktemp -d "$TMPROOT/nunint.XXXXXX")"; ( cd "$BU" && git init -q )
+EVENT="$(evt "$RU" Bash '{"command":"git -C '"$BU"' commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent git -C into an UN-inited repo stays advisory (got exit $rc)"; fi
+
+# (8c) the target scan must not be dodged by whitespace choice: a TAB between
+# `-C` and the dir (valid JSON encodes it as a literal backslash-t, which a
+# [[:space:]] grep would never match) must still engage the bypass boundary.
+EVENT="$(evt "$RU" Bash '{"command":"git -C\t'"$BI"' commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent tab-separated git -C into an INITIALIZED repo denied (got exit $rc)"; fi
+
+# (8d) ...nor by a cd flag: `cd -L <dir>` / `cd --` put the dir one token later,
+# which a "token right after cd" assumption would miss.
+EVENT="$(evt "$RU" Bash '{"command":"cd -L '"$BI"' && git commit --no-verify -m \"feat: x\""}')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent 'cd -L <initialized>' bypass denied (got exit $rc)"; fi
+
+# (9) the match surface is the tool_input.command VALUE, not the whole raw event:
+# a bypass flag sitting in transcript_path (NOT the command) must not trip the
+# fallback. Session R is initialized; the command is a commit with NO bypass flag,
+# and --no-verify appears only in a sibling field — the old whole-event grep would
+# have denied this false positive.
+export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"ok\""}' ',"transcript_path":"/tmp/notes--no-verify/x"')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent match surface is the command, not transcript_path (got exit $rc)"; fi
+# ...and the real thing still denies: a bypass flag IN the command, session inited.
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"x\""}' ',"transcript_path":"/tmp/notes/x"')"
+out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
+if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent bypass flag IN the command still denied (got exit $rc)"; fi
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
