@@ -22,9 +22,15 @@ Manage the roadmap: `$ARGUMENTS`
   The proof at `.factory/state/roadmap-proof.json` is authoritative only when it
   comes from **CI / the runner**, which has direct filesystem access and is not
   gated — the same trust model as the receipt-signing key. The policed agent is
-  deliberately forbidden from writing it (that would make the honesty gate
-  theater): CI, after confirming the item's PR merged green, writes the
-  item-bound `{mergedGreenSha, item}` proof. In an un-initialized repo the gate
-  is advisory (there is nothing to enforce yet).
+  deliberately forbidden from *hand-writing* it (that would make the honesty
+  gate theater). The sanctioned producer is
+  `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/mint-roadmap-proof.sh [--pr <n>] "<exact item text>"`:
+  it refuses to mint unless **GitHub** confirms the item's PR is merged into the
+  release branch with every check run green (so the trust anchor is the GitHub
+  API, not the caller), and it signs the item-bound `{mergedGreenSha, item}`
+  proof when a receipt key is configured — `guard-roadmap` rejects an
+  unsigned/invalid proof in that case, closing hand-forgery outright when the
+  key is kept runner-private. In an un-initialized repo the gate is advisory
+  (there is nothing to enforce yet).
 
 Mirror any structural change to the GitHub meta tracking issue.

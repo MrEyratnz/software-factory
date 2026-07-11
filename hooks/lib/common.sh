@@ -322,6 +322,43 @@ receipt_embed_sig() {
     });'
 }
 
+# --- roadmap-proof signing (issue #51) ---------------------------------------
+# The roadmap proof ({mergedGreenSha, item}) has its own payload shape, so it
+# gets its own HMAC helpers: receipt_embed_sig signs ok+tree, which for this
+# shape would degenerate to the CONSTANT "undefined:" — one old signature would
+# then be a skeleton key validating every forged proof. These sign/verify over
+# mergedGreenSha:item instead. Same key and trust model as the gate receipts
+# (receipt_secret; no key configured → nothing to verify, backward compatible).
+
+# roadmap_proof_embed_sig — proof JSON on stdin → same JSON with a "sig" field
+# on stdout when a key is configured; a passthrough otherwise.
+roadmap_proof_embed_sig() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || { cat; return; }
+  SECRET="$secret" node -e '
+    const c=require("crypto");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try{const o=JSON.parse(s);o.sig=c.createHmac("sha256",process.env.SECRET).update(String(o.mergedGreenSha||"")+":"+String(o.item||"")).digest("hex");process.stdout.write(JSON.stringify(o));}
+      catch(e){process.stdout.write(s);}
+    });'
+}
+
+# roadmap_proof_verify <file> — 0 when acceptable (no key configured, or the
+# signature over mergedGreenSha:item is valid); 1 when a key is set and the
+# signature is missing/invalid.
+roadmap_proof_verify() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || return 0
+  REC="$1" SECRET="$secret" node -e '
+    const fs=require("fs"),c=require("crypto");
+    try{
+      const o=JSON.parse(fs.readFileSync(process.env.REC,"utf8"));
+      const want=c.createHmac("sha256",process.env.SECRET).update(String(o.mergedGreenSha||"")+":"+String(o.item||"")).digest("hex");
+      const got=String(o.sig||"");
+      process.exit(got.length===want.length && c.timingSafeEqual(Buffer.from(got),Buffer.from(want))?0:1);
+    }catch(e){process.exit(1)}
+  ' 2>/dev/null
+}
+
 staged_files() { ( cd "${1:-$PROJECT_DIR}" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }
 
 # --- otel (optional, opt-in, push-based metrics) ----------------------------
