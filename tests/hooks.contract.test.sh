@@ -1367,6 +1367,32 @@ EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"x\""}' ',"transc
 out="$(run_nodeless "$S/guard-commit.sh")"; rc=$?
 if [ "$rc" = 2 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #70: node-absent bypass flag IN the command still denied (got exit $rc)"; fi
 
+echo "# issue #79: releaseVerbRegex — custom verbs honored on a healthy config; the"
+echo "#            malformed-config residual is pinned (default verbs stay gated)"
+SCRIPT="$S/guard-release.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+# A repo whose CUSTOM releaseVerbRegex adds a project-specific verb the default
+# pattern doesn't know (`make deploy`). requireReleaseProof stays default-true.
+cat > "$R/.factory/config.json" <<'JSON'
+{ "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "releaseVerbRegex": "(git tag|npm publish|make deploy)" }
+JSON
+# (1) with the config HEALTHY, the custom verb IS detected → gated (no proof).
+EVENT="$(evt "$R" Bash '{"command":"make deploy"}')"
+assert_exit 2 "#79: a custom releaseVerbRegex verb (make deploy) is gated on a healthy config"
+# (2) corrupt the config. The custom verb is NO LONGER detected (rel_re falls
+# back to the built-in default, which lacks `make deploy`) — this is the
+# documented, accepted residual: guard-release can't fail closed here without
+# denying innocent Bash / trapping config recovery, and the config is a
+# protected trust root so it isn't adversarially reachable.
+printf '%s' '{ "releaseVerbRegex": "(make deploy' > "$R/.factory/config.json"   # truncated JSON
+EVENT="$(evt "$R" Bash '{"command":"make deploy"}')"
+assert_exit 0 "#79: custom-only verb on a MALFORMED config is not detected (accepted residual)"
+# (3) but a DEFAULT verb on the same malformed config is still failed CLOSED by
+# require_config_sane — proving the common release path stays gated on corruption.
+EVENT="$(evt "$R" Bash '{"command":"git tag v1.2.3"}')"
+assert_exit 2 "#79: a default release verb on a malformed config is still denied (require_config_sane)"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
