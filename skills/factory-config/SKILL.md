@@ -88,7 +88,8 @@ the ONLY strings the gate is permitted to shell out to.
 layout, source also lives under `packages/*/src/**` and `apps/*/src/**` — a
 `feat`/`fix` touching only those roots is invisible to a single-root
 `sourceRegex`, so `guard-commit` never requires a co-staged test and the
-tests-first gate silently under-fires. Cover every real root:
+tests-first gate silently under-fires. Cover every real root (only the keys
+that change from the `node` adapter above are shown — keep the rest):
 
 ```json
 {
