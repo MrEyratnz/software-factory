@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dark-software-factory",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "A lights-out software factory for Claude Code: scaffold the docs spine, drive a TDD roadmap loop, run adversarial reviews that auto-file tech-debt, design by judge panel, and ship via gated Conventional-Commit releases.",
   "author": {
     "name": "MrEyratnz"
