@@ -125,8 +125,9 @@ config_get_for() {
 # same file config_get_for reads (the target's config when it has one, else the
 # session's). Structural completeness beyond "is it JSON" (required keys, a
 # command that is a string) is validated when /factory-init authors the config
-# and re-checked by CI — the authoritative boundary — not on every hook. Uses
-# node, so callers must be PAST node_guard (node-absent is issue #52's path).
+# against the schema — there is no automated per-commit structural backstop today
+# (tracked as follow-up tech-debt), so this hook checks JSON-parseability only.
+# Uses node, so callers must be PAST node_guard (node-absent is issue #52's path).
 require_config_sane() {
   local root="$1" file
   if [ -n "$root" ] && [ -f "$root/.factory/config.json" ]; then
@@ -136,7 +137,7 @@ require_config_sane() {
   fi
   [ -f "$file" ] || return 0
   CFG_FILE="$file" node -e 'const fs=require("fs");try{JSON.parse(fs.readFileSync(process.env.CFG_FILE,"utf8"))}catch(e){process.exit(1)}' 2>/dev/null && return 0
-  deny "the enforcement contract $file is not valid JSON — a corrupt config would silently revert this repo's gates to the built-in defaults, so the gate fails closed. Fix the JSON (do not --no-verify); CI validates it as the authoritative boundary."
+  deny "the enforcement contract $file is not valid JSON — a corrupt config would silently revert this repo's gates to the built-in defaults, so the gate fails closed. Fix the JSON (do not --no-verify)."
 }
 
 # --- enforcement levers (issues #29, #30) ----------------------------------
