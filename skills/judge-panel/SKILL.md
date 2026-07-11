@@ -73,10 +73,15 @@ Cheapest fix direction: <hint for the synthesizer, optional>
 ### Synthesis ADR (numbered, e.g. `docs/adr/0042-<slug>.md`)
 
 ```markdown
-# ADR-0042: <decision title>
-Status: Accepted
-Context: <the decision, the N stances, why a panel was warranted>
-Decision: <the synthesized design>
+# ADR 0042 — <decision title>
+
+Status: Accepted · Date: YYYY-MM-DD
+
+## Context
+<the decision, the N stances, why a panel was warranted>
+
+## Decision
+<the synthesized design>
 
 ## Flaws resolved
 | Proposal | Confirmed flaw | How the synthesis resolves it |
@@ -85,8 +90,8 @@ Decision: <the synthesized design>
 | security-first | <flaw> | <mechanism that neutralizes it> |
 | dx-first | <flaw> | <mechanism that neutralizes it> |
 
-Consequences: <new trade-offs, incl. any PLAUSIBLE risk knowingly accepted>
-Date: <YYYY-MM-DD>
+## Consequences
+<new trade-offs, incl. any PLAUSIBLE risk knowingly accepted>
 ```
 
 ## Synthesis checklist (gate before writing Status: Accepted)
