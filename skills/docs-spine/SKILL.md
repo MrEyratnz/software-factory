@@ -18,7 +18,7 @@ source of truth agents read before acting. Runtime verdicts come from the connec
 2. **ADR numbers are monotonic and connector-assigned.** Call `adr_index` for the next number.
    Never hand-pick — concurrent agents will collide.
 3. **ADRs are append-only.** To reverse a decision, write a NEW ADR that supersedes the old one and
-   set the old one's `Status:` to `Superseded by ADR NNNN`. Never rewrite decided history.
+   set the old one's `Status:` to `superseded by ADR NNNN`. Never rewrite decided history.
 4. **Roadmap items are checked `[x]` ONLY when merged with green tests** — never in advance, never
    "about to". The flip is enforced by `guard-roadmap`, which demands a merged-green proof.
 5. **Work the roadmap top-to-bottom.** `roadmap_next` names the next item; `roadmap_status` /
@@ -29,7 +29,7 @@ source of truth agents read before acting. Runtime verdicts come from the connec
 1. `adr_index` → get the next number `NNNN` (zero-padded, e.g. `0009`) and confirm no collision.
    It scans the repo's configured `adrDir` (default `docs/adr`), so numbering honors a non-default ADR location.
 2. Create `<adrDir>/NNNN-kebab-title.md` (default `docs/adr/…`) from the template below.
-3. Start at `Status: Proposed`; flip to `Accepted` when the decision is merged.
+3. Start at `Status: proposed`; flip to `accepted` when the decision is merged.
 4. If it changes system shape, reflect the outcome in `docs/ARCHITECTURE.md` in the same PR.
 5. For contested design, use the judge-panel method (ADR-0009): 3 stance proposals → adversarial
    panel names each fatal flaw → synthesize a decision that resolves every named flaw, recorded here.
@@ -39,7 +39,7 @@ source of truth agents read before acting. Runtime verdicts come from the connec
 ```markdown
 # ADR NNNN — <concise decision title>
 
-Status: Proposed | Accepted | Superseded by ADR NNNN · Date: YYYY-MM-DD
+Status: proposed | accepted | superseded by ADR NNNN · Date: YYYY-MM-DD
 
 ## Context
 
