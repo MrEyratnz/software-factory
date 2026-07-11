@@ -21,7 +21,7 @@ schemas/         factory.config.schema.json (per-repo command-allowlist contract
 templates/       what /factory-init stamps into target repos (docs spine, config, CI, stacks)
 .factory/        config.json committed (the contract); state/ runtime, gitignored
 .github/         validate.yml (authoritative CI), release-plugin.yml, claude triage/review/pickup
-docs/adr/        numbered decisions; tests/ hermetic hook contract tests
+docs/adr/        numbered decisions (the default adrDir); tests/ hermetic hook contract tests
 ```
 
 ## Layer responsibilities & allowed dependencies
