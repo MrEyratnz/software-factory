@@ -1119,6 +1119,62 @@ node -e 'const fs=require("fs");const p=process.argv[1];const o=JSON.parse(fs.re
 EVENT="$(evt "$R" Edit '{"file_path":"docs/ROADMAP.md","old_string":"- [ ] Another thing (#48)","new_string":"- [x] Another thing (#48)"}')"
 assert_exit 2 "tampered proof (item swapped, stale sig) rejected"
 unset FACTORY_RECEIPT_KEY STUB_PR_VIEW STUB_CHECKS STUB_REPO_VIEW STUB_LINKED
+echo "# issue #53: enforcement config resolves against the TARGET repo"
+# Sibling repos with contracts that DIFFER from the session repo's, chosen so
+# each verdict flips if the session config governed instead of the target's.
+SCRIPT="$S/guard-commit.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+
+mk_sibling() { # mk_sibling <config-json> — echoes the sibling repo path
+  local d; d="$(mktemp -d "$TMPROOT/sib.XXXXXX")"
+  ( cd "$d" && git init -q && git symbolic-ref HEAD refs/heads/main 2>/dev/null; \
+    git config user.email t@t && git config user.name t && git commit --allow-empty -q -m init )
+  mkdir -p "$d/.factory/state" "$d/lib" "$d/docs"
+  printf '%s' "$1" > "$d/.factory/config.json"
+  printf '%s' "$d"
+}
+
+# (1) tests-first fires on the TARGET's sourceRegex (^lib/): the session repo's
+# ^src/ would never match lib/, so a session-config read would silently allow.
+B="$(mk_sibling '{"sourceRegex":"^lib/","testRegex":"(\\.spec\\.)","testCommandRegex":"(make check)","roadmapPath":"docs/ROADMAP.md","releaseBranch":"main","generators":[]}')"
+echo x > "$B/lib/b.js"; ( cd "$B" && git add -A )
+# a green receipt for B, minted through record-green using B'S OWN
+# testCommandRegex (make check) — the session config would not recognize it.
+SCRIPT="$S/record-green.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && make check"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+BKEY="$(printf '%s' "$B" | cksum | cut -d' ' -f1)"
+assert_file exists "$R/.factory/state/gate-receipt-$BKEY.json" "#53: record-green recognizes the TARGET's testCommandRegex (make check)"
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && git commit -m \"feat: b\""}')"
+assert_exit 2 "#53: tests-first fires on the TARGET's sourceRegex (session ^src/ would miss lib/)"
+# staging a spec (a test by B's testRegex) satisfies it; re-mint for the new tree
+echo x > "$B/lib/b.spec.js"; ( cd "$B" && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && make check"}' ',"tool_response":{"exitCode":0}')"
+SCRIPT="$S/record-green.sh"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && git commit -m \"feat: b\""}')"
+assert_exit 0 "#53: TARGET's testRegex sees the spec; commit allowed on B's green receipt"
+
+# (2) the TARGET's enforcement opt-out is honored: B2 disables the receipt
+# requirement; the session default (true) would deny with no receipt present.
+B2="$(mk_sibling '{"sourceRegex":"^src/","testRegex":"(\\.test\\.)","roadmapPath":"docs/ROADMAP.md","releaseBranch":"main","generators":[],"enforcement":{"requireGreenReceiptOnCommit":false}}')"
+( cd "$B2" && git commit --allow-empty -q -m seed 2>/dev/null; echo y > note.txt && git add -A )
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B2"' && git commit -m \"chore: note\""}')"
+assert_exit 0 "#53: TARGET's requireGreenReceiptOnCommit=false honored (session default would deny)"
+
+# (3) guard-release binds the branch check to the TARGET's releaseBranch:
+# B3 releases from 'release' (session config says 'main'), with proof waived
+# by B3's contract and a fresh keyed green receipt for B3's tree.
+B3="$(mk_sibling '{"sourceRegex":"^src/","testRegex":"(\\.test\\.)","roadmapPath":"docs/ROADMAP.md","releaseBranch":"release","generators":[],"enforcement":{"requireReleaseProof":false}}')"
+( cd "$B3" && git checkout -q -b release )
+B3KEY="$(printf '%s' "$B3" | cksum | cut -d' ' -f1)"
+TH3="$(repo_tree_hash "$B3")"
+printf '{"tree":"%s","ok":true}' "$TH3" > "$R/.factory/state/gate-receipt-$B3KEY.json"
+SCRIPT="$S/guard-release.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B3"' && git tag v1.0.0"}')"
+assert_exit 0 "#53: release allowed from the TARGET's releaseBranch (session's 'main' would deny)"
+SCRIPT="$S/guard-commit.sh"
 
 echo "# issue #52: node-absent degradation (POSIX bypass fallback + loud notice)"
 # A PATH with the shell utilities the hooks need but NO node: the gates must

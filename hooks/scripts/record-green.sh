@@ -20,13 +20,18 @@ node_guard record-green || allow
 cmd="$(field tool_input.command)"
 [ -n "$cmd" ] || allow
 
+# The repo the suite actually runs in (issue #28) — resolved EARLY so the
+# regex/testCommand reads below can come from the TARGET repo's contract
+# (issue #53), not the session's.
+target_root="$(repo_root "$(command_target_dir "$cmd")")"
+
 # Default recognizes the common runners across ecosystems (npm/yarn/pnpm/bun/npx,
 # node --test, jest/vitest/mocha/ava/tap, pytest, go test, cargo test, make). An
 # un-inited repo has no config to widen this, so a green `yarn test`/`bun test`
 # must still be recognized or its commit would deadlock. A repo can override via
 # testCommandRegex.
 DEFAULT_TEST_RE='(npm ((run|-s) )?te?st|(yarn|pnpm|bun)( run)? te?st|npx (jest|vitest|mocha|ava|tap)|npx playwright test|node --test|vitest|jest|mocha|pytest|go test|cargo test|make test|python[0-9.]* -m (pytest|unittest)|py.test|(poetry|pdm|pipenv|hatch|rye) run [a-z:-]*te?st|coverage run -m (pytest|unittest|nose2)|tox( +(-[prfqv]|--parallel|--recreate))* *$)'
-test_re="$(config_get testCommandRegex "$DEFAULT_TEST_RE")"
+test_re="$(config_get_for "$target_root" testCommandRegex "$DEFAULT_TEST_RE")"
 # An explicitly-blanked regex must DISABLE detection, never match every command
 # (an empty ERE matches all): fail safe — mint nothing.
 [ -n "$test_re" ] || allow
@@ -44,11 +49,6 @@ cls="$(printf '%s' "$cmd" | node "$PLUGIN_ROOT/hooks/lib/classify-test-run.mjs" 
 is_test="$(printf '%s' "$cls" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).testCommand))}catch(e){process.stdout.write("false")}})')"
 [ "$is_test" = "true" ] || allow
 clean="$(printf '%s' "$cls" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).cleanInvocation))}catch(e){process.stdout.write("false")}})')"
-
-# Bind the receipt to the repo the suite actually ran in (issue #28), so a
-# multi-repo session mints "repo B is green" independently of the session's
-# original project.
-target_root="$(repo_root "$(command_target_dir "$cmd")")"
 
 # Read the command's exit status from the tool response (try known field names),
 # and accept it only if it is a clean integer — a non-numeric value (e.g.
@@ -75,7 +75,7 @@ else
   # exit code runs). Cap the re-exec with `timeout` (when available) well under
   # the hook's own budget so a long suite fails cleanly instead of being
   # SIGKILLed mid-write.
-  tc="$(config_get testCommand '')"
+  tc="$(config_get_for "$target_root" testCommand '')"
   [ -n "$tc" ] || allow
   if command -v timeout >/dev/null 2>&1; then
     ( cd "$target_root" 2>/dev/null && timeout 25 sh -c "$tc" ) >/dev/null 2>&1; ec=$?

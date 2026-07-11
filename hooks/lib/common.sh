@@ -80,18 +80,38 @@ fc() {
 json_str() { printf '%s' "$1" | node -e 'let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(JSON.stringify(s)))'; }
 
 # --- config ----------------------------------------------------------------
-# config_get <key> [default] — read a key from .factory/config.json. <key> may
-# be a dotted path (e.g. "otel.enabled") to reach into a nested object, same
-# convention as field() above.
-config_get() {
-  local key="$1" def="${2:-}"
-  [ -f "$CONFIG_FILE" ] || { printf '%s' "$def"; return; }
-  CFG_FILE="$CONFIG_FILE" node -e '
+# _config_read <file> <key> <default> — the shared reader behind config_get and
+# config_get_for. <key> may be a dotted path (e.g. "otel.enabled") to reach
+# into a nested object, same convention as field() above.
+_config_read() {
+  local file="$1" key="$2" def="${3:-}"
+  [ -f "$file" ] || { printf '%s' "$def"; return; }
+  CFG_FILE="$file" node -e '
     const fs=require("fs");let o={};try{o=JSON.parse(fs.readFileSync(process.env.CFG_FILE,"utf8"))}catch(e){}
     let v=o;
     for (const k of String(process.argv[1]).split(".")) v = (v && typeof v==="object") ? v[k] : undefined;
     process.stdout.write(v==null?process.argv[2]:(typeof v==="object"?JSON.stringify(v):String(v)));
   ' "$key" "$def" 2>/dev/null || printf '%s' "$def"
+}
+
+# config_get <key> [default] — read a key from the SESSION repo's config.
+config_get() { _config_read "$CONFIG_FILE" "$1" "${2:-}"; }
+
+# config_get_for <repo-root> <key> [default] — read a key from the config of
+# the repo a command actually TARGETS (issue #53). Issue #28 made the
+# receipt/tree/branch checks bind to the target repo, but the enforcement
+# VALUES (regexes, toggles, testCommand…) still came from the session repo —
+# so a commit to sibling repo B was gated by repo A's contract. Prefer the
+# target's committed .factory/config.json; fall back to the session config
+# when the target has none (the established issue-#28 model: the session
+# factory gates commits to any repo it touches).
+config_get_for() {
+  local root="$1" key="$2" def="${3:-}"
+  if [ -n "$root" ] && [ -f "$root/.factory/config.json" ]; then
+    _config_read "$root/.factory/config.json" "$key" "$def"
+  else
+    config_get "$key" "$def"
+  fi
 }
 
 # --- enforcement levers (issues #29, #30) ----------------------------------
@@ -105,6 +125,13 @@ config_get() {
 #      Returns 0 (enforce) unless the key is explicitly the string "false".
 enforcement_on() {
   [ "$(config_get "enforcement.$1" true)" != "false" ]
+}
+
+# enforcement_on_for <repo-root> <gate> — the target-aware form (issue #53):
+# a per-repo enforcement opt-out on the TARGET repo must be honored (and the
+# session's opt-outs must not leak onto a stricter target).
+enforcement_on_for() {
+  [ "$(config_get_for "$1" "enforcement.$2" true)" != "false" ]
 }
 
 # factory_initialized — is THIS repo opted into the factory? True only when
