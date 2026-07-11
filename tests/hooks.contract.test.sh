@@ -1280,6 +1280,46 @@ EVENT="$(evt "$R" Bash '{"command":"git status"}')"
 SCRIPT="$S/guard-commit.sh"; assert_exit 0 "node restored: git status allowed"
 assert_file absent "$R/.factory/state/node-degraded-notified" "node restored: degradation marker cleared"
 
+echo "# issue #65: a present-but-malformed config fails the denying gates CLOSED"
+# A corrupt .factory/config.json must not silently degrade to defaults (a
+# fail-OPEN for a repo that configured stricter gates). With node present, the
+# governing config being unparseable JSON blocks guard-commit / guard-release.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+# Baseline: a valid config allows an ordinary (non-commit) bash command.
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"git status"}')"; assert_exit 0 "#65: valid config — git status allowed"
+# Corrupt the session config (truncated JSON) and attempt a commit → deny.
+printf '%s' '{ "sourceRegex": "^src/", ' > "$R/.factory/config.json"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"chore: x\""}')"
+assert_exit 2 "#65: malformed session config blocks guard-commit (fail closed, not default-degrade)"
+# guard-release sees the same malformed contract → deny a release verb.
+SCRIPT="$S/guard-release.sh"
+EVENT="$(evt "$R" Bash '{"command":"git tag v9.9.9"}')"
+assert_exit 2 "#65: malformed session config blocks guard-release"
+# Restore a valid config: the commit path returns to its normal gating (blocked
+# for no-receipt, NOT for a malformed contract — proves the block above was the
+# JSON check, and that a valid config no longer trips it).
+cat > "$R/.factory/config.json" <<'JSON'
+{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "roadmapPath": "docs/ROADMAP.md",
+  "releaseBranch": "main", "generators": [] }
+JSON
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"git status"}')"; assert_exit 0 "#65: valid config restored — git status allowed again"
+# A malformed config in a TARGET repo (reached via cd) blocks a commit to it,
+# even when the session config is valid (the target's contract governs, #53).
+BM="$(mktemp -d "$TMPROOT/badsib.XXXXXX")"
+( cd "$BM" && git init -q && git commit --allow-empty -q -m init )
+mkdir -p "$BM/.factory"; printf '%s' '{ not json' > "$BM/.factory/config.json"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$BM"' && git commit -m \"chore: y\""}')"
+assert_exit 2 "#65: malformed TARGET config blocks a commit to it (session config is valid)"
+# An UNINITIALIZED repo (no config at all) stays advisory — the JSON check must
+# not fire when there is no contract to validate.
+RU="$(mktemp -d "$TMPROOT/uninit.XXXXXX")"; ( cd "$RU" && git init -q )
+export CLAUDE_PROJECT_DIR="$RU"
+EVENT="$(evt "$RU" Bash '{"command":"git commit -m \"chore: z\""}')"
+assert_exit 0 "#65: uninitialized repo (no config) stays advisory — no false JSON-check block"
+export CLAUDE_PROJECT_DIR="$R"; SCRIPT="$S/guard-commit.sh"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

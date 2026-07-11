@@ -21,9 +21,22 @@ regexes + a command allowlist, not by changing hook code.
    except its designated state outputs). This is what stops a model from *poisoning
    the gate* — it cannot rewrite `green.unit` to `true` or point `build` at a no-op.
    Config changes are a human/privileged act, reviewed like any other PR.
-3. **Validated before use.** Malformed JSON, a missing required key, or a command
-   that is not a string fails the hook **closed** (blocks), never open. Fix the
-   config; do not `--no-verify`.
+3. **Malformed config fails closed; structural validity is an author-time check.**
+   A present-but-**unparseable** `.factory/config.json` blocks the denying
+   workflow gates (`guard-commit`, `guard-release`) at runtime — a corrupt
+   contract would otherwise silently revert this repo's gates to the built-in
+   defaults, a fail-*open* for any repo that configured stricter-than-default
+   gates. **Structural** validity (required keys present, `gates.*`/
+   `generators[].command` are strings) is checked when `/factory-init` authors
+   the config against `factory.config.schema.json` — but there is **no automated
+   per-commit structural backstop today**: a later hand-edit that drops a
+   required key or makes a command non-string is not caught by any hook or CI
+   job (CI parses the schema file and the unfilled template as JSON, not a
+   populated `config.json`), so it surfaces only when it breaks a gate or
+   degrades to that key's default. So: keep the JSON parseable (a broken parse
+   fails closed) and faithful to the schema; a key you *omit* degrades to its
+   documented default. (Wiring a real schema-validation CI step is tracked as
+   follow-up tech-debt.)
 4. **Local == CI.** CI reads the identical `config.json`; the same commands run in
    both places. Tuning a command to pass locally-only just moves the red to CI.
 

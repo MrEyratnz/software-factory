@@ -55,6 +55,10 @@ if ! factory_initialized && [ ! -f "$target_root/.factory/config.json" ]; then
   allow
 fi
 
+# The governing config must be valid JSON, or a corrupt contract would silently
+# revert this repo's gates to defaults (issue #65) — fail closed here.
+require_config_sane "$target_root"
+
 # (a) bypass flags
 bypass="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).bypass))}catch(e){process.stdout.write("false")}})')"
 [ "$bypass" = "true" ] && { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"bypass"}'; deny "commit bypass flags (--no-verify/--no-gpg-sign) are not allowed — the gates are the point"; }
