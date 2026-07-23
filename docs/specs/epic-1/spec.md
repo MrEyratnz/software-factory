@@ -54,3 +54,14 @@ All of, verified by the release manager in one script: zero open `bug` or
 eval thresholds green on `main` for 3 consecutive nightly runs; feature freeze
 per `docs/PRODUCT.md`. Then `/ship` on the release branch — never from red,
 release-proof minted on the built artifact.
+
+Named v1.0.0 gate additions beyond the Epic 1 suite (each a merged-green
+roadmap item in `docs/ROADMAP.md`, so the "roadmap 100% merged-green" clause
+above already enforces them):
+
+- **Labels as the single coordination substrate** (#138, ROADMAP M1, owner-
+  decided 2026-07-23): the factory coordinates entirely within least-privilege
+  App scopes; the Projects board is a factory-invisible human dashboard;
+  `FACTORY_PAT`/`PROJECT_TOKEN` is no longer required for any Projects
+  functionality. Supersedes ADR 0003's board-ownership. This is the first work
+  after bootstrapping.
