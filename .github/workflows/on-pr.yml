@@ -80,6 +80,13 @@ jobs:
         with:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      # The merge gate reduces the review history with a unit-tested script
+      # (scripts/pr-review-state.mjs) rather than inline jq: it decides whether
+      # an unreviewed change can reach main, and its first inline version got
+      # that wrong in a way no CI job could catch.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with: { node-version: 22 }
       - name: enable auto-merge (waits on the required green-gate check)
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.FACTORY_PAT || github.token }}
@@ -91,10 +98,10 @@ jobs:
           # errored) reach main unexamined. Read the reviews directly rather
           # than reviewDecision: with zero required approvals GitHub reports an
           # empty decision even when an approval exists.
-          reviews="$(gh pr view "$PR" --repo "$REPO" --json reviews --jq '[.reviews[].state] | join(",")')"
-          case ",$reviews," in
-            *,CHANGES_REQUESTED,*) echo "::notice::review requested changes — not merging"; exit 0 ;;
-            *,APPROVED,*)          : ;;
-            *) echo "::notice::no approving review (states: ${reviews:-none}) — not merging"; exit 0 ;;
+          state="$(gh pr view "$PR" --repo "$REPO" --json reviews | node scripts/pr-review-state.mjs)"
+          case "$state" in
+            APPROVED) ;;
+            CHANGES_REQUESTED) echo "::notice::review requested changes — not merging"; exit 0 ;;
+            *) echo "::notice::no approving review (verdict: $state) — not merging"; exit 0 ;;
           esac
           gh pr merge "$PR" --repo "$REPO" --auto --merge
