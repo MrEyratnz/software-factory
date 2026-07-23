@@ -1393,6 +1393,73 @@ assert_exit 0 "#79: custom-only verb on a MALFORMED config is not detected (acce
 EVENT="$(evt "$R" Bash '{"command":"git tag v1.2.3"}')"
 assert_exit 2 "#79: a default release verb on a malformed config is still denied (require_config_sane)"
 
+echo "# long suites: a gate run slower than the hook budget still mints (#93)"
+# When the harness reports no exit code, record-green re-execs the repo's
+# allowlisted testCommand. Bounded INSIDE the hook, any suite slower than the
+# hook's own timeout produced NO receipt at all, so every commit deadlocked —
+# the factory could not commit its own work (#93). A slow suite is now handed to
+# a detached runner that mints when the suite actually finishes, with the run
+# marked in flight meanwhile so guard-commit can say "wait" instead of "red".
+set_cfg() { # <repo> <key> <value> — set one string key in the repo's contract
+  CFG="$1/.factory/config.json" K="$2" V="$3" node -e '
+    const fs = require("fs"), f = process.env.CFG;
+    const o = JSON.parse(fs.readFileSync(f, "utf8"));
+    o[process.env.K] = process.env.V;
+    fs.writeFileSync(f, JSON.stringify(o));'
+}
+SCRIPT="$S/record-green.sh"
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "sleep 5"
+export FACTORY_GATE_SYNC_BUDGET=1
+EVENT="$(evt "$R" Bash '{"command":"npm test"}')"
+T0="$(date +%s)"
+assert_exit 0 "#93: record-green exits 0 when the suite outlives the sync budget"
+T1="$(date +%s)"
+if [ "$((T1 - T0))" -lt 4 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #93: record-green must hand a slow suite off, not block the turn"; fi
+assert_file exists "$R/.factory/state/gate-running" "#93: a slow gate run is marked in flight"
+assert_file absent "$R/.factory/state/gate-receipt.json" "#93: no receipt is minted before the suite finishes"
+unset FACTORY_GATE_SYNC_BUDGET
+
+# guard-commit must distinguish "the gate is still running" from "tests were red".
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"chore: x\""}')"
+assert_exit 2 "#93: a commit during an in-flight gate run is still denied"
+MSG="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
+case "$MSG" in
+  *"in flight"*) PASS=$((PASS+1)) ;;
+  *) FAIL=$((FAIL+1)); echo "FAIL - #93: the denial must say the gate run is in flight (got: $MSG)" ;;
+esac
+
+# The detached runner itself: it is what actually mints, so drive it directly.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "exit 0"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
+assert_file exists "$R/.factory/state/gate-receipt.json" "#93: the detached gate run mints on green"
+ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
+if [ "$ROK" = "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #93: detached mint is green (got $ROK)"; fi
+assert_file absent "$R/.factory/state/gate-running" "#93: the in-flight marker is cleared when the run ends"
+
+# A red suite must never leave a green receipt behind.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "exit 1"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
+ROK="$(REC="$R/.factory/state/gate-receipt.json" node -e 'const fs=require("fs");try{process.stdout.write(String(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).ok))}catch(e){process.stdout.write("missing")}')"
+if [ "$ROK" != "true" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #93: a red detached run must not mint green"; fi
+
+# Tree-bound: if the tree moves while the suite runs, the result certifies a tree
+# that no longer exists — mint nothing rather than a receipt for stale work.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "sh -c 'echo late > src/late.ts; exit 0'"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
+assert_file absent "$R/.factory/state/gate-receipt.json" "#93: a tree that changed mid-run does not mint"
+
+# One gate run at a time: a second runner must not pile on top of an active one.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "exit 0"
+mkdir -p "$R/.factory/state/gate-lock"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
+assert_file absent "$R/.factory/state/gate-receipt.json" "#93: a locked gate run declines instead of double-running"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

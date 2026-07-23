@@ -78,7 +78,22 @@ else
   tc="$(config_get_for "$target_root" testCommand '')"
   [ -n "$tc" ] || allow
   if command -v timeout >/dev/null 2>&1; then
-    ( cd "$target_root" 2>/dev/null && timeout 25 sh -c "$tc" ) >/dev/null 2>&1; ec=$?
+    ( cd "$target_root" 2>/dev/null && timeout "${FACTORY_GATE_SYNC_BUDGET:-20}" sh -c "$tc" ) >/dev/null 2>&1; ec=$?
+    if [ "$ec" = 124 ]; then
+      # The suite is slower than a hook may block for. Bounded here it would
+      # mint NOTHING and deadlock every commit (issue #93), so hand it to the
+      # out-of-band runner, which mints when the suite actually finishes. The
+      # hook still returns immediately — it never holds up the agent's turn.
+      # The in-flight marker is written HERE, before the spawn, so the wait state
+      # is visible to guard-commit from the instant of hand-off rather than
+      # whenever the detached process happens to get scheduled; the runner owns
+      # clearing it (its EXIT trap).
+      mkdir -p "$STATE_DIR"
+      printf '{"tree":%s,"root":%s}' "$(json_str "$(tree_hash "$target_root")")" "$(json_str "$target_root")" > "$(gate_marker)"
+      ( nohup "$PLUGIN_ROOT/hooks/scripts/gate-run.sh" "$target_root" >/dev/null 2>&1 & disown ) 2>/dev/null \
+        || ( "$PLUGIN_ROOT/hooks/scripts/gate-run.sh" "$target_root" >/dev/null 2>&1 & ) 2>/dev/null
+      allow
+    fi
   else
     ( cd "$target_root" 2>/dev/null && eval "$tc" ) >/dev/null 2>&1; ec=$?
   fi
@@ -88,20 +103,8 @@ else
   case "$ec" in 124|126|127) allow ;; esac
 fi
 
-tree="$(tree_hash "$target_root")"
-[ -n "$tree" ] || allow
-
-receipt="$(printf '{"stages":[{"name":"suite","exitCode":%s}],"treeHash":%s}' "$ec" "$(json_str "$tree")" \
-  | fc gate-evaluate \
-  | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(JSON.stringify(o.receipt))}catch(e){process.stdout.write("")}})')"
-
-[ -n "$receipt" ] || allow
-
-rok="$(printf '%s' "$receipt" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).ok))}catch(e){process.stdout.write("false")}})')"
-otel_emit factory_gate_suite_total sum 1 "$(printf '{"result":"%s"}' "$([ "$rok" = "true" ] && echo pass || echo fail)")"
-
-mkdir -p "$STATE_DIR"
-# Sign the receipt when a runner-only key is configured (issue #2); a no-op
-# passthrough otherwise.
-printf '%s' "$receipt" | receipt_embed_sig > "$(receipt_file "$target_root")"
+# The mint itself lives in common.sh so this in-hook path and the out-of-band
+# runner (gate-run.sh, issue #93) can never drift apart: same gate-evaluate
+# verdict, same tree binding, same optional signing (issue #2).
+mint_receipt "$target_root" "$ec"
 allow

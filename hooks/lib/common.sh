@@ -375,6 +375,38 @@ receipt_embed_sig() {
     });'
 }
 
+# --- out-of-band gate runs (issue #93) ---------------------------------------
+# A suite slower than the PostToolUse hook's own timeout budget could never mint
+# a receipt from inside the hook, so every commit in such a repo deadlocked. The
+# slow case is handed to hooks/scripts/gate-run.sh, which runs the allowlisted
+# suite to completion and mints when it finishes. These two markers live in the
+# protected state dir (hook-written, agent-unwritable) so guard-commit can tell
+# "the gate is still running" apart from "the tests were red".
+gate_marker() { printf '%s' "$STATE_DIR/gate-running"; }
+gate_lock()   { printf '%s' "$STATE_DIR/gate-lock"; }
+
+# mint_receipt <target-root> <exit-code> — the ONE place a gate receipt is
+# written, shared by the in-hook path (record-green) and the out-of-band runner
+# (gate-run.sh) so the two can never drift. The verdict comes from the pure
+# factory-core (gate-evaluate), the receipt is bound to the target's CURRENT
+# write-tree, and it is signed when a runner key is configured. Callers are
+# responsible for establishing that <exit-code> really is the suite's status and
+# that the tree has not moved since the suite ran. Returns non-zero if no
+# receipt could be produced.
+mint_receipt() {
+  local root="$1" ec="$2" tree receipt rok
+  tree="$(tree_hash "$root")"
+  [ -n "$tree" ] || return 1
+  receipt="$(printf '{"stages":[{"name":"suite","exitCode":%s}],"treeHash":%s}' "$ec" "$(json_str "$tree")" \
+    | fc gate-evaluate \
+    | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(JSON.stringify(o.receipt))}catch(e){process.stdout.write("")}})')"
+  [ -n "$receipt" ] || return 1
+  rok="$(printf '%s' "$receipt" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).ok))}catch(e){process.stdout.write("false")}})')"
+  otel_emit factory_gate_suite_total sum 1 "$(printf '{"result":"%s"}' "$([ "$rok" = "true" ] && echo pass || echo fail)")"
+  mkdir -p "$STATE_DIR"
+  printf '%s' "$receipt" | receipt_embed_sig > "$(receipt_file "$root")"
+}
+
 # --- roadmap-proof signing (issue #51) ---------------------------------------
 # The roadmap proof ({mergedGreenSha, item}) has its own payload shape, so it
 # gets its own HMAC helpers: receipt_embed_sig signs ok+tree, which for this
