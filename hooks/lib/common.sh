@@ -375,6 +375,81 @@ receipt_embed_sig() {
     });'
 }
 
+# --- out-of-band gate runs (issue #93) ---------------------------------------
+# A suite slower than the PostToolUse hook's own timeout budget could never mint
+# a receipt from inside the hook, so every commit in such a repo deadlocked. The
+# slow case is handed to hooks/scripts/gate-run.sh, which runs the allowlisted
+# suite to completion and mints when it finishes. These two markers live in the
+# protected state dir (hook-written, agent-unwritable) so guard-commit can tell
+# "the gate is still running" apart from "the tests were red".
+#
+# Both are keyed to the repo whose suite is running, by the SAME rule
+# receipt_file uses (issue #28): the session repo keeps the canonical name, any
+# other repo gets a name derived from its root. Session-global markers would
+# report repo A's run as repo B's, and — worse — one global lock would let only
+# one repo's suite run at a time in a multi-repo session.
+_gate_key() {
+  local root="${1:-$PROJECT_DIR}" sroot
+  sroot="$(repo_root "$PROJECT_DIR")"
+  if [ -z "$root" ] || [ "$root" = "$sroot" ] || [ "$root" = "$PROJECT_DIR" ]; then
+    printf ''
+  else
+    printf -- '-%s' "$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+  fi
+}
+gate_marker() { printf '%s' "$STATE_DIR/gate-running$(_gate_key "${1:-}")"; }
+gate_lock()   { printf '%s' "$STATE_DIR/gate-lock$(_gate_key "${1:-}")"; }
+
+# A lock is a lease, not a tombstone. The runner clears both files in an EXIT
+# trap, but a trap cannot run if the process is SIGKILLed — an OOM kill, a
+# reclaimed CI runner, a reboot. Without an expiry those leftovers would decline
+# every future gate run and tell the agent to "wait for the suite" forever, i.e.
+# the deadlock this whole mechanism exists to remove. The lease is the runner's
+# own cap plus slack, so it can only expire after the suite could not still be
+# running. An unreadable or malformed stamp counts as expired: the failure we
+# must avoid is the permanent wedge, and a wrongly-reclaimed lock costs one
+# duplicated suite run.
+#
+# The stamp cannot be written atomically with the mkdir that takes the lock, so a
+# missing stamp is AMBIGUOUS: it is either a lock created microseconds ago whose
+# owner has not written it yet, or one from an older version. Falling back to the
+# lock directory's own mtime resolves both without ever reading "brand new" as
+# "abandoned" — which would let two runners run the same suite at once, defeating
+# the lock entirely. If neither is readable the lease is treated as LIVE: mutual
+# exclusion is the property worth keeping when we cannot tell.
+_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+gate_lease_expired() {
+  local lock="$1" started now
+  started="$(cat "$lock/started" 2>/dev/null)"
+  case "$started" in ''|*[!0-9]*) started="$(_mtime "$lock")" ;; esac
+  case "$started" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s 2>/dev/null)"
+  case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$((now - started))" -gt "$(( ${FACTORY_GATE_MAX_SECONDS:-1800} + 120 ))" ]
+}
+
+# mint_receipt <target-root> <exit-code> — the ONE place a gate receipt is
+# written, shared by the in-hook path (record-green) and the out-of-band runner
+# (gate-run.sh) so the two can never drift. The verdict comes from the pure
+# factory-core (gate-evaluate), the receipt is bound to the target's CURRENT
+# write-tree, and it is signed when a runner key is configured. Callers are
+# responsible for establishing that <exit-code> really is the suite's status and
+# that the tree has not moved since the suite ran. Returns non-zero if no
+# receipt could be produced.
+mint_receipt() {
+  local root="$1" ec="$2" tree receipt rok
+  tree="$(tree_hash "$root")"
+  [ -n "$tree" ] || return 1
+  receipt="$(printf '{"stages":[{"name":"suite","exitCode":%s}],"treeHash":%s}' "$ec" "$(json_str "$tree")" \
+    | fc gate-evaluate \
+    | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(JSON.stringify(o.receipt))}catch(e){process.stdout.write("")}})')"
+  [ -n "$receipt" ] || return 1
+  rok="$(printf '%s' "$receipt" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).ok))}catch(e){process.stdout.write("false")}})')"
+  otel_emit factory_gate_suite_total sum 1 "$(printf '{"result":"%s"}' "$([ "$rok" = "true" ] && echo pass || echo fail)")"
+  mkdir -p "$STATE_DIR"
+  printf '%s' "$receipt" | receipt_embed_sig > "$(receipt_file "$root")"
+}
+
 # --- roadmap-proof signing (issue #51) ---------------------------------------
 # The roadmap proof ({mergedGreenSha, item}) has its own payload shape, so it
 # gets its own HMAC helpers: receipt_embed_sig signs ok+tree, which for this

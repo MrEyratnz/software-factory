@@ -149,7 +149,19 @@ fi
 # (d) green receipt, bound to the current tree
 if enforcement_on_for "$target_root" requireGreenReceiptOnCommit; then
   receipt="$(receipt_file "$target_root")"
-  [ -f "$receipt" ] || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-receipt"}'; deny_soft "no green gate receipt — run the full test suite; it must pass on this exact tree before committing"; }
+  if [ ! -f "$receipt" ]; then
+    otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"no-receipt"}'
+    # A suite too slow for the hook budget is finishing out of band (issue #93);
+    # say so, because "no receipt yet" and "the tests were red" call for very
+    # different next actions — waiting versus fixing. Only for THIS repo's run
+    # (the marker is keyed per target), and only while its lease holds: a marker
+    # abandoned by a killed runner must not promise a suite that will never
+    # finish.
+    if [ -f "$(gate_marker "$target_root")" ] && ! gate_lease_expired "$(gate_lock "$target_root")"; then
+      deny_soft "the gate run for this tree is still in flight — wait for the suite to finish (the receipt is minted when it exits), then commit"
+    fi
+    deny_soft "no green gate receipt — run the full test suite; it must pass on this exact tree before committing"
+  fi
   # When a signing key is configured, a hand-written receipt (no/invalid
   # signature) cannot certify green — this is a hard boundary, not a heuristic.
   receipt_verify "$receipt" || { otel_emit factory_gate_commit_total sum 1 '{"result":"deny","reason":"bad-sig"}'; deny "the green receipt's signature is missing or invalid — a hand-written receipt cannot certify green (it was not minted by the gate)"; }
