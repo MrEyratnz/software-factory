@@ -36,6 +36,55 @@ for wf in $FACTORY_WORKFLOWS; do
   if [ -z "$unpinned" ]; then ok "$f pins every action by SHA"; else bad "$f has unpinned actions: $(printf '%s' "$unpinned" | tr '\n' ' ')"; fi
 done
 
+# --- the session workflow decides whether the factory works at all -----------
+# Every station runs through claude-session.yml, so two properties there are
+# load-bearing for the whole factory:
+#   1. it must authenticate with whichever credential the repo actually holds —
+#      Claude Code in CI takes CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, and
+#      wiring only one leaves every station unauthenticated on a repo that has
+#      the other;
+#   2. `claude -p --output-format json` EXITS 0 even when the run failed (the
+#      result JSON carries "is_error": true, e.g. "Not logged in"), so the step
+#      must inspect the result and fail the job. Without that, a station reports
+#      success while doing nothing and cron-prod re-dispatches that no-op hourly
+#      forever — false green is worse than red.
+SESSION_WF=".github/workflows/claude-session.yml"
+if [ -f "$SESSION_WF" ]; then
+  for cred in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY; do
+    if grep -q "$cred" "$SESSION_WF"; then
+      ok "$SESSION_WF wires the $cred credential"
+    else
+      bad "$SESSION_WF never passes $cred — stations would run unauthenticated"
+    fi
+  done
+  # Merely MENTIONING is_error is not enough (the cost-telemetry step does that
+  # and cannot fail the job): some step must inspect it AND exit non-zero.
+  if python3 -c "import yaml" 2>/dev/null; then
+    if WF="$SESSION_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+guard = [s for s in steps
+         if "is_error" in str(s.get("run", "")) and "exit 1" in str(s.get("run", ""))]
+sys.exit(0 if guard else 1)
+    '; then
+      ok "$SESSION_WF fails the job when the session result reports an error"
+    else
+      bad "$SESSION_WF never exits non-zero on is_error — a failed station reports success"
+    fi
+  else
+    ok "pyyaml unavailable locally — session failure-guard check deferred to CI"
+  fi
+else
+  bad "$SESSION_WF missing"
+fi
+
+if grep -q 'CLAUDE_CODE_OAUTH_TOKEN' bootstrap.sh; then
+  ok "bootstrap.sh stores whichever Claude credential the human already has"
+else
+  bad "bootstrap.sh only handles one credential name — a repo authenticated the other way silently no-ops"
+fi
+
 # --- .factory/config.json ----------------------------------------------------
 if [ -f .factory/config.json ]; then
   CFG=.factory/config.json node -e '

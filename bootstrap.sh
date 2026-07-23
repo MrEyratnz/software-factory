@@ -11,7 +11,9 @@
 #   5. labels, milestones, Epic 1 backlog  9. dispatch the first factory-run
 #
 # Env knobs (all optional unless noted):
-#   ANTHROPIC_API_KEY      required (prompted for if unset and interactive)
+#   ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN   the Claude credential CI runs
+#                          on — either works; prompted for if the repo has
+#                          neither already stored
 #   FACTORY_PAT            PAT fallback identity + Projects v2 board sync
 #   FACTORY_REPO           owner/name (default: derived from origin remote)
 #   FACTORY_LICENSE        SPDX id for LICENSE if absent (default apache-2.0)
@@ -52,12 +54,17 @@ fi
 REPO="$FACTORY_REPO"
 log "bootstrapping factory for $REPO (as $OWNER_LOGIN)"
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  if [ -t 0 ]; then
-    printf 'ANTHROPIC_API_KEY (input hidden): ' >&2
-    read -rs ANTHROPIC_API_KEY; printf '\n' >&2
-  fi
-  [ -n "${ANTHROPIC_API_KEY:-}" ] || die "set ANTHROPIC_API_KEY in the environment and re-run"
+# Claude Code in CI accepts EITHER credential, and a repo set up through the
+# Claude GitHub app already holds CLAUDE_CODE_OAUTH_TOKEN. Take whichever is
+# offered (existing repo secrets count) rather than insisting on the API key —
+# storing the wrong one leaves every station unauthenticated, which the session
+# workflow can only report as a hard failure.
+CLAUDE_CRED_NAME=""
+CLAUDE_CRED_VALUE=""
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  CLAUDE_CRED_NAME=CLAUDE_CODE_OAUTH_TOKEN; CLAUDE_CRED_VALUE="$CLAUDE_CODE_OAUTH_TOKEN"
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  CLAUDE_CRED_NAME=ANTHROPIC_API_KEY; CLAUDE_CRED_VALUE="$ANTHROPIC_API_KEY"
 fi
 
 MAX_PARALLEL_AGENTS="${MAX_PARALLEL_AGENTS:-3}"
@@ -249,7 +256,30 @@ fi
 
 # --- 4. secrets + repo variables ---------------------------------------------
 log "setting repo secrets and variables"
-gh secret set ANTHROPIC_API_KEY --repo "$REPO" --body "$ANTHROPIC_API_KEY" >&2
+existing_cred=""
+if [ -z "$CLAUDE_CRED_NAME" ]; then
+  # Nothing in the environment. A previous run — or the Claude GitHub app — may
+  # already have stored a credential on the repo; that is a complete setup, so
+  # reuse it silently instead of re-prompting a human we promised to ask once.
+  existing_cred="$(gh secret list --repo "$REPO" 2>/dev/null | awk '{print $1}' \
+    | grep -E '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)$' | head -1 || true)"
+  if [ -n "$existing_cred" ]; then
+    log "reusing the repo's existing $existing_cred"
+  elif [ -t 0 ]; then
+    printf 'Claude credential — ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (input hidden): ' >&2
+    read -rs CLAUDE_CRED_VALUE; printf '\n' >&2
+    case "$CLAUDE_CRED_VALUE" in
+      sk-ant-oat*) CLAUDE_CRED_NAME=CLAUDE_CODE_OAUTH_TOKEN ;;
+      ?*)          CLAUDE_CRED_NAME=ANTHROPIC_API_KEY ;;
+    esac
+  fi
+fi
+if [ -n "$CLAUDE_CRED_NAME" ]; then
+  gh secret set "$CLAUDE_CRED_NAME" --repo "$REPO" --body "$CLAUDE_CRED_VALUE" >&2
+  log "stored $CLAUDE_CRED_NAME"
+elif [ -z "$existing_cred" ]; then
+  die "no Claude credential — set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment and re-run"
+fi
 if [ -n "${FACTORY_PAT:-}" ]; then
   gh secret set FACTORY_PAT --repo "$REPO" --body "$FACTORY_PAT" >&2
 else
