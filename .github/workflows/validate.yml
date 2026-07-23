@@ -46,6 +46,13 @@ jobs:
         run: python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
       - name: scaffold contract (factory workflows, config, ops state, docs spine)
         run: bash tests/scaffold.contract.test.sh
+      # Wire the bootstrap contract into the AUTHORITATIVE gate, not just the
+      # nightly run-suite: it pins the 15 audited bootstrap.sh defects and is
+      # fully hermetic (stub gh/git/node, no network), so a commit re-introducing
+      # e.g. the user/installations 403 poll must fail the required check rather
+      # than surface a day later in a nightly QA bug (#105).
+      - name: bootstrap contract (hermetic — the 15 audited bootstrap defects)
+        run: bash tests/bootstrap.contract.test.sh
       - name: hermetic hook contract tests (synthetic stdin, throwaway repos, gh shim)
         run: |
           git config --global user.email ci@example.com

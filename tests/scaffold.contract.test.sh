@@ -120,9 +120,19 @@ review = [j for j in jobs.values()
           if isinstance(j.get("uses"), str) and "claude-session.yml" in j["uses"]]
 sys.exit(0 if review and all((j.get("permissions") or {}).get("issues") == "write" for j in review) else 1)
   '; then
-    ok "$PR_WF lets the review station file the tech-debt it is required to file"
+    ok "$PR_WF review job's GITHUB_TOKEN ceiling grants issues:write"
   else
     bad "$PR_WF review station cannot file tech-debt (needs issues:write) — findings get dropped or the session jams"
+  fi
+  # …but claude-session.yml prefers the App token when present, so the ceiling
+  # above only fixes the fallback path. The reviewer App scope bootstrap mints
+  # must ALSO grant issues:write, or the normal (bootstrapped) path 403s on the
+  # filing while the ceiling check stays green — false confidence that ships a
+  # non-functional loop (#103/#104, found live on this PR).
+  if [ -f bootstrap.sh ] && grep -A1 'reviewer)' bootstrap.sh | grep -q '"issues":"write"'; then
+    ok "bootstrap.sh mints the reviewer App with issues:write (App scope matches the ceiling)"
+  else
+    bad "bootstrap.sh reviewer App lacks issues:write — the App-token path cannot file tech-debt even when the ceiling can"
   fi
   # A hardcoded merge method fails outright on any repo whose policy differs —
   # this one allows squash only, so the original `--auto --merge` could never

@@ -26,7 +26,7 @@ guidance) and files drift as `P1 security` issues.
   | Station | Ceiling |
   |---|---|
   | triage (inbound) | `issues: write`, `contents: read` |
-  | review (inbound) | `pull-requests: write`, `issues: write` (to file tech-debt), `contents: read`, `checks: read` |
+  | review (inbound) | `pull-requests: write`, `issues: write` (to file tech-debt — matched by the reviewer App scope so the App-token path can file too), `contents: read`, `checks: read` |
   | QA (nightly) | `contents: write`, `issues: write`, `actions: read` |
   | factory-run (dispatch only) | `contents: write`, `pull-requests: write`, `issues: write`, `actions: read` |
 

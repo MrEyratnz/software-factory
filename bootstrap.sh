@@ -182,7 +182,7 @@ role_perms() {
   case "$1" in
     orchestrator) printf '{"contents":"write","actions":"write","issues":"write","pull_requests":"write"}' ;;
     coder)        printf '{"contents":"write","issues":"write","pull_requests":"write","workflows":"write"}' ;;
-    reviewer)     printf '{"contents":"read","pull_requests":"write","checks":"read","issues":"read"}' ;;
+    reviewer)     printf '{"contents":"read","pull_requests":"write","checks":"read","issues":"write"}' ;;
     triage)       printf '{"issues":"write"}' ;;
     qa)           printf '{"contents":"write","issues":"write","actions":"read"}' ;;
     release)      printf '{"contents":"write","pull_requests":"write","issues":"read"}' ;;
