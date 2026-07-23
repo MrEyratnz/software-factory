@@ -1,13 +1,13 @@
-# dark-software-factory — session operating doc
+# software-factory — session operating doc
 
-This repo is the Dark Software Factory plugin AND its own factory: every
-session loads this repo as the active plugin, obeys its own hooks, and
-improvements flow through its own backlog. CI is the authoritative gate;
-local hooks are fail-early UX. Never route around a hook.
+This repo builds the dark-software-factory plugin AND is its own factory:
+sessions are governed by the very hooks under edit (ADR 0002), and the
+autonomous SDLC around it runs in GitHub Actions (ADR 0003). CI is the
+authoritative gate; local hooks are fail-early UX. Never route around a hook.
 
 **Standing goal every session inherits: satisfy the v1.0.0 Release Gate**
-(`docs/ROADMAP.md`; gate definition in `docs/specs/epic-1/spec.md` and
-`GOVERNANCE.md` for who decides what).
+(`docs/ROADMAP.md`; gate definition in `docs/specs/epic-1/spec.md`;
+decision owners in `GOVERNANCE.md`).
 
 ## Orient (in this order, read nothing else first)
 
@@ -42,8 +42,14 @@ cron resumes exactly there.
   orchestration that already existed is a cost bug — file it.
 - Record per-session cost to `factory-ops/cost/` keyed by station and agent.
 
-## Review → tech-debt
+## Code review → tech-debt
 
-Any review finding not fixed in the current PR is opened as a `tech-debt`
-issue (location `file:line`, why it matters, provenance, suggested fix).
-Never silently drop a finding.
+**Unfixed findings become tracked tech-debt.** Any finding from a code
+review — including adversarial reviews and re-reviews of a PR — that is
+**not fixed in the current PR** must be opened as a GitHub issue labeled
+`tech-debt`, so it doesn't get lost. This applies to pre-existing problems a
+review happens to surface, and anything deliberately deferred out of the
+current PR's scope. Include: the location (`file:line`), what it is and why
+it matters (a concrete failure or cost), its provenance (pre-existing vs.
+introduced), and a suggested fix. Create the `tech-debt` label if it does not
+already exist. Never silently drop a finding or bury it only in chat.

@@ -5,8 +5,8 @@
   "extraKnownMarketplaces": {
     "software-factory": {
       "source": {
-        "source": "github",
-        "repo": "MrEyratnz/software-factory"
+        "source": "directory",
+        "path": "./"
       }
     }
   }

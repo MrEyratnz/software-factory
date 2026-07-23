@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.7](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.6...dark-software-factory-v0.1.7) (2026-07-11)
+
+
+### Features
+
+* **connector:** adr_index honors the repo's configured adrDir ([#85](https://github.com/MrEyratnz/software-factory/issues/85)) ([151e7d7](https://github.com/MrEyratnz/software-factory/commit/151e7d73b3a612712f57247cf98291cdfe357cba)), closes [#78](https://github.com/MrEyratnz/software-factory/issues/78)
+* dogfood the plugin from the working tree + factory init ([#62](https://github.com/MrEyratnz/software-factory/issues/62)) ([f45b9a8](https://github.com/MrEyratnz/software-factory/commit/f45b9a8baa9e17097be9c0f70fe94eb2b96c9156))
+* **hooks:** sanctioned producer for roadmap-proof.json — mint-roadmap-proof.sh ([#71](https://github.com/MrEyratnz/software-factory/issues/71)) ([91a0b6d](https://github.com/MrEyratnz/software-factory/commit/91a0b6df5449c2b1d103734f6d8a967256547bd5))
+
+
+### Bug Fixes
+
+* **hooks:** close the node-absent fallback residuals in guard-commit ([#81](https://github.com/MrEyratnz/software-factory/issues/81)) ([2cd01a8](https://github.com/MrEyratnz/software-factory/commit/2cd01a8f04c31ee53248493f6fcacc9e01d12fba)), closes [#70](https://github.com/MrEyratnz/software-factory/issues/70)
+* **hooks:** degrade loudly and hold the bypass boundary when node is unavailable ([#69](https://github.com/MrEyratnz/software-factory/issues/69)) ([3172785](https://github.com/MrEyratnz/software-factory/commit/3172785d951a8e54534f16938ebe3ec307eab82f))
+* **hooks:** fail closed on a malformed .factory/config.json; correct the skill's validation claim ([#75](https://github.com/MrEyratnz/software-factory/issues/75)) ([d70010f](https://github.com/MrEyratnz/software-factory/commit/d70010f9fdb332ce10f23a1cfd9f930ae2aff472)), closes [#65](https://github.com/MrEyratnz/software-factory/issues/65)
+* **hooks:** resolve enforcement config against the target repo, not the session repo ([#73](https://github.com/MrEyratnz/software-factory/issues/73)) ([aae1868](https://github.com/MrEyratnz/software-factory/commit/aae1868a0fabd3d6033796d0c5f1db12c6056cd4)), closes [#53](https://github.com/MrEyratnz/software-factory/issues/53)
+* **skills:** node adapter regexes cover .tsx/.jsx and call out monorepo source roots ([#72](https://github.com/MrEyratnz/software-factory/issues/72)) ([0791f5c](https://github.com/MrEyratnz/software-factory/commit/0791f5c412cef5e11ea75f5b791f92bd6636ff6a))
+
+## [0.1.6](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.5...dark-software-factory-v0.1.6) (2026-07-10)
+
+
+### Bug Fixes
+
+* **connector:** engine correctness + MCP server robustness ([711f091](https://github.com/MrEyratnz/software-factory/commit/711f091b7856b854bc917679b63387207ff75f3e))
+* **hooks:** close receipt-forgery paths, resolve uninit deadlocks, harden record-green ([5612bbf](https://github.com/MrEyratnz/software-factory/commit/5612bbf274ffe638012d0df68d01cdb47ea9716d))
+* **hooks:** close regressions found by adversarial review of the fix diff ([993f152](https://github.com/MrEyratnz/software-factory/commit/993f15212e8bf37eabfab3b5888069042a04744d))
+* **hooks:** close round-3 review findings (tox/xargs/rsync false-green + bypass; test gaps) ([6047fa0](https://github.com/MrEyratnz/software-factory/commit/6047fa01469dedcc8c78e63556958e63259efc33))
+* **hooks:** harden cd/symlink resolution; clarify roadmap-proof producer; drop fake ts ([15e6b60](https://github.com/MrEyratnz/software-factory/commit/15e6b60226f2326474e1283be276001cdeace301))
+* **hooks:** per-wrapper value flags — global union reopened the --no-verify/release bypass ([7c1f032](https://github.com/MrEyratnz/software-factory/commit/7c1f0320cf31718f60486a45bbc82c41dcbb0b62))
+* **hooks:** pipe event JSON via stdin, rewrite commit parser, fix tree_hash for subdir sessions ([23b3a3c](https://github.com/MrEyratnz/software-factory/commit/23b3a3c5f8812fce6c89d32822a955ad66b9bff8))
+* **hooks:** unblock reviewer handoff, dedup ledger, quiet uninit repos, fix release/roadmap false-blocks ([ac405b9](https://github.com/MrEyratnz/software-factory/commit/ac405b9eb9bca4e56154ca622fb3453f29a12aa0))
+* **init:** allow first-run config creation; document .factory source-control policy ([6311777](https://github.com/MrEyratnz/software-factory/commit/6311777929f72de1419e42e006944704c05c61b7))
+* uncover and fix factory gate bugs; resolve uninit deadlocks; harden with tests ([fa2f8a9](https://github.com/MrEyratnz/software-factory/commit/fa2f8a9c19e19118657a6a27a74abe4417f30b75))
+
 ## [0.1.5](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.4...dark-software-factory-v0.1.5) (2026-07-09)
 
 

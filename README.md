@@ -83,9 +83,11 @@ A zero-dependency MCP server ([`connector/`](connector/)) exposing the factory's
 rules as deterministic, read-only tools — `roadmap_status` / `roadmap_next` /
 `roadmap_check`, `adr_index`, `commit_lint`, `techdebt_lint` / `techdebt_audit`,
 `gate_evaluate`, `release_plan`, `ledger_read`. The same pure core
-(`factory-core.mjs`) is called by the hooks (via `cli.mjs`) and by CI, so the
-read path and the enforcement path can never disagree. It never mutates the
-repo; the command / agent / hook layer does, under normal permissions.
+(`factory-core.mjs`) backs both the connector's read tools and the hooks (via
+`cli.mjs`), so the read path and the enforcement path can never disagree — and
+CI re-runs the identical gate commands as the authoritative boundary. It never
+mutates the repo; the command / agent / hook layer does, under normal
+permissions.
 
 ## Optional OTEL metrics (opt-in)
 

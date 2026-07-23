@@ -8,6 +8,9 @@
 
 role="$(field agent_type)"
 [ -n "$role" ] || role="$(cat "$FACTORY_DIR/active-agent" 2>/dev/null | tr -d '[:space:]')"
+# A plugin's agent_type may be namespaced (e.g. "dark-software-factory:reviewer");
+# strip any "namespace:" prefix so the role match below still fires.
+role="${role##*:}"
 
 case "$role" in
   reviewer)  dir="$FACTORY_DIR/review"; required="location,impact,provenance,suggestedFix,severity" ;;

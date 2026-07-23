@@ -291,3 +291,85 @@ test('gateEvaluate: empty stage list is not green', () => {
 test('GATE_STAGES lists the canonical pipeline order', () => {
   assert.deepEqual(GATE_STAGES, ['typecheck', 'boundaries', 'unit', 'bdd', 'build', 'drift']);
 });
+
+/* ── bug-hunt regressions ─────────────────────────────────────────────── */
+
+test('parseRoadmap: headings/checkboxes inside a fenced code block are ignored', () => {
+  const md = [
+    '## M0',
+    '- [x] real done',
+    '',
+    '```markdown',
+    '## Example milestone',
+    '- [ ] example item in a fence',
+    '```',
+    '',
+    '## M1',
+    '- [ ] real next',
+  ].join('\n');
+  const r = parseRoadmap(md);
+  // Only the two real milestones (M0, M1), not the fenced "Example milestone".
+  assert.deepEqual(r.milestones.map((m) => m.title), ['M0', 'M1']);
+  assert.equal(r.totals.total, 2); // one real done + one real todo, fence excluded
+  assert.equal(r.next.text, 'real next');
+});
+
+test('parseRoadmap: ~~~ fences are also honored', () => {
+  const md = ['## M0', '~~~', '- [ ] fenced', '~~~', '- [ ] real'].join('\n');
+  const r = parseRoadmap(md);
+  assert.equal(r.totals.total, 1);
+  assert.equal(r.next.text, 'real');
+});
+
+test('indexAdrs: number anchored to a leading prefix, not any digit run', () => {
+  const r = indexAdrs([
+    { filename: '0001-stack.md', content: '# ADR 0001' },
+    { filename: 'use-http2-push.md', content: '# Use HTTP/2 push' }, // embedded digit, not a number
+    { filename: '2024-01-15-use-postgres.md', content: '# Use Postgres' }, // date prefix, not a number
+  ]);
+  const byName = Object.fromEntries(r.adrs.map((a) => [a.filename, a.number]));
+  assert.equal(byName['0001-stack.md'], 1);
+  assert.equal(byName['use-http2-push.md'], 0);      // NOT 2
+  assert.equal(byName['2024-01-15-use-postgres.md'], 0); // NOT 2024
+  assert.equal(r.nextNumber, 2); // max real number (1) + 1, not 2025
+});
+
+test('lintCommit: a CRLF-authored header is still valid', () => {
+  const r = lintCommit('feat: add thing\r\n\r\nbody\r\n');
+  assert.equal(r.ok, true);
+  assert.equal(r.type, 'feat');
+  assert.equal(r.subject, 'add thing');
+});
+
+test('lintCommit: a lowercase "breaking change:" prose line is NOT a breaking change', () => {
+  const r = lintCommit('docs: notes\n\nBreaking change: none — internal only');
+  assert.equal(r.breaking, false);
+  assert.equal(r.bump, 'none');
+});
+
+test('lintCommit: an uppercase BREAKING CHANGE: footer still bumps major', () => {
+  const r = lintCommit('feat: x\n\nBREAKING CHANGE: drops the old API');
+  assert.equal(r.breaking, true);
+  assert.equal(r.bump, 'major');
+});
+
+test('gateEvaluate: exit code is authoritative when present', () => {
+  // stringified "0" reads as pass
+  assert.equal(gateEvaluate([{ name: 'unit', exitCode: '0' }], 'abc').ok, true);
+  // ok:true cannot override a failing exit code
+  assert.equal(gateEvaluate([{ name: 'unit', ok: true, exitCode: 1 }], 'abc').ok, false);
+  // an explicit ok:false is not masked by a passing exit code
+  assert.equal(gateEvaluate([{ name: 'unit', ok: false, exitCode: 0 }], 'abc').ok, false);
+  // ok flag still used when there is no exit code
+  assert.equal(gateEvaluate([{ name: 'unit', ok: true }], 'abc').ok, true);
+});
+
+test('extractFingerprint: an explicit uppercase-hex fingerprint is normalized', () => {
+  assert.equal(extractFingerprint({ fingerprint: 'DEADBEEF' }), 'deadbeef');
+  assert.equal(extractFingerprint({ body: 'fingerprint: DEADBEEF' }), 'deadbeef');
+  // and the two forms now agree, so a filed issue dedupes against a finding
+  const finding = { location: 'src/a.ts:1', impact: 'x' };
+  const fp = fingerprintFinding(finding);
+  const audit = techdebtAudit([finding], [{ title: 't', fingerprint: fp.toUpperCase() }]);
+  assert.equal(audit.ok, true); // recognized as already filed despite uppercase
+});

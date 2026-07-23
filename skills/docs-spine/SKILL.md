@@ -7,16 +7,18 @@ description: "Author and maintain the docs spine (VISION.md, ARCHITECTURE.md, nu
 
 The docs spine is the durable, human-and-agent-readable memory of the project: **why** (VISION),
 **how it is shaped** (ARCHITECTURE), **what we decided and why** (ADRs), and **what is left**
-(ROADMAP). These four files live at the repo root (ADRs under `docs/adr/`) and are the source of
-truth agents read before acting. Runtime verdicts come from the connector — do not eyeball.
+(ROADMAP). These four files live under `docs/` (ADRs under `docs/adr/`) — the layout `/factory-init`
+stamps and the `.factory/config.json` defaults (`roadmapPath: docs/ROADMAP.md`, `adrDir: docs/adr`)
+point at; when in doubt, defer to those config keys rather than a hard-coded path. They are the
+source of truth agents read before acting. Runtime verdicts come from the connector — do not eyeball.
 
 ## Invariants (never violate)
 
-1. **The four files always exist**: `VISION.md`, `ARCHITECTURE.md`, `docs/adr/NNNN-*.md`, `ROADMAP.md`.
+1. **The four files always exist**: `docs/VISION.md`, `docs/ARCHITECTURE.md`, `docs/adr/NNNN-*.md`, `docs/ROADMAP.md` (or wherever `roadmapPath`/`adrDir` point).
 2. **ADR numbers are monotonic and connector-assigned.** Call `adr_index` for the next number.
    Never hand-pick — concurrent agents will collide.
 3. **ADRs are append-only.** To reverse a decision, write a NEW ADR that supersedes the old one and
-   set the old one's `Status:` to `Superseded by ADR NNNN`. Never rewrite decided history.
+   set the old one's `Status:` to `superseded by ADR NNNN`. Never rewrite decided history.
 4. **Roadmap items are checked `[x]` ONLY when merged with green tests** — never in advance, never
    "about to". The flip is enforced by `guard-roadmap`, which demands a merged-green proof.
 5. **Work the roadmap top-to-bottom.** `roadmap_next` names the next item; `roadmap_status` /
@@ -25,9 +27,10 @@ truth agents read before acting. Runtime verdicts come from the connector — do
 ## ADR procedure
 
 1. `adr_index` → get the next number `NNNN` (zero-padded, e.g. `0009`) and confirm no collision.
-2. Create `docs/adr/NNNN-kebab-title.md` from the template below.
-3. Start at `Status: Proposed`; flip to `Accepted` when the decision is merged.
-4. If it changes system shape, reflect the outcome in `ARCHITECTURE.md` in the same PR.
+   It scans the repo's configured `adrDir` (default `docs/adr`), so numbering honors a non-default ADR location.
+2. Create `<adrDir>/NNNN-kebab-title.md` (default `docs/adr/…`) from the template below.
+3. Start at `Status: proposed`; flip to `accepted` when the decision is merged.
+4. If it changes system shape, reflect the outcome in `docs/ARCHITECTURE.md` in the same PR.
 5. For contested design, use the judge-panel method (ADR-0009): 3 stance proposals → adversarial
    panel names each fatal flaw → synthesize a decision that resolves every named flaw, recorded here.
 
@@ -36,7 +39,7 @@ truth agents read before acting. Runtime verdicts come from the connector — do
 ```markdown
 # ADR NNNN — <concise decision title>
 
-Status: Proposed | Accepted | Superseded by ADR NNNN
+Status: proposed | accepted | superseded by ADR NNNN · Date: YYYY-MM-DD
 
 ## Context
 
@@ -51,8 +54,6 @@ State facts, not the choice.>
 
 <What becomes easier and harder. New obligations, follow-up ADRs, tech-debt created.
 Name the trade-off you accepted.>
-
-Date: YYYY-MM-DD
 ```
 
 ## ROADMAP procedure

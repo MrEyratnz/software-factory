@@ -1,4 +1,4 @@
-# ADR 0002 — Run the factory as event-driven GitHub Actions with per-role GitHub App identities
+# ADR 0003 — Run the factory as event-driven GitHub Actions with per-role GitHub App identities
 
 Status: accepted · Date: 2026-07-23
 

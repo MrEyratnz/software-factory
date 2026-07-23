@@ -43,9 +43,21 @@ function underAllowedRoot(abs) {
   return allowedRoots.some((r) => abs === r || abs.startsWith(r + path.sep));
 }
 function underTrustRoot(abs) {
-  return abs === TRUST_CONFIG
+  // The session repo's own trust roots — kept explicit because guard-bash-writes
+  // keys its carve-outs (release-intent, first-run config) on these exact paths.
+  if (abs === TRUST_CONFIG
     || abs === TRUST_STATE || abs.startsWith(TRUST_STATE + path.sep)
-    || abs === TRUST_REVIEW || abs.startsWith(TRUST_REVIEW + path.sep);
+    || abs === TRUST_REVIEW || abs.startsWith(TRUST_REVIEW + path.sep)) return true;
+  // Any OTHER repo's trust roots, reached via cd/relative/absolute path (issue
+  // #53): config_get_for reads a TARGET repo's .factory/config.json (whose
+  // testCommand record-green pipes to `sh -c`), so a nested or sibling repo's
+  // config + state must be as unforgeable as the session's own. Matched
+  // structurally by suffix so it holds regardless of which repo the write lands
+  // in; the leading `/` before .factory means the session's depth-0 roots above
+  // are already covered by the explicit check, not double-matched here.
+  const norm = abs.split(path.sep).join('/');
+  return /\/\.factory\/config\.json$/.test(norm)
+    || /\/\.factory\/state(\/|$)/.test(norm);
 }
 function expandHome(p) {
   if (p === '~') return HOME || p;
@@ -85,6 +97,31 @@ function tokenize(cmd) {
   return toks;
 }
 
+// Command-position write mutators whose target(s) a redirect-only parser missed
+// — a leading `cp forged .factory/state/gate-receipt.json` forged a green
+// receipt, and `touch .factory/state/paused` self-disabled every gate, because
+// neither is a redirect or `tee`. Model each one's write target(s):
+//   copy  — cp/mv/install/rsync/ln: the `-t <dir>` / `--target-directory` DIR if
+//           present (it reverses arg order — `cp -t .factory/state x` writes into
+//           .factory/state), else the final non-flag operand.
+//   all   — every non-flag argument is created/updated (touch)
+//   trunc — truncate's file arg(s) (skip the -s size value)
+//   ddof  — dd's `of=<path>`
+//   del   — rm/rmdir/unlink/shred: every non-flag operand is DELETED; deleting a
+//           trust-root file (config/receipt/paused) is as dangerous as writing
+//           it, so del targets are checked against the trust roots only —
+//           `cd .factory && rm config.json` must not un-initialize the factory.
+const MUTATOR_TARGET = {
+  cp: 'copy', mv: 'copy', install: 'copy', ln: 'copy',
+  // rsync's destination is its LAST operand; it has NO --target-directory, and
+  // its `-t` means --times (a boolean) — so the `-t <dir>` rule must NOT apply,
+  // or `rsync -t forged .factory/state/gate-receipt.json` would mis-target the
+  // SOURCE and let the receipt-forgery dest slip.
+  rsync: 'last',
+  touch: 'all', truncate: 'trunc', dd: 'ddof',
+  rm: 'del', rmdir: 'del', unlink: 'del', shred: 'del',
+};
+
 function collect(cmd) {
   const toks = tokenize(cmd);
   const targets = [];
@@ -95,23 +132,64 @@ function collect(cmd) {
     if (toks[k].v === 'cd' && toks[k + 1] && !toks[k + 1].op) cwd = toks[k + 1];
     break;
   }
-  // `tee` is the tee command only in command position (first token, or right
-  // after a pipe/`;`/`&&`/`||`/`&`/`(`); as a bare argument (`grep tee f`) it is
-  // not a write construct.
+  // A command is in command position at the first token, or right after a
+  // pipe/`;`/`&&`/`||`/`&`/`(`; as a bare argument (`grep tee f`) it is not a
+  // write construct.
   const CMD_SEP = new Set(['|', '||', '&&', ';', '&', '(']);
   const cmdPos = (k) => k === 0 || (toks[k - 1].op && CMD_SEP.has(toks[k - 1].op));
+  // Gather the word-token args of the simple command that starts at index k
+  // (stops at the next operator), separating flags from operands.
+  const commandArgs = (k) => {
+    const args = [];
+    for (let j = k + 1; j < toks.length; j++) {
+      if (toks[j].op) break;
+      args.push(toks[j]);
+    }
+    return args;
+  };
   for (let k = 0; k < toks.length; k++) {
     const t = toks[k];
     if (t.op === '>' || t.op === '>>') {
       const nxt = toks[k + 1];
       if (nxt && !nxt.op) targets.push(nxt); // an operator after > (e.g. >&1, >(…)) is not a file
-    } else if (!t.op && t.v === 'tee' && cmdPos(k)) {
-      for (let j = k + 1; j < toks.length; j++) {
-        const w = toks[j];
-        if (w.op) break;
-        if (w.v.startsWith('-')) continue; // skip flags
-        targets.push(w); break;
+      continue;
+    }
+    if (t.op || !cmdPos(k)) continue;
+    if (t.v === 'tee') {
+      for (const w of commandArgs(k)) { if (w.v.startsWith('-')) continue; targets.push(w); break; }
+      continue;
+    }
+    const rule = MUTATOR_TARGET[t.v];
+    if (!rule) continue;
+    const args = commandArgs(k);
+    if (rule === 'all') {
+      for (const w of args) if (!w.v.startsWith('-')) targets.push(w);
+    } else if (rule === 'last') {
+      let dest = null;
+      for (const w of args) { if (!w.v.startsWith('-')) dest = w; }
+      if (dest) targets.push(dest);
+    } else if (rule === 'del') {
+      for (const w of args) if (!w.v.startsWith('-')) targets.push({ v: w.v, unresolvable: w.unresolvable, del: true });
+    } else if (rule === 'ddof') {
+      for (const w of args) { const m = /^of=(.+)$/.exec(w.v); if (m) targets.push({ v: m[1], unresolvable: w.unresolvable }); }
+    } else if (rule === 'trunc') {
+      for (let j = 0; j < args.length; j++) {
+        const w = args[j];
+        if (w.v === '-s' || w.v === '--size') { j++; continue; } // skip the size value
+        if (w.v.startsWith('-')) continue;
+        targets.push(w);
       }
+    } else { // 'copy' — a `-t <dir>` / `--target-directory` DIR reverses the order
+      let tdir = null;
+      for (let j = 0; j < args.length; j++) {
+        const w = args[j]; const v = w.v;
+        let m = /^--target-directory=(.+)$/.exec(v);
+        if (m) { tdir = { v: m[1], unresolvable: w.unresolvable }; break; }
+        if (v === '--target-directory' || /^-[A-Za-z]*t$/.test(v)) { const nx = args[j + 1]; if (nx && !nx.v.startsWith('-')) tdir = nx; break; }
+        m = /^-t(.+)$/.exec(v); if (m && !v.startsWith('--')) { tdir = { v: m[1], unresolvable: w.unresolvable }; break; }
+      }
+      if (tdir) targets.push(tdir);
+      else { let dest = null; for (const w of args) { if (!w.v.startsWith('-')) dest = w; } if (dest) targets.push(dest); }
     }
   }
   return { targets, cwd };
@@ -124,12 +202,21 @@ process.stdin.on('end', () => {
   const { targets, cwd } = collect(s);
   let base = PROJECT_DIR;
   if (cwd && !cwd.unresolvable && cwd.v) base = path.resolve(PROJECT_DIR, expandHome(cwd.v));
-  const outside = []; const trustRoot = [];
+  const outside = []; const trustRoot = []; const all = [];
   for (const t of targets) {
     if (!t.v || t.unresolvable) continue;
     const abs = path.resolve(base, expandHome(t.v));
+    // Deletion targets (rm/rmdir/unlink/shred) are checked against the trust
+    // roots ONLY — a delete of an in-project or out-of-project file is not this
+    // hook's concern (and the reviewer fence already blocks rm via its verb
+    // regex), but a delete of a hook-managed trust-root file must be denied.
+    if (t.del) { if (underTrustRoot(abs)) trustRoot.push(abs); continue; }
+    all.push(abs); // every resolved write target, for callers that fence ALL writes
     if (underTrustRoot(abs)) trustRoot.push(abs);
     else if (!underAllowedRoot(abs)) outside.push(abs);
   }
-  process.stdout.write(JSON.stringify({ outside, trustRoot }));
+  // `all` lets the reviewer fence (read-only-by-construction) reject ANY
+  // tree-mutating write construct quote-awarely, so a `>` inside a quoted
+  // argument (e.g. `grep "a > b" f`) is not mistaken for a redirect.
+  process.stdout.write(JSON.stringify({ outside, trustRoot, all }));
 });

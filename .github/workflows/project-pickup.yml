@@ -1,0 +1,67 @@
+name: Project Pickup
+
+# The other half of the triage pipeline (see claude-issue-triage.yml): triage
+# labels an issue `triaged` and parks its project card in the Ready column; an
+# agent picking it up must move the card to In Progress. Pickup is signaled by
+# either assignment of a triaged issue, or an explicit `in-progress` label.
+
+on:
+  issues:
+    types: [assigned, labeled]
+
+concurrency:
+  group: project-pickup-${{ github.event.issue.number }}
+
+jobs:
+  in-progress:
+    # `ready` is the pre-parity triage design's queue label; accepted here so
+    # issues triaged before the `triaged` marker landed still hand off.
+    if: >
+      (github.event.action == 'assigned' &&
+        (contains(github.event.issue.labels.*.name, 'triaged') ||
+         contains(github.event.issue.labels.*.name, 'ready'))) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'in-progress')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Mark the issue in-progress
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh label create "in-progress" --color "1d76db" --description "Picked up by an agent; being worked" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "in-progress"
+          # Legacy queue label from the pre-parity triage design: an issue is
+          # in exactly one queue state, so leaving `ready` in place after
+          # pickup would let a second agent grab the same issue. Swap it for
+          # the `triaged` marker so the triage backfill (which treats any
+          # issue without `triaged` as untriaged) doesn't re-triage an
+          # in-flight issue and demote its card back to Ready.
+          # Captured into a variable (not piped into grep) so a failed
+          # `gh issue view` fails the step instead of silently reading as
+          # "label absent".
+          labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name')
+          if grep -qx "ready" <<<"$labels"; then
+            gh issue edit "$ISSUE_NUMBER" --remove-label "ready" --add-label "triaged"
+          fi
+
+      - name: Move the issue to In Progress on the project board
+        env:
+          # Projects v2 needs a PAT with the `project` scope (same constraint
+          # as the triage workflow's Ready hand-off). The plain GITHUB_TOKEN
+          # fallback exists so the script can fail with a pointed, actionable
+          # error instead of a missing-credential crash.
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN || github.token }}
+          GH_TOKEN_SOURCE: ${{ secrets.PROJECT_TOKEN && 'PROJECT_TOKEN' || 'GITHUB_TOKEN' }}
+          PROJECT_NUMBER: ${{ vars.TRIAGE_PROJECT_NUMBER }}
+        run: ./scripts/set-issue-project-status.sh "$ISSUE_NUMBER" "In Progress"

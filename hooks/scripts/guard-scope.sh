@@ -9,19 +9,37 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-scope
+# issue #52: degrade LOUDLY (never silently) when node is unavailable.
+node_guard guard-scope || allow
 case "$(field tool_name)" in Write|Edit|MultiEdit) ;; *) allow ;; esac
 fp="$(field tool_input.file_path)"
 [ -n "$fp" ] || allow
 
-rel="$(FP="$fp" PD="$PROJECT_DIR" node -e '
-  const p=require("path");
-  const abs=p.isAbsolute(process.env.FP)?process.env.FP:p.resolve(process.env.PD,process.env.FP);
-  process.stdout.write(p.relative(process.env.PD, abs));
+# Resolve BOTH rel and abs against the canonical (realpath) project root and
+# canonicalize the target's own path, so a symlink inside the project that points
+# into a trust root (e.g. `ln -s .factory/state sneak` then Write sneak/receipt)
+# cannot smuggle a write past the lexical trust-root match (issue #58). The
+# target file itself may be new, so we realpath the deepest existing ancestor.
+_scope="$(FP="$fp" PD="$PROJECT_DIR" node -e '
+  const p=require("path"),fs=require("fs");
+  const FP=process.env.FP,PD=process.env.PD;
+  // Canonicalize as far as the path EXISTS, then re-append the not-yet-created
+  // tail — walking up to the deepest existing ancestor (not just the immediate
+  // parent), so a new file in a not-yet-created nested dir under a SYMLINKED
+  // project root still canonicalizes correctly instead of being mis-judged
+  // out-of-tree (issue #58 follow-up).
+  const canon=(a)=>{
+    try{return fs.realpathSync(a)}catch(e){}
+    const tail=[]; let cur=a;
+    for(let i=0;i<64;i++){ const par=p.dirname(cur); if(par===cur) break; tail.unshift(p.basename(cur)); cur=par; try{return p.join(fs.realpathSync(cur),...tail)}catch(e){} }
+    return a;
+  };
+  const abs=canon(p.isAbsolute(FP)?p.resolve(FP):p.resolve(PD,FP));
+  let root=PD;try{root=fs.realpathSync(PD)}catch(e){root=p.resolve(PD)}
+  process.stdout.write(JSON.stringify({rel:p.relative(root,abs),abs}));
 ')"
-abs="$(FP="$fp" PD="$PROJECT_DIR" node -e '
-  const p=require("path");
-  process.stdout.write(p.isAbsolute(process.env.FP)?p.resolve(process.env.FP):p.resolve(process.env.PD,process.env.FP));
-')"
+rel="$(printf '%s' "$_scope" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).rel)}catch(e){}})')"
+abs="$(printf '%s' "$_scope" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).abs)}catch(e){}})')"
 
 # Writing outside the project tree is never allowed (unless the scope gate is
 # relaxed for this repo via enforcement.enforceProjectDirScope) — except for
@@ -56,14 +74,37 @@ if enforcement_on protectTrustRoots; then
   case "$rel" in
     .factory/state/release-intent.json)
       [ "$active" = "release-captain" ] || deny "release-intent.json is written only by the release-captain (via /ship)" ;;
-    .factory/state/*|.factory/config.json)
+    .factory/config.json)
+      # First-run creation is the sanctioned /factory-init step; once the config
+      # exists it is protected (edit + commit it as source, not via a live
+      # gate bypass). Without this carve-out, /factory-init could never stamp the
+      # config it is documented to create (issues #1, #54).
+      [ -f "$CONFIG_FILE" ] && deny "$rel already exists and is the committed enforcement contract — edit it in a normal commit, not as a live gate change" ;;
+    .factory/state/*)
       deny "$rel is factory-managed state — it may not be written via the editor tools" ;;
+    # A NESTED or SIBLING repo's enforcement contract / hook state (issue #53).
+    # config_get_for / enforcement_on_for now read a TARGET repo's
+    # .factory/config.json (and record-green pipes its testCommand to `sh -c`),
+    # so a sub-repo's contract must be as unwritable as the session's own — else
+    # an agent plants an opt-out or a malicious testCommand one directory over
+    # and defeats every target-aware gate. These patterns match only a path with
+    # a segment BEFORE .factory (a different repo); the session's own depth-0
+    # .factory/… is handled by the cases above, so its carve-outs are unaffected.
+    */.factory/config.json)
+      deny "$rel is a target repo's enforcement contract — a sub-repo's .factory/config.json is not writable via the editor tools (issue #53)" ;;
+    */.factory/state|*/.factory/state/*)
+      deny "$rel is a target repo's factory-managed state — not writable via the editor tools (issue #53)" ;;
   esac
 fi
 
 case "$active" in
   reviewer)
-    deny "the reviewer is read-only by construction — it may not write files (findings go to its return artifact)" ;;
+    # Read-only w.r.t. SOURCE, but it must be able to emit its findings artifact
+    # — validate-handoff blocks the reviewer's stop until that file exists, and
+    # it has no other sanctioned way to produce it (its Bash writes are fenced).
+    # So: allow ONLY .factory/review/*.json (mirrors the panelist's .factory/panel
+    # carve-out); every other path, including source, stays denied.
+    case "$rel" in .factory/review/*) allow ;; *) deny "the reviewer writes only its findings under .factory/review/ (no source edits — attempted: $rel)" ;; esac ;;
   panelist)
     # The panelist writes exactly one ballot artifact; nothing else.
     case "$rel" in .factory/panel/*) allow ;; *) deny "a panelist writes only its ballot under .factory/panel/ (attempted: $rel)" ;; esac ;;

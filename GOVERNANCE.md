@@ -1,7 +1,7 @@
 # Governance
 
 This repository is operated by an autonomous software factory (see
-`docs/adr/0002-event-driven-github-actions-factory.md`). Day-to-day decisions
+`docs/adr/0003-event-driven-github-actions-factory.md`). Day-to-day decisions
 have single owners; cross-cutting decisions go to the board. Nothing here
 overrides the enforced laws (hooks + CI) or `SECURITY.md`.
 

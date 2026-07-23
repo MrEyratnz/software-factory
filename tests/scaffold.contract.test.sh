@@ -89,7 +89,8 @@ done
 for f in .claude/CLAUDE.md GOVERNANCE.md MAINTAINERS.md .github/FUNDING.yml \
          docs/VISION.md docs/ARCHITECTURE.md docs/ROADMAP.md docs/PRODUCT.md \
          docs/adr/0001-record-architecture-decisions.md \
-         docs/adr/0002-event-driven-github-actions-factory.md \
+         docs/adr/0002-dogfood-the-plugin-from-the-working-tree.md \
+         docs/adr/0003-event-driven-github-actions-factory.md \
          docs/rfcs/README.md docs/specs/epic-1/spec.md docs/specs/epic-1/plan.md \
          docs/security/README.md factory-ops/README.md factory-ops/cost/ROUTING.md; do
   if [ -f "$f" ]; then ok "$f exists"; else bad "$f missing"; fi

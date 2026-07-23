@@ -12,13 +12,17 @@ CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.218}"
 stage() { printf '\n== suite: %s\n' "$1"; }
 
 stage "typecheck (bash -n over every shell entrypoint)"
-bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh
+bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh scripts/*.sh
 
-stage "boundaries (scaffold contract: manifests, workflows, config, fences)"
+stage "boundaries (scaffold contract + config schema + triage-script contracts)"
 bash tests/scaffold.contract.test.sh
+node --test scripts/validate-config.test.mjs
+node scripts/validate-config.mjs .factory/config.json schemas/factory.config.schema.json
+node scripts/validate-config.mjs templates/factory/config.json.tmpl schemas/factory.config.schema.json
+./scripts/test-triage-scripts.sh
 
 stage "unit (connector: zero-dep node --test)"
-( cd connector && node --test test/factory-core.test.mjs test/protocol.test.mjs )
+( cd connector && node --test 'test/**/*.test.mjs' )
 
 stage "bdd (hermetic hook contract tests)"
 bash tests/hooks.contract.test.sh

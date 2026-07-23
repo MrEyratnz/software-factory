@@ -21,9 +21,22 @@ regexes + a command allowlist, not by changing hook code.
    except its designated state outputs). This is what stops a model from *poisoning
    the gate* — it cannot rewrite `green.unit` to `true` or point `build` at a no-op.
    Config changes are a human/privileged act, reviewed like any other PR.
-3. **Validated before use.** Malformed JSON, a missing required key, or a command
-   that is not a string fails the hook **closed** (blocks), never open. Fix the
-   config; do not `--no-verify`.
+3. **Malformed config fails closed; structural validity is an author-time check.**
+   A present-but-**unparseable** `.factory/config.json` blocks the denying
+   workflow gates (`guard-commit`, `guard-release`) at runtime — a corrupt
+   contract would otherwise silently revert this repo's gates to the built-in
+   defaults, a fail-*open* for any repo that configured stricter-than-default
+   gates. **Structural** validity (required keys present, `gates.*`/
+   `generators[].command` are strings) is checked when `/factory-init` authors
+   the config against `factory.config.schema.json` — but there is **no automated
+   per-commit structural backstop today**: a later hand-edit that drops a
+   required key or makes a command non-string is not caught by any hook or CI
+   job (CI parses the schema file and the unfilled template as JSON, not a
+   populated `config.json`), so it surfaces only when it breaks a gate or
+   degrades to that key's default. So: keep the JSON parseable (a broken parse
+   fails closed) and faithful to the schema; a key you *omit* degrades to its
+   documented default. (Wiring a real schema-validation CI step is tracked as
+   follow-up tech-debt.)
 4. **Local == CI.** CI reads the identical `config.json`; the same commands run in
    both places. Tuning a command to pass locally-only just moves the red to CI.
 
@@ -61,8 +74,8 @@ the ONLY strings the gate is permitted to shell out to.
 ### node
 ```json
 {
-  "sourceRegex": "^src/.*\\.ts$",
-  "testRegex": "\\.(test|spec)\\.ts$",
+  "sourceRegex": "^src/.*\\.[jt]sx?$",
+  "testRegex": "\\.(test|spec)\\.[jt]sx?$",
   "testCommandRegex": "vitest|jest",
   "roadmapPath": "docs/ROADMAP.md",
   "releaseBranch": "main",
@@ -81,6 +94,31 @@ the ONLY strings the gate is permitted to shell out to.
   }
 }
 ```
+
+### node — workspaces / monorepo
+
+`^src/` matches ONLY a top-level `src/`. In an npm-workspaces or monorepo
+layout, source also lives under `packages/*/src/**` and `apps/*/src/**` — a
+`feat`/`fix` touching only those roots is invisible to a single-root
+`sourceRegex`, so `guard-commit` never requires a co-staged test and the
+tests-first gate silently under-fires. Cover every real root (only the keys
+that change from the `node` adapter above are shown — keep the rest):
+
+```json
+{
+  "sourceRegex": "^(src|packages/[^/]+/src|apps/[^/]+/src)/.*\\.[jt]sx?$",
+  "testRegex": "\\.(test|spec)\\.[jt]sx?$",
+  "gates": {
+    "typecheck": "pnpm -r tsc --noEmit",
+    "boundaries": "pnpm depcruise src packages apps",
+    "unit": "pnpm -r vitest run",
+    "build": "pnpm -r build"
+  }
+}
+```
+
+(The `python` adapter's `^src/.*\\.py$` has the same single-root assumption —
+apply the same treatment for `src/` layouts with multiple package roots.)
 
 ### python
 ```json
@@ -137,6 +175,11 @@ the ONLY strings the gate is permitted to shell out to.
 2. **Pin the regexes to reality.** Confirm `sourceRegex`/`testRegex` actually match
    the repo's tree (a wrong `testRegex` lets a `feat` land with no test — invariant
    broken silently). Confirm `roadmapPath` is the file with the `[ ]`/`[x]` boxes.
+   Two proven under-fire pitfalls to check explicitly against `git ls-files`:
+   an extension anchor that misses `.tsx`/`.jsx` (React is squarely "node" —
+   `src/Foo.tsx` must count as source and `Foo.test.tsx` as a test), and a
+   single-root `^src/` in a workspaces/monorepo layout (source under
+   `packages/*/src` or `apps/*/src` silently escapes the tests-first gate).
 3. **Prove each command by hand once**, then let the connector own it — run
    `gate_evaluate`; it executes `gates.*` in order and returns a per-stage verdict.
    Fix at the earliest red stage.
@@ -156,4 +199,7 @@ the ONLY strings the gate is permitted to shell out to.
   same config and the lie surfaces there.
 - `testRegex` that matches nothing → `feat`s ship untested; `sourceRegex` too broad →
   guard-scope false-blocks edits. Validate against `git ls-files`.
+- A `sourceRegex`/`testRegex` that misses `.tsx`/`.jsx` or non-`src` workspace
+  roots (`packages/*/src`, `apps/*/src`) → a `feat`/`fix` ships untested: the
+  source isn't seen as source, and its test isn't seen as a test.
 - Omitting a generator whose output is checked in → stage-6 drift red on every CI run.

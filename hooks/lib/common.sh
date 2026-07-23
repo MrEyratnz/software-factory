@@ -23,10 +23,24 @@ FACTORY_CLI="$PLUGIN_ROOT/connector/src/cli.mjs"
 if [ -z "${HOOK_INPUT:-}" ]; then
   HOOK_INPUT="$(cat 2>/dev/null || true)"
 fi
-export HOOK_INPUT
+# Strip the export attribute unconditionally. If the hook was invoked with
+# HOOK_INPUT already in its environment (a wrapper, or a test harness passing
+# HOOK_INPUT=""), the reassignment above KEEPS that export attribute — so the
+# whole (possibly >128KB) event would be re-marshalled into every child process's
+# environment and execve would fail E2BIG, exactly the failure the stdin design
+# exists to avoid. `export -n` guarantees HOOK_INPUT stays a plain shell variable.
+export -n HOOK_INPUT 2>/dev/null || true
+# NOTE: HOOK_INPUT is a plain shell variable and is deliberately NOT exported.
+# The event JSON can be large (a Bash tool_response carries the command's full
+# stdout/stderr). On Linux a single environment-variable string is capped at
+# MAX_ARG_STRLEN (128KB); once HOOK_INPUT crosses it, execve() of EVERY child
+# process fails with E2BIG. That would make `field`/`config_get`/`fc` — and thus
+# every gate verdict — silently fail open (a verbose passing suite would then
+# never mint a receipt, and a commit could slip past). So the payload is fed to
+# the node helpers on STDIN (not env/argv), which has no such limit.
 
 # Project dir: explicit env wins, else the event's cwd, else PWD.
-_project_from_input="$(HOOK_JSON="$HOOK_INPUT" node -e 'try{const o=JSON.parse(process.env.HOOK_JSON||"{}");process.stdout.write(o.cwd||"")}catch(e){}' 2>/dev/null || true)"
+_project_from_input="$(printf '%s' "$HOOK_INPUT" | node -e 'let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c).on("end",()=>{try{const o=JSON.parse(s||"{}");process.stdout.write(o.cwd||"")}catch(e){}})' 2>/dev/null || true)"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${_project_from_input:-$PWD}}"
 FACTORY_DIR="$PROJECT_DIR/.factory"
 STATE_DIR="$FACTORY_DIR/state"
@@ -34,12 +48,18 @@ CONFIG_FILE="$FACTORY_DIR/config.json"
 
 # --- json helpers ----------------------------------------------------------
 # field <dotted.path> — extract a field from the event JSON as a plain string.
+# The event is piped on STDIN, never passed via env/argv, so a large
+# tool_response (big test output) cannot trip execve's E2BIG limit (see the
+# HOOK_INPUT note above).
 field() {
-  HOOK_JSON="$HOOK_INPUT" node -e '
-    const o = JSON.parse(process.env.HOOK_JSON || "{}");
-    let v = o;
-    for (const k of String(process.argv[1]).split(".")) v = (v == null ? undefined : v[k]);
-    process.stdout.write(v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v)));
+  printf '%s' "$HOOK_INPUT" | node -e '
+    let s = ""; process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (c) => { s += c; }).on("end", () => {
+      let o = {}; try { o = JSON.parse(s || "{}"); } catch (e) {}
+      let v = o;
+      for (const k of String(process.argv[1]).split(".")) v = (v == null ? undefined : v[k]);
+      process.stdout.write(v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v)));
+    });
   ' "$1" 2>/dev/null
 }
 
@@ -55,21 +75,69 @@ fc() {
 }
 
 # json_str <value> — emit a JSON-quoted string (for building stdout payloads).
-json_str() { HOOK_S="$1" node -e 'process.stdout.write(JSON.stringify(process.env.HOOK_S||""))'; }
+# The value is piped on STDIN (a roadmap file or a whole command string can be
+# large — see the HOOK_INPUT note); passing it via env would risk E2BIG.
+json_str() { printf '%s' "$1" | node -e 'let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(JSON.stringify(s)))'; }
 
 # --- config ----------------------------------------------------------------
-# config_get <key> [default] — read a key from .factory/config.json. <key> may
-# be a dotted path (e.g. "otel.enabled") to reach into a nested object, same
-# convention as field() above.
-config_get() {
-  local key="$1" def="${2:-}"
-  [ -f "$CONFIG_FILE" ] || { printf '%s' "$def"; return; }
-  CFG_FILE="$CONFIG_FILE" node -e '
+# _config_read <file> <key> <default> — the shared reader behind config_get and
+# config_get_for. <key> may be a dotted path (e.g. "otel.enabled") to reach
+# into a nested object, same convention as field() above.
+_config_read() {
+  local file="$1" key="$2" def="${3:-}"
+  [ -f "$file" ] || { printf '%s' "$def"; return; }
+  CFG_FILE="$file" node -e '
     const fs=require("fs");let o={};try{o=JSON.parse(fs.readFileSync(process.env.CFG_FILE,"utf8"))}catch(e){}
     let v=o;
     for (const k of String(process.argv[1]).split(".")) v = (v && typeof v==="object") ? v[k] : undefined;
     process.stdout.write(v==null?process.argv[2]:(typeof v==="object"?JSON.stringify(v):String(v)));
   ' "$key" "$def" 2>/dev/null || printf '%s' "$def"
+}
+
+# config_get <key> [default] — read a key from the SESSION repo's config.
+config_get() { _config_read "$CONFIG_FILE" "$1" "${2:-}"; }
+
+# config_get_for <repo-root> <key> [default] — read a key from the config of
+# the repo a command actually TARGETS (issue #53). Issue #28 made the
+# receipt/tree/branch checks bind to the target repo, but the enforcement
+# VALUES (regexes, toggles, testCommand…) still came from the session repo —
+# so a commit to sibling repo B was gated by repo A's contract. Prefer the
+# target's committed .factory/config.json; fall back to the session config
+# when the target has none (the established issue-#28 model: the session
+# factory gates commits to any repo it touches).
+config_get_for() {
+  local root="$1" key="$2" def="${3:-}"
+  if [ -n "$root" ] && [ -f "$root/.factory/config.json" ]; then
+    _config_read "$root/.factory/config.json" "$key" "$def"
+  else
+    config_get "$key" "$def"
+  fi
+}
+
+# require_config_sane <target-root> — the enforcement contract must be valid JSON
+# before it can govern (issue #65). config_get* degrade a malformed config to the
+# built-in defaults: for an ABSENT config that is the uninitialized repo (fine,
+# handled by factory_initialized), but for a PRESENT-but-corrupt one it silently
+# reverts a repo's committed gates to defaults — a fail-OPEN for any repo that
+# configured stricter-than-default gates (a broader sourceRegex, a custom
+# testRegex). So the DENYING workflow gates fail CLOSED here, matching the
+# factory-config skill's "malformed JSON fails the hook closed". Resolves the
+# same file config_get_for reads (the target's config when it has one, else the
+# session's). Structural completeness beyond "is it JSON" (required keys, a
+# command that is a string) is validated when /factory-init authors the config
+# against the schema — there is no automated per-commit structural backstop today
+# (tracked as follow-up tech-debt), so this hook checks JSON-parseability only.
+# Uses node, so callers must be PAST node_guard (node-absent is issue #52's path).
+require_config_sane() {
+  local root="$1" file
+  if [ -n "$root" ] && [ -f "$root/.factory/config.json" ]; then
+    file="$root/.factory/config.json"
+  else
+    file="$CONFIG_FILE"
+  fi
+  [ -f "$file" ] || return 0
+  CFG_FILE="$file" node -e 'const fs=require("fs");try{JSON.parse(fs.readFileSync(process.env.CFG_FILE,"utf8"))}catch(e){process.exit(1)}' 2>/dev/null && return 0
+  deny "the enforcement contract $file is not valid JSON — a corrupt config would silently revert this repo's gates to the built-in defaults, so the gate fails closed. Fix the JSON (do not --no-verify)."
 }
 
 # --- enforcement levers (issues #29, #30) ----------------------------------
@@ -83,6 +151,33 @@ config_get() {
 #      Returns 0 (enforce) unless the key is explicitly the string "false".
 enforcement_on() {
   [ "$(config_get "enforcement.$1" true)" != "false" ]
+}
+
+# enforcement_on_for <repo-root> <gate> — the target-aware form (issue #53):
+# a per-repo enforcement opt-out on the TARGET repo must be honored (and the
+# session's opt-outs must not leak onto a stricter target).
+enforcement_on_for() {
+  [ "$(config_get_for "$1" "enforcement.$2" true)" != "false" ]
+}
+
+# factory_initialized — is THIS repo opted into the factory? True only when
+# .factory/config.json exists (what /factory-init stamps). This is the switch
+# that turns the WORKFLOW gates (commit / release / roadmap / mcp-commit) from
+# hard boundaries into no-ops: an uninitialized repo has no config, so those
+# gates could demand a proof that no producer can mint here (no testCommand, no
+# release/roadmap proof) — an unsatisfiable DEADLOCK. Until a repo runs
+# /factory-init it has not opted in, so the workflow gates step aside (the
+# SessionStart banner already nudges "run /factory-init"). The trust-root /
+# forgery protections (guard-scope, guard-bash-writes) do NOT use this — they
+# stay on everywhere so the factory's own state can never be hand-forged.
+factory_initialized() { [ -f "$CONFIG_FILE" ]; }
+
+# require_initialized <hook-name> — call at the top of a WORKFLOW gate: if the
+# repo is not factory-initialized, allow (exit 0). No-op once initialized.
+require_initialized() {
+  factory_initialized && return 0
+  otel_emit factory_gate_uninitialized_total sum 1 "$(printf '{"hook":%s}' "$(json_str "${1:-unknown}")")"
+  allow
 }
 
 #   2. factory_paused / respect_pause — a session-local escape hatch. When a
@@ -106,6 +201,38 @@ respect_pause() {
   allow
 }
 
+# --- node degradation (issue #52) -------------------------------------------
+# Every parser and every fc verdict needs node. Without it, field() reads come
+# back empty and each guard's early "[ tool_name = … ] || allow" fails OPEN —
+# silently. Failing fully closed instead was rejected (it would deny every
+# Bash call, even `ls`, in a node-less environment), so the contract is:
+# degrade to advisory, but NEVER silently.
+#
+# node_guard <hook-name> — enforcing guards call this before their first
+# field() read. With node present it clears any stale degradation marker and
+# returns 0 (enforce normally). Without node it surfaces ONE loud
+# systemMessage per session (throttled via a state marker — the marker lives
+# under the trust root, so the policed agent cannot pre-plant it to mute the
+# warning) and returns 1; the caller then allows, after applying whatever
+# POSIX-only fallback boundary it can still hold (see guard-commit's
+# bypass-flag check). The message is static JSON on stdout — json_str would
+# need node.
+node_guard() {
+  if command -v node >/dev/null 2>&1; then
+    rm -f "$STATE_DIR/node-degraded-notified" 2>/dev/null
+    return 0
+  fi
+  # Only surface (and throttle) the notice where the factory is actually in
+  # play: a repo that never opted in gets no notice and — critically — no
+  # .factory/state creation (same invariant record-green holds).
+  if [ -d "$FACTORY_DIR" ] && [ ! -f "$STATE_DIR/node-degraded-notified" ]; then
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    : > "$STATE_DIR/node-degraded-notified" 2>/dev/null || true
+    printf '{"systemMessage":"dark-software-factory (%s): node is unavailable on the hook PATH, so event parsing and gate verdicts cannot run — enforcement is DEGRADED to advisory for this session (only a conservative commit-bypass check remains active). Restore node to re-arm the gates; CI remains the authoritative boundary."}\n' "${1:-unknown}"
+  fi
+  return 1
+}
+
 # --- git plumbing ----------------------------------------------------------
 # tree_hash [dir] — deterministic hash of a working tree (tracked + untracked),
 # EXCLUDING .factory/, computed via a throwaway index so the real index is
@@ -114,11 +241,27 @@ respect_pause() {
 # accepts an explicit dir so a gate can hash the repo the command actually
 # targets, not just the one the session started in (issue #28).
 tree_hash() {
-  local dir="${1:-$PROJECT_DIR}" idx out
+  local dir="${1:-$PROJECT_DIR}" idx out rel
   idx="$(mktemp)"; rm -f "$idx"
+  # Exclude the SESSION's .factory wherever it actually lives relative to the
+  # hashed dir, not just a top-level .factory. When Claude is opened in a
+  # subdirectory of the repo (a monorepo package), FACTORY_DIR is
+  # <repo>/<subdir>/.factory but the receipt binds to the repo-root tree — so a
+  # ':(exclude).factory' pathspec (relative to the repo root) would miss it, the
+  # freshly-minted receipt would land INSIDE the hashed tree, and every commit
+  # would be denied "stale-tree" forever. Compute the receipt dir's path
+  # relative to the hashed dir (pure prefix strip, no node) and exclude it too.
+  case "$FACTORY_DIR" in
+    "$dir"/*) rel="${FACTORY_DIR#"$dir"/}" ;;
+    *) rel="" ;;
+  esac
   out="$(
     cd "$dir" 2>/dev/null || exit 0
-    GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1
+    if [ -n "$rel" ] && [ "$rel" != ".factory" ]; then
+      GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' ":(exclude)$rel" >/dev/null 2>&1
+    else
+      GIT_INDEX_FILE="$idx" git add -A -- ':(exclude).factory' >/dev/null 2>&1
+    fi
     GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null
   )"
   rm -f "$idx"
@@ -230,6 +373,43 @@ receipt_embed_sig() {
       try{const o=JSON.parse(s);o.sig=c.createHmac("sha256",process.env.SECRET).update(String(o.ok)+":"+(o.tree||"")).digest("hex");process.stdout.write(JSON.stringify(o));}
       catch(e){process.stdout.write(s);}
     });'
+}
+
+# --- roadmap-proof signing (issue #51) ---------------------------------------
+# The roadmap proof ({mergedGreenSha, item}) has its own payload shape, so it
+# gets its own HMAC helpers: receipt_embed_sig signs ok+tree, which for this
+# shape would degenerate to the CONSTANT "undefined:" — one old signature would
+# then be a skeleton key validating every forged proof. These sign/verify over
+# mergedGreenSha:item instead. Same key and trust model as the gate receipts
+# (receipt_secret; no key configured → nothing to verify, backward compatible).
+
+# roadmap_proof_embed_sig — proof JSON on stdin → same JSON with a "sig" field
+# on stdout when a key is configured; a passthrough otherwise.
+roadmap_proof_embed_sig() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || { cat; return; }
+  SECRET="$secret" node -e '
+    const c=require("crypto");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try{const o=JSON.parse(s);o.sig=c.createHmac("sha256",process.env.SECRET).update(String(o.mergedGreenSha||"")+":"+String(o.item||"")).digest("hex");process.stdout.write(JSON.stringify(o));}
+      catch(e){process.stdout.write(s);}
+    });'
+}
+
+# roadmap_proof_verify <file> — 0 when acceptable (no key configured, or the
+# signature over mergedGreenSha:item is valid); 1 when a key is set and the
+# signature is missing/invalid.
+roadmap_proof_verify() {
+  local secret; secret="$(receipt_secret)"
+  [ -n "$secret" ] || return 0
+  REC="$1" SECRET="$secret" node -e '
+    const fs=require("fs"),c=require("crypto");
+    try{
+      const o=JSON.parse(fs.readFileSync(process.env.REC,"utf8"));
+      const want=c.createHmac("sha256",process.env.SECRET).update(String(o.mergedGreenSha||"")+":"+String(o.item||"")).digest("hex");
+      const got=String(o.sig||"");
+      process.exit(got.length===want.length && c.timingSafeEqual(Buffer.from(got),Buffer.from(want))?0:1);
+    }catch(e){process.exit(1)}
+  ' 2>/dev/null
 }
 
 staged_files() { ( cd "${1:-$PROJECT_DIR}" 2>/dev/null && git diff --cached --name-only 2>/dev/null ); }

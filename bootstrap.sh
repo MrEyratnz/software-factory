@@ -3,7 +3,7 @@
 # Run once, locally, from a checkout of this repo. Idempotent: every step
 # checks before it creates, so re-running after a partial failure is safe.
 #
-# What it does (see docs/adr/0002-event-driven-github-actions-factory.md):
+# What it does (see docs/adr/0003-event-driven-github-actions-factory.md):
 #   1. verify prereqs                      6. OSS scaffolding + funding handles
 #   2. create/confirm repo + protect main  7. Projects v2 board + fields
 #   3. one GitHub App per agent role       8. Dockerized self-hosted runner
@@ -235,7 +235,7 @@ create_role_app() {
 }
 
 if [ "${FACTORY_APPS_SKIP:-false}" = "true" ]; then
-  warn "FACTORY_APPS_SKIP=true — sessions fall back to FACTORY_PAT/GITHUB_TOKEN (pushes may not trigger workflows; see ADR 0002)"
+  warn "FACTORY_APPS_SKIP=true — sessions fall back to FACTORY_PAT/GITHUB_TOKEN (pushes may not trigger workflows; see ADR 0003)"
   for role in $ROLES; do ensure_environment "$role"; done
 else
   for role in $ROLES; do

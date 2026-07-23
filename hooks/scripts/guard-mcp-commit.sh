@@ -25,6 +25,9 @@
 . "$(dirname "$0")/../lib/common.sh"
 
 respect_pause guard-mcp-commit
+require_initialized guard-mcp-commit
+# issue #52: degrade LOUDLY (never silently) when node is unavailable.
+node_guard guard-mcp-commit || allow
 tn="$(field tool_name)"
 case "$tn" in
   mcp__github__create_or_update_file|mcp__github__push_files|mcp__github__delete_file) ;;
