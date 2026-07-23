@@ -33,6 +33,18 @@ log()  { printf '>> %s\n' "$*" >&2; }
 warn() { printf '!! %s\n' "$*" >&2; }
 die()  { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
 
+# gh_val — capture a gh api value ONLY on exit 0 and only when non-empty.
+# gh writes its JSON error body to STDOUT and exits non-zero on 404/403, so any
+# `x="$(gh api ...)"` that gates on stdout text mistakes that blob for a real
+# value. Route those captures through this helper (or an explicit `if x="$(...)"`)
+# so the EXIT STATUS decides, never the error body.
+gh_val() {
+  local v
+  v="$(gh api "$@" 2>/dev/null)" || return 1
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
 # --- 1. prereqs --------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || die "$2"; }
 need git     "git is required — install git and re-run"
@@ -77,7 +89,6 @@ if ! gh repo view "$REPO" >/dev/null 2>&1; then
   log "creating repo $REPO"
   gh repo create "$REPO" --public --source . --remote origin >&2
 fi
-REPO_ID="$(gh api "repos/$REPO" --jq .id)"
 REPO_NODE_ID="$(gh api "repos/$REPO" --jq .node_id)"
 
 # --- 6a. OSS scaffolding (before protection: direct pushes still allowed) ----
@@ -126,9 +137,31 @@ if [ -s "$fund_tmp" ]; then
 fi
 rm -f "$fund_tmp"
 
-log "pushing main"
 default_branch="$(git rev-parse --abbrev-ref HEAD)"
-git push -u origin "$default_branch" >&2 || die "push failed — check repo permissions ($scaffold_commits scaffold commit(s) pending)"
+# main is protected a few lines down (enforce_admins + required PRs), which
+# blocks ALL direct pushes. So only push when there is something to push AND the
+# branch is not already protected; if it is protected with commits pending, warn
+# and continue (route them via a PR) — never die on a re-run.
+git fetch origin "$default_branch" >/dev/null 2>&1 || true
+ahead="$(git rev-list --count "@{u}..HEAD" 2>/dev/null || printf '0')"
+case "$ahead" in ''|*[!0-9]*) ahead=0 ;; esac
+branch_protected=false
+if gh api "repos/$REPO/branches/$default_branch/protection" >/dev/null 2>&1; then
+  branch_protected=true
+fi
+if [ "$ahead" -gt 0 ]; then
+  if [ "$branch_protected" = true ]; then
+    warn "$default_branch is protected and $ahead local commit(s) are pending — route them via a branch + PR (bootstrap will not force a direct push to a protected branch)"
+  else
+    log "pushing $default_branch ($ahead commit(s))"
+    git push -u origin "$default_branch" >&2 \
+      || warn "push to $default_branch failed — if it is protected, open a PR for the $scaffold_commits scaffold commit(s); continuing"
+  fi
+elif [ "$branch_protected" != true ]; then
+  log "pushing $default_branch"
+  git push -u origin "$default_branch" >&2 \
+    || warn "push to $default_branch failed — continuing (check repo permissions)"
+fi
 
 log "protecting main: required check green-gate, PRs required, 0 approvals, admins enforced"
 printf '%s' '{
@@ -148,9 +181,9 @@ role_perms() {
   # Least privilege per role — mirrors the plugin's guard scopes (docs/security).
   case "$1" in
     orchestrator) printf '{"contents":"write","actions":"write","issues":"write","pull_requests":"write"}' ;;
-    coder)        printf '{"contents":"write","issues":"write","pull_requests":"write","workflows":"write"}' ;;
-    reviewer)     printf '{"contents":"read","pull_requests":"write","checks":"read","issues":"read"}' ;;
-    triage)       printf '{"issues":"write"}' ;;
+    coder)        printf '{"contents":"write","issues":"write","pull_requests":"write","workflows":"write","actions":"read"}' ;;
+    reviewer)     printf '{"contents":"read","pull_requests":"write","checks":"read","issues":"write"}' ;;
+    triage)       printf '{"issues":"write","contents":"read"}' ;;
     qa)           printf '{"contents":"write","issues":"write","actions":"read"}' ;;
     release)      printf '{"contents":"write","pull_requests":"write","issues":"read"}' ;;
     security)     printf '{"contents":"write","issues":"write","security_events":"read"}' ;;
@@ -163,82 +196,171 @@ ensure_environment() {
 }
 
 env_has_app() {
-  gh api "repos/$REPO/environments/$1/variables/APP_ID" --jq .value 2>/dev/null
+  # Gate on gh's EXIT STATUS, not its stdout: on a 404 gh writes the JSON error
+  # body to stdout AND exits 1, so a text-only check would treat that blob as a
+  # configured APP_ID and skip every role. Self-contained (the contract test
+  # sources this function in isolation) so it must not call gh_val.
+  local v
+  v="$(gh api "repos/$REPO/environments/$1/variables/APP_ID" --jq .value 2>/dev/null)" || return 1
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
+APP_STATE_DIR="factory-ops/state/.bootstrap-apps"
+
+# mint_app_jwt <app_id> <pem_file> — an RS256-signed App JWT (iat/exp/iss), so
+# we can call the App-authenticated `GET /repos/$REPO/installation` to VERIFY the
+# app is actually installed on THIS repo. No installation id needed — the CI
+# token minter resolves it from app-id + private key at runtime.
+mint_app_jwt() {
+  APP_JWT_ID="$1" APP_JWT_PEM="$2" node -e '
+    const crypto = require("node:crypto"), fs = require("node:fs");
+    const pem = fs.readFileSync(process.env.APP_JWT_PEM, "utf8");
+    const now = Math.floor(Date.now() / 1000);
+    const b64 = o => Buffer.from(typeof o === "string" ? o : JSON.stringify(o)).toString("base64url");
+    const head = b64({ alg: "RS256", typ: "JWT" });
+    const body = b64({ iat: now - 60, exp: now + 540, iss: process.env.APP_JWT_ID });
+    const data = head + "." + body;
+    const sig = crypto.sign("RSA-SHA256", Buffer.from(data), pem).toString("base64url");
+    process.stdout.write(data + "." + sig);
+  '
+}
+
+# Assert the app is installed on THIS repo before storing its credentials, so a
+# human who picked the wrong repo in the install selector fails loudly HERE
+# rather than silently at runtime weeks later.
+verify_repo_install() {
+  local role="$1" app_id="$2" pem="$3" html_url="$4" pemfile jwt cov
+  pemfile="$(mktemp)"; chmod 600 "$pemfile"; printf '%s' "$pem" > "$pemfile"
+  cov=""
+  for _ in $(seq 1 120); do
+    jwt="$(mint_app_jwt "$app_id" "$pemfile")" || break
+    cov="$(gh api -H "Authorization: Bearer $jwt" "repos/$REPO/installation" --jq .app_id 2>/dev/null || true)"
+    [ "$cov" = "$app_id" ] && break
+    cov=""
+    sleep 5
+  done
+  rm -f "$pemfile"
+  [ "$cov" = "$app_id" ] || die "[$role] app #$app_id is not installed on $REPO — open $html_url/installations/new, pick $REPO, then re-run (bootstrap is idempotent)"
 }
 
 serve_manifest() {
-  # Serves the auto-submitting manifest form; prints the returned code on stdout.
-  local role="$1" manifest="$2" srv
+  # Serves the auto-submitting manifest form and captures the returned code into
+  # $codefile. Binds 127.0.0.1 only, validates a per-run random state nonce, and
+  # signals readiness (after listen) via $readyfile so the browser is opened only
+  # once the port is actually accepting connections.
+  local role="$1" manifest="$2" state="$3" codefile="$4" readyfile="$5" srv
   srv="$(mktemp --suffix=.mjs)"
   cat > "$srv" <<'JS'
 import http from "node:http";
 import { URL } from "node:url";
-const [port, role, manifest] = process.argv.slice(2);
+import fs from "node:fs";
+const [port, role, manifest, state, codefile, readyfile] = process.argv.slice(2);
 const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 const html = `<!doctype html><meta charset="utf-8"><body>
-<form id="f" action="https://github.com/settings/apps/new?state=${esc(role)}" method="post">
+<form id="f" action="https://github.com/settings/apps/new?state=${esc(state)}" method="post">
 <input type="hidden" name="manifest" value="${esc(manifest)}"></form>
 <script>document.getElementById("f").submit()</script></body>`;
 const server = http.createServer((req, res) => {
-  const u = new URL(req.url, `http://localhost:${port}`);
+  const u = new URL(req.url, `http://127.0.0.1:${port}`);
   if (u.pathname === "/callback" && u.searchParams.get("code")) {
+    if (u.searchParams.get("state") !== state) { res.statusCode = 400; res.end("bad state"); return; }
     res.end(`App for role "${role}" created — return to the terminal.`);
-    process.stdout.write(u.searchParams.get("code"));
+    fs.writeFileSync(codefile, u.searchParams.get("code"));
     setTimeout(() => process.exit(0), 300);
   } else {
     res.setHeader("content-type", "text/html");
     res.end(html);
   }
 });
-server.listen(Number(port));
+server.on("error", e => { console.error(`port ${port} unavailable (${e.code}) — set FACTORY_APP_PORT and re-run`); process.exit(2); });
+server.listen(Number(port), "127.0.0.1", () => {
+  fs.writeFileSync(readyfile, "ready");
+  console.error(`[${role}] manifest server listening on 127.0.0.1:${port}`);
+});
 setTimeout(() => { console.error(`timed out waiting for the ${role} app callback`); process.exit(1); }, 600000);
 JS
-  node "$srv" "$APP_PORT" "$role" "$manifest"
+  node "$srv" "$APP_PORT" "$role" "$manifest" "$state" "$codefile" "$readyfile"
   local rc=$?
   rm -f "$srv"
   return $rc
 }
 
 create_role_app() {
-  local role="$1" app_name manifest code conv app_id slug pem html_url iid
-  app_name="dsf-$role-$(printf '%s' "$OWNER_LOGIN" | tr '[:upper:]' '[:lower:]' | cut -c1-12)"
-  manifest="$(ROLE_NAME="$app_name" ROLE_PERMS="$(role_perms "$role")" REPO_URL="https://github.com/$REPO" PORT="$APP_PORT" node -e '
-    process.stdout.write(JSON.stringify({
-      name: process.env.ROLE_NAME.slice(0, 34),
-      url: process.env.REPO_URL,
-      public: false,
-      redirect_url: `http://localhost:${process.env.PORT}/callback`,
-      default_permissions: JSON.parse(process.env.ROLE_PERMS),
-      default_events: [],
-    }));
-  ')"
-  log "[$role] open http://localhost:$APP_PORT — one click creates app $app_name"
-  ( command -v xdg-open >/dev/null 2>&1 && xdg-open "http://localhost:$APP_PORT" >/dev/null 2>&1 ) || \
-  ( command -v open >/dev/null 2>&1 && open "http://localhost:$APP_PORT" >/dev/null 2>&1 ) || true
-  code="$(serve_manifest "$role" "$manifest")" || die "app-manifest flow failed for $role"
-  conv="$(gh api -X POST "app-manifests/$code/conversions")"
-  app_id="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id')"
-  slug="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).slug')"
-  pem="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).pem')"
-  html_url="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).html_url')"
+  local role="$1" app_name manifest state code conv app_id slug pem html_url
+  local statefile codefile readyfile srv_pid rc
+  statefile="$APP_STATE_DIR/$role.json"
+
+  if [ -f "$statefile" ]; then
+    # Resume: the one-time pem was persisted the instant it was minted, so a
+    # retry after any later failure recreates nothing (the app name is globally
+    # unique) — it reads app_id/slug/pem back and resumes at install-verify.
+    log "[$role] resuming from persisted app state ($statefile)"
+    app_id="$(node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).app_id' < "$statefile")"
+    slug="$(node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).slug' < "$statefile")"
+    pem="$(node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).pem' < "$statefile")"
+    html_url="https://github.com/apps/$slug"
+  else
+    app_name="dsf-$role-$(printf '%s' "$OWNER_LOGIN" | tr '[:upper:]' '[:lower:]' | cut -c1-12)"
+    manifest="$(ROLE_NAME="$app_name" ROLE_PERMS="$(role_perms "$role")" REPO_URL="https://github.com/$REPO" PORT="$APP_PORT" node -e '
+      process.stdout.write(JSON.stringify({
+        name: process.env.ROLE_NAME.slice(0, 34),
+        url: process.env.REPO_URL,
+        public: false,
+        redirect_url: `http://localhost:${process.env.PORT}/callback`,
+        default_permissions: JSON.parse(process.env.ROLE_PERMS),
+        default_events: [],
+      }));
+    ')"
+    state="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+    codefile="$(mktemp)"; readyfile="$(mktemp)"; rm -f "$readyfile"
+    # Start the manifest server FIRST; only open the browser after it has bound
+    # and written its ready sentinel, or the first GET races a not-yet-listening
+    # port and the human sees ERR_CONNECTION_REFUSED.
+    serve_manifest "$role" "$manifest" "$state" "$codefile" "$readyfile" &
+    srv_pid=$!
+    for _ in $(seq 1 100); do [ -f "$readyfile" ] && break; sleep 1; done
+    log "[$role] open http://localhost:$APP_PORT — one click creates app $app_name"
+    ( command -v xdg-open >/dev/null 2>&1 && xdg-open "http://localhost:$APP_PORT" >/dev/null 2>&1 ) || \
+    ( command -v open >/dev/null 2>&1 && open "http://localhost:$APP_PORT" >/dev/null 2>&1 ) || true
+    wait "$srv_pid"; rc=$?
+    code="$(cat "$codefile" 2>/dev/null || true)"
+    rm -f "$codefile" "$readyfile"
+    case "$rc" in
+      0) [ -n "$code" ] || die "[$role] app-manifest flow returned no code" ;;
+      2) die "[$role] manifest server port $APP_PORT unavailable — set FACTORY_APP_PORT and re-run" ;;
+      *) die "[$role] app-manifest flow timed out for $role" ;;
+    esac
+    conv="$(gh api -X POST "app-manifests/$code/conversions")" || die "[$role] manifest conversion failed"
+    app_id="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id')"
+    slug="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).slug')"
+    pem="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).pem')"
+    html_url="$(printf '%s' "$conv" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).html_url')"
+    # Persist the one-time pem the INSTANT the conversion returns (0600), before
+    # any step that can fail under set -e. Deleted only after the secret+variable
+    # are confirmed stored below.
+    mkdir -p "$APP_STATE_DIR"
+    ( umask 077; printf '%s' "$conv" | node -e '
+      const fs=require("node:fs");
+      const c=JSON.parse(require("fs").readFileSync(0,"utf8"));
+      fs.writeFileSync(process.argv[1], JSON.stringify({app_id:c.id, slug:c.slug, pem:c.pem}));
+    ' "$statefile" )
+    chmod 600 "$statefile"
+  fi
 
   log "[$role] app #$app_id ($slug) — now install it on $REPO (browser click)"
   ( command -v xdg-open >/dev/null 2>&1 && xdg-open "$html_url/installations/new" >/dev/null 2>&1 ) || \
   ( command -v open >/dev/null 2>&1 && open "$html_url/installations/new" >/dev/null 2>&1 ) || \
     log "[$role] open $html_url/installations/new"
-  iid=""
-  for _ in $(seq 1 120); do
-    iid="$(gh api user/installations --paginate --jq ".installations[] | select(.app_id == $app_id) | .id" 2>/dev/null | head -1)"
-    [ -n "$iid" ] && break
-    sleep 5
-  done
-  [ -n "$iid" ] || die "[$role] app never installed — install $html_url and re-run (bootstrap is idempotent)"
-  gh api -X PUT "user/installations/$iid/repositories/$REPO_ID" >/dev/null 2>&1 || true
+  verify_repo_install "$role" "$app_id" "$pem" "$html_url"
 
   ensure_environment "$role"
-  gh variable set APP_ID --env "$role" --repo "$REPO" --body "$app_id" >&2
+  # Write the SECRET first and the APP_ID VARIABLE last: env_has_app keys off
+  # APP_ID, so "APP_ID present" must mean the key is genuinely there too.
   gh secret  set APP_PRIVATE_KEY --env "$role" --repo "$REPO" --body "$pem" >&2
-  log "[$role] environment configured (APP_ID + APP_PRIVATE_KEY)"
+  gh variable set APP_ID --env "$role" --repo "$REPO" --body "$app_id" >&2
+  rm -f "$statefile"
+  log "[$role] environment configured (APP_PRIVATE_KEY + APP_ID)"
 }
 
 if [ "${FACTORY_APPS_SKIP:-false}" = "true" ]; then
@@ -246,7 +368,7 @@ if [ "${FACTORY_APPS_SKIP:-false}" = "true" ]; then
   for role in $ROLES; do ensure_environment "$role"; done
 else
   for role in $ROLES; do
-    if [ -n "$(env_has_app "$role" || true)" ]; then
+    if env_has_app "$role" >/dev/null; then
       log "[$role] app already configured — skipping"
       continue
     fi
@@ -282,10 +404,22 @@ elif [ -z "$existing_cred" ]; then
 fi
 if [ -n "${FACTORY_PAT:-}" ]; then
   gh secret set FACTORY_PAT --repo "$REPO" --body "$FACTORY_PAT" >&2
+  # The Projects v2 workflows (project-pickup.yml, claude-issue-triage.yml) read
+  # secrets.PROJECT_TOKEN, not FACTORY_PAT — store the same PAT under both names.
+  gh secret set PROJECT_TOKEN --repo "$REPO" --body "$FACTORY_PAT" >&2
 else
-  warn "FACTORY_PAT not set — Projects v2 board sync will no-op until it is added"
+  warn "FACTORY_PAT not set — Projects v2 board sync (needs secrets.PROJECT_TOKEN) will no-op until it is added"
 fi
-gh variable set FACTORY_HALT         --repo "$REPO" --body "false" >&2
+# FACTORY_HALT is a human kill-switch: initialize it only when it does not exist.
+# A re-run must never silently un-halt a factory a human deliberately stopped.
+FACTORY_HALTED=false
+halt_state="$(gh variable get FACTORY_HALT --repo "$REPO" 2>/dev/null || true)"
+if [ "$halt_state" = "true" ]; then
+  FACTORY_HALTED=true
+  warn "FACTORY_HALT=true — a human halted this factory; leaving it halted and NOT dispatching a run"
+elif [ -z "$halt_state" ]; then
+  gh variable set FACTORY_HALT       --repo "$REPO" --body "false" >&2
+fi
 gh variable set MAX_PARALLEL_AGENTS  --repo "$REPO" --body "$MAX_PARALLEL_AGENTS" >&2
 gh variable set SPRINT_HOURS         --repo "$REPO" --body "$SPRINT_HOURS" >&2
 gh variable set CLAUDE_CODE_VERSION  --repo "$REPO" --body "$CLAUDE_CODE_VERSION" >&2
@@ -317,8 +451,14 @@ ensure_milestone v1.1.0 "post-1.0: feature-freeze overflow"
 
 log "seeding the Epic 1 backlog"
 ensure_issue() {
-  local title="$1" labels="$2" body="$3"
-  gh issue list --repo "$REPO" --state all --search "in:title \"$title\"" --json title --jq '.[].title' | grep -Fxq "$title" && return 0
+  # De-dup against the AUTHORITATIVE REST issue list, not the eventually-consistent
+  # search index (a prompt re-run does not see just-created issues in search and
+  # duplicates the backlog). Capture to a variable first, then grep the variable —
+  # a `... | grep -Fxq` pipeline can surface 141 from grep's early exit under
+  # pipefail.
+  local title="$1" labels="$2" body="$3" existing
+  existing="$(gh api "repos/$REPO/issues?state=all&per_page=100" --paginate --jq '.[] | select(.pull_request==null) | .title' 2>/dev/null || true)"
+  if grep -Fxq "$title" <<<"$existing"; then return 0; fi
   gh issue create --repo "$REPO" --title "$title" --label "$labels" --milestone v1.0.0 --body "$body" >&2
 }
 ensure_issue "Epic 1: plugin test suite (tracking)" "P1" \
@@ -343,45 +483,71 @@ printf '%s' '{"state":"configured"}' \
 log "ensuring the Factory Board (Projects v2)"
 project_id=""
 project_number=""
-existing="$(gh api graphql -f query='query($login: String!) {
+# Branch on EXIT STATUS: with no project scope gh prints the GraphQL error
+# document to stdout and exits 1; a stdout-text check would slice that blob into
+# PROJECT_ID and write it as a repo variable.
+if existing="$(gh api graphql -f query='query($login: String!) {
   user(login: $login) { projectsV2(first: 100) { nodes { id number title } } }
-}' -f login="$OWNER_LOGIN" --jq '.data.user.projectsV2.nodes[] | select(.title == "Factory Board") | [.id, (.number|tostring)] | join(" ")' 2>/dev/null | head -1 || true)"
+}' -f login="$OWNER_LOGIN" --jq '.data.user.projectsV2.nodes[] | select(.title == "Factory Board") | [.id, (.number|tostring)] | join(" ")' 2>/dev/null | head -1)"; then
+  :
+else
+  existing=""
+  warn "projects query failed (needs a PAT with read:project) — will attempt to create the board"
+fi
 if [ -n "$existing" ]; then
   project_id="${existing%% *}"
   project_number="${existing##* }"
-  log "Factory Board exists (#$project_number)"
-else
+  case "$project_id" in PVT_*) log "Factory Board exists (#$project_number)" ;; *) project_id=""; project_number="" ;; esac
+fi
+if [ -z "$project_id" ]; then
   owner_node="$(gh api user --jq .node_id)"
-  created="$(gh api graphql -f query='mutation($owner: ID!) {
+  if created="$(gh api graphql -f query='mutation($owner: ID!) {
     createProjectV2(input: {ownerId: $owner, title: "Factory Board"}) { projectV2 { id number } }
-  }' -f owner="$owner_node" --jq '.data.createProjectV2.projectV2 | [.id, (.number|tostring)] | join(" ")')" \
-    || warn "could not create the Projects v2 board (a PAT with project scope may be required)"
-  project_id="${created%% *}"
-  project_number="${created##* }"
+  }' -f owner="$owner_node" --jq '.data.createProjectV2.projectV2 | [.id, (.number|tostring)] | join(" ")' 2>/dev/null)"; then
+    :
+  else
+    created=""
+    warn "could not create the Projects v2 board (a PAT with project scope may be required)"
+  fi
+  if [ -n "$created" ]; then
+    project_id="${created%% *}"
+    project_number="${created##* }"
+    case "$project_id" in PVT_*) ;; *) project_id=""; project_number="" ;; esac
+  fi
   if [ -n "$project_id" ]; then
     gh api graphql -f query='mutation($p: ID!, $r: ID!) {
       linkProjectV2ToRepository(input: {projectId: $p, repositoryId: $r}) { repository { id } }
     }' -f p="$project_id" -f r="$REPO_NODE_ID" >/dev/null 2>&1 || true
-    add_field() {
-      gh api graphql -f query="mutation(\$p: ID!) {
-        createProjectV2Field(input: {projectId: \$p, dataType: $2, name: \"$1\"$3}) {
-          projectV2Field { ... on ProjectV2FieldCommon { id } }
-        }
-      }" -f p="$project_id" >/dev/null 2>&1 || warn "field $1 not created (may exist)"
-    }
-    role_opts=""
-    for role in $ROLES; do
-      role_opts="$role_opts{name: \"$role\", color: GRAY, description: \"\"},"
-    done
-    add_field Owner SINGLE_SELECT ", singleSelectOptions: [${role_opts}{name: \"human\", color: BLUE, description: \"\"}]"
-    add_field Priority SINGLE_SELECT ', singleSelectOptions: [{name: "P0", color: RED, description: ""},{name: "P1", color: ORANGE, description: ""},{name: "P2", color: YELLOW, description: ""},{name: "P3", color: GREEN, description: ""}]'
-    add_field Sprint NUMBER ""
-    add_field Cost NUMBER ""
   fi
 fi
+# Ensure the board's fields whenever we have a valid board — NOT only on the run
+# that created it — so a board left with fields missing gets completed later.
 if [ -n "$project_id" ]; then
-  gh variable set PROJECT_ID     --repo "$REPO" --body "$project_id" >&2
-  gh variable set PROJECT_NUMBER --repo "$REPO" --body "$project_number" >&2
+  existing_fields="$(gh api graphql -f query='query($id: ID!) {
+    node(id: $id) { ... on ProjectV2 { fields(first: 50) { nodes { ... on ProjectV2FieldCommon { name } } } } }
+  }' -f id="$project_id" --jq '.data.node.fields.nodes[]?.name' 2>/dev/null || true)"
+  add_field() {
+    # A real skip when the field already exists, not a swallowed "may exist" warn.
+    if grep -Fxq "$1" <<<"$existing_fields"; then return 0; fi
+    gh api graphql -f query="mutation(\$p: ID!) {
+      createProjectV2Field(input: {projectId: \$p, dataType: $2, name: \"$1\"$3}) {
+        projectV2Field { ... on ProjectV2FieldCommon { id } }
+      }
+    }" -f p="$project_id" >/dev/null 2>&1 || warn "field $1 not created (may exist)"
+  }
+  role_opts=""
+  for role in $ROLES; do
+    role_opts="$role_opts{name: \"$role\", color: GRAY, description: \"\"},"
+  done
+  add_field Owner SINGLE_SELECT ", singleSelectOptions: [${role_opts}{name: \"human\", color: BLUE, description: \"\"}]"
+  add_field Priority SINGLE_SELECT ', singleSelectOptions: [{name: "P0", color: RED, description: ""},{name: "P1", color: ORANGE, description: ""},{name: "P2", color: YELLOW, description: ""},{name: "P3", color: GREEN, description: ""}]'
+  add_field Sprint NUMBER ""
+  add_field Cost NUMBER ""
+
+  gh variable set PROJECT_ID            --repo "$REPO" --body "$project_id" >&2
+  gh variable set PROJECT_NUMBER        --repo "$REPO" --body "$project_number" >&2
+  # project-pickup.yml / claude-issue-triage.yml read vars.TRIAGE_PROJECT_NUMBER.
+  gh variable set TRIAGE_PROJECT_NUMBER --repo "$REPO" --body "$project_number" >&2
 fi
 
 # --- 8. self-hosted runner (icculus): Dockerized + egress allowlist ----------
@@ -456,14 +622,21 @@ else
 fi
 
 # --- 9. first dispatch -------------------------------------------------------
-log "dispatching the first factory-run"
-gh workflow run factory-run.yml --repo "$REPO" >&2
-run_url=""
-for _ in $(seq 1 24); do
-  sleep 5
-  run_url="$(gh run list --repo "$REPO" --workflow=factory-run.yml --limit 1 --json url --jq '.[0].url' 2>/dev/null)"
-  [ -n "$run_url" ] && break
-done
-[ -n "$run_url" ] || run_url="https://github.com/$REPO/actions/workflows/factory-run.yml"
+run_url="https://github.com/$REPO/actions/workflows/factory-run.yml"
+if [ "$FACTORY_HALTED" = true ]; then
+  warn "factory is halted (FACTORY_HALT=true) — skipping the first factory-run dispatch"
+else
+  log "dispatching the first factory-run"
+  gh workflow run factory-run.yml --repo "$REPO" >&2
+  for _ in $(seq 1 24); do
+    sleep 5
+    # `|| true`: gh exits 1 when the workflow is not yet on the default branch or
+    # on a transient error; under set -e that would kill a fully-successful
+    # bootstrap with NO output, violating the "only Factory is live" contract.
+    run_url="$(gh run list --repo "$REPO" --workflow=factory-run.yml --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)"
+    [ -n "$run_url" ] && break
+  done
+  [ -n "$run_url" ] || run_url="https://github.com/$REPO/actions/workflows/factory-run.yml"
+fi
 
 printf 'Factory is live: %s\n' "$run_url"

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Fake `gh` for tests/bootstrap.contract.test.sh.
+#
+# It records every invocation and returns canned output, and it faithfully
+# reproduces the exact failure modes the adversarial audit found — the ones a
+# naive stub would paper over:
+#   * a 404 variable read: gh writes the JSON error BODY to STDOUT and exits 1
+#   * user/installations: 403 (needs a user-to-server App token) — body + exit 1
+#   * a Projects v2 query with no project scope: the GraphQL error DOCUMENT to
+#     STDOUT and exit 1
+# Behaviour is steered per-test through env vars (APP_ID_MODE, GRAPHQL_EXISTING,
+# RUNLIST_MODE, HALT_STATE, ISSUE_SEARCH, ISSUE_REST, INSTALLATIONS_MODE, ...).
+: "${CALL_LOG:=/dev/null}"; : "${VARSET_LOG:=/dev/null}"; : "${SECSET_LOG:=/dev/null}"
+printf 'gh %s\n' "$*" >> "$CALL_LOG"
+args="$*"
+
+# Drain any piped `--input -` payload so the producer never SIGPIPEs / hangs.
+case "$args" in *"--input"*) cat >/dev/null 2>&1 || true ;; esac
+
+# Structured record of variable/secret writes, preserving the exact --body value
+# (a raw `$*` log collapses embedded spaces and can't be parsed reliably).
+if [ "${1:-}" = variable ] && [ "${2:-}" = set ]; then
+  name="$3"; body=""; want=0
+  for a in "$@"; do
+    [ "$want" = 1 ] && { body="$a"; want=0; }
+    [ "$a" = --body ] && want=1
+  done
+  printf '%s\t%s\n' "$name" "$body" >> "$VARSET_LOG"
+fi
+if [ "${1:-}" = secret ] && [ "${2:-}" = set ]; then
+  printf '%s\n' "$3" >> "$SECSET_LOG"
+fi
+
+case "$args" in
+  "auth status") exit 0 ;;
+  "api user --jq .login")   printf '%s' "${FAKE_OWNER:-octocat}"; exit 0 ;;
+  "api user --jq .node_id") printf 'U_owner'; exit 0 ;;
+  "repo view "*)            exit "${REPO_VIEW_RC:-0}" ;;
+
+  # --- the audit's 404: error body on STDOUT, exit 1 -------------------------
+  *"variables/APP_ID"*)
+    case "${APP_ID_MODE:-missing}" in
+      404)   printf '{"message":"Not Found","documentation_url":"https://docs.github.com/rest"}'; exit 1 ;;
+      value) printf 'app-id-123'; exit 0 ;;
+      *)     exit 1 ;;   # genuinely absent — gh 404s here too; no value, exit 1
+    esac ;;
+
+  "variable get FACTORY_HALT"*) printf '%s' "${HALT_STATE:-false}"; exit 0 ;;
+  "variable set "*) exit 0 ;;
+  "secret set "*)   exit 0 ;;
+  "secret list"*)   exit 0 ;;   # empty -> no pre-existing repo credential
+  "label create "*) exit 0 ;;
+
+  *"milestones?state=all"*) exit 0 ;;                 # empty list -> create path
+  *"-X POST"*"/milestones"*) exit 0 ;;
+  *"issues?state=all"*) printf '%s' "${ISSUE_REST:-}"; exit 0 ;;   # REST de-dup (fix)
+  "issue list "*"--search"*) printf '%s' "${ISSUE_SEARCH:-}"; exit 0 ;;  # lagging search (bug)
+  "issue create "*) exit 0 ;;
+
+  *"app-manifests/"*"/conversions"*) printf '{}'; exit 0 ;;
+
+  # --- the audit's 403: user/installations needs a user-to-server token ------
+  *"user/installations"*)
+    case "${INSTALLATIONS_MODE:-403}" in
+      403) printf '{"message":"You must authenticate via a GitHub App user-to-server token."}'; exit 1 ;;
+      *)   exit 0 ;;
+    esac ;;
+  *"repos/"*"/installation"*) printf '{"id":9,"app_id":123}'; exit 0 ;;  # repo-coverage verify (fix)
+
+  "api graphql "*)
+    case "$args" in
+      *"projectsV2(first"*)
+        case "${GRAPHQL_EXISTING:-}" in
+          ERROR) printf '{"data":null,"errors":[{"type":"INSUFFICIENT_SCOPES","message":"read:project required"}]}'; exit 1 ;;
+          "")    exit 0 ;;                         # no board -> create branch
+          *)     printf '%s' "$GRAPHQL_EXISTING"; exit 0 ;;   # e.g. "PVT_exist 3"
+        esac ;;
+      *"createProjectV2Field"*)       exit 0 ;;
+      *"linkProjectV2ToRepository"*)  exit 0 ;;
+      *"createProjectV2("*)           printf 'PVT_new 7'; exit 0 ;;
+      *) exit 0 ;;
+    esac ;;
+
+  "workflow run "*) exit 0 ;;
+  "run list "*)
+    case "${RUNLIST_MODE:-ok}" in
+      fail) exit 1 ;;   # transient / workflow not yet on default branch
+      *)    printf 'https://github.com/%s/actions/runs/1' "${FACTORY_REPO:-owner/repo}"; exit 0 ;;
+    esac ;;
+
+  # A bare GET on the protection endpoint is the fix's "is main protected?" probe.
+  *"branches/main/protection") exit 0 ;;   # 200 == protected
+
+  "repo edit "*) exit 0 ;;
+  "api "*)       exit 0 ;;   # environments PUT, security posture, generic reads
+  *)             exit 0 ;;
+esac

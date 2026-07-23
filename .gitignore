@@ -15,6 +15,10 @@ coverage/
 .factory/ledger.jsonl
 .factory/active-agent
 
+# One-time GitHub App private keys persisted by bootstrap.sh so a partial run can
+# resume (0600). Deleted once the secret+variable are stored; must never commit.
+factory-ops/state/.bootstrap-apps/
+
 # Personal Claude Code overrides — never committed (the shared project
 # settings live in .claude/settings.json, which IS committed).
 .claude/settings.local.json

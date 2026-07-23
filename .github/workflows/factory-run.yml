@@ -37,6 +37,19 @@ permissions:
 jobs:
   session:
     if: vars.FACTORY_HALT != 'true'
+    # The implementer station: it commits, pushes branches, opens PRs, and files
+    # issues. This is the widest ceiling any station gets, and it is why this
+    # station is dispatch-only and never runs on inbound events. Note that
+    # `workflows` is not a GITHUB_TOKEN scope, so edits to .github/workflows/**
+    # still require a role App token or FACTORY_PAT — with the default token
+    # GitHub rejects those pushes. (#97)
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      # actions: read — the loop opens a PR and must then see whether its own CI
+      # went green before it checkpoints and moves on (`gh pr checks`/`gh run`).
+      actions: read
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit
     with:

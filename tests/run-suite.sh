@@ -14,9 +14,10 @@ stage() { printf '\n== suite: %s\n' "$1"; }
 stage "typecheck (bash -n over every shell entrypoint)"
 bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh scripts/*.sh
 
-stage "boundaries (scaffold contract + config schema + triage-script contracts)"
+stage "boundaries (scaffold + bootstrap contract + config schema + triage-script contracts)"
 bash tests/scaffold.contract.test.sh
-node --test scripts/validate-config.test.mjs scripts/pr-review-state.test.mjs
+bash tests/bootstrap.contract.test.sh
+node --test scripts/validate-config.test.mjs scripts/pr-review-state.test.mjs scripts/merge-method.test.mjs
 node scripts/validate-config.mjs .factory/config.json schemas/factory.config.schema.json
 node scripts/validate-config.mjs templates/factory/config.json.tmpl schemas/factory.config.schema.json
 ./scripts/test-triage-scripts.sh

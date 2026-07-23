@@ -38,8 +38,21 @@ jobs:
         with: { node-version: 22 }
       - name: shellcheck the hook scripts, lib, tests, and bootstrap
         run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh bootstrap.sh
+      # The scaffold contract's #97 permission invariants need pyyaml to parse
+      # the workflows. Install it here rather than relying on the runner image
+      # shipping it: without it those checks would defer to a CI job that never
+      # runs them, and the invariant would quietly stop being enforced anywhere.
+      - name: ensure pyyaml (the scaffold contract's permission invariants need it)
+        run: python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
       - name: scaffold contract (factory workflows, config, ops state, docs spine)
         run: bash tests/scaffold.contract.test.sh
+      # Wire the bootstrap contract into the AUTHORITATIVE gate, not just the
+      # nightly run-suite: it pins the 15 audited bootstrap.sh defects and is
+      # fully hermetic (stub gh/git/node, no network), so a commit re-introducing
+      # e.g. the user/installations 403 poll must fail the required check rather
+      # than surface a day later in a nightly QA bug (#105).
+      - name: bootstrap contract (hermetic — the 15 audited bootstrap defects)
+        run: bash tests/bootstrap.contract.test.sh
       - name: hermetic hook contract tests (synthetic stdin, throwaway repos, gh shim)
         run: |
           git config --global user.email ci@example.com
@@ -129,7 +142,7 @@ jobs:
       # validates the committed .factory/config.json against the schema so such a
       # drift fails CI. The validator's own unit tests run first.
       - name: workflow-logic unit tests (config validator, PR review verdict)
-        run: node --test scripts/validate-config.test.mjs scripts/pr-review-state.test.mjs
+        run: node --test scripts/validate-config.test.mjs scripts/pr-review-state.test.mjs scripts/merge-method.test.mjs
       - name: .factory/config.json validates against schemas/factory.config.schema.json
         run: node scripts/validate-config.mjs .factory/config.json schemas/factory.config.schema.json
       # The seed /factory-init copies into every consuming repo — validate it too

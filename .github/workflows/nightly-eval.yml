@@ -38,6 +38,14 @@ jobs:
   qa-session:
     needs: suite
     if: always() && vars.FACTORY_HALT != 'true'
+    # QA commits the nightly report under factory-ops/qa/ and files regressions
+    # as issues; it never opens or merges PRs. (#97)
+    permissions:
+      contents: write
+      issues: write
+      # actions: read — QA is told to quote the failing output in the bug it
+      # files, which means reading this run's job logs (`gh run view --log`).
+      actions: read
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit
     with:

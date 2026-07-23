@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Fake `git` for tests/bootstrap.contract.test.sh. Records calls; emulates a
+# protected-branch push rejection (PUSH_MODE=protected) exactly as GitHub does:
+# a `GH006 Protected branch update failed` message on stderr and exit 1.
+: "${CALL_LOG:=/dev/null}"
+printf 'git %s\n' "$*" >> "$CALL_LOG"
+args="$*"
+case "$args" in
+  "rev-parse --abbrev-ref HEAD") printf 'main' ;;
+  "remote get-url origin")       printf 'git@github.com:owner/repo.git' ;;
+  "rev-list --count"*)           printf '1' ;;      # a commit is pending (the fix reads this)
+  "push"*)
+    if [ "${PUSH_MODE:-ok}" = protected ] && [ "${args#*main}" != "$args" ]; then
+      printf 'remote: error: GH006: Protected branch update failed for refs/heads/main.\n' >&2
+      printf 'remote: error: At least 1 approving review is required.\n' >&2
+      exit 1
+    fi
+    ;;
+  *) : ;;
+esac
+exit 0

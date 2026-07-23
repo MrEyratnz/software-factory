@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake `xdg-open` — records the URL it was asked to open, opens nothing.
+: "${CALL_LOG:=/dev/null}"
+printf 'xdg-open %s\n' "$*" >> "$CALL_LOG"
+exit 0
