@@ -1,0 +1,72 @@
+name: cron-prod
+
+# The hourly prod — the factory's heartbeat and its usage-limit retry. Sole
+# job: RESUME. Reads factory-ops/state/checkpoint.json; if work was parked
+# (usage limits, killed runner, incomplete station) dispatch factory-run with
+# the checkpoint as payload; if idle and the sprint boundary passed, dispatch
+# the next ceremony run. Deterministic bash only — this workflow never spends
+# a token deciding whether to wake the factory.
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cron-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  resume:
+    if: vars.FACTORY_HALT != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: decide and dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          ck=factory-ops/state/checkpoint.json
+          if [ ! -f "$ck" ]; then
+            echo "no checkpoint — nothing to resume"
+            exit 0
+          fi
+
+          # A factory-run already queued or in flight owns the loop; the
+          # concurrency group serializes, but do not even queue a duplicate.
+          active="$(gh run list --repo "$REPO" --workflow=factory-run.yml \
+            --json status --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          if [ "${active:-0}" != "0" ]; then
+            echo "factory-run already active ($active) — standing down"
+            exit 0
+          fi
+
+          station="$(node -pe 'JSON.parse(require("fs").readFileSync("'"$ck"'","utf8")).station || "idle"')"
+          next_action="$(node -pe 'JSON.parse(require("fs").readFileSync("'"$ck"'","utf8")).next_action || ""')"
+          ends="$(node -pe 'JSON.parse(require("fs").readFileSync("'"$ck"'","utf8")).sprint_ends_at || ""')"
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          dispatch() {
+            echo "dispatching factory-run: $1"
+            gh api "repos/$REPO/dispatches" -f event_type=factory-resume \
+              -f "client_payload[reason]=$1" -f "client_payload[station]=$station"
+          }
+
+          if [ "$station" != "idle" ]; then
+            dispatch "parked work: station=$station"
+          elif [ -n "$ends" ] && [ "$now" \> "$ends" ]; then
+            dispatch "sprint boundary passed at $ends"
+          elif [ -z "$ends" ] && [ "$next_action" = "factory-run" ]; then
+            # Cold start (fresh bootstrap, or a lost first dispatch): the
+            # checkpoint asks for a run and no sprint has ever been scheduled.
+            dispatch "cold start: no sprint scheduled yet"
+          else
+            echo "idle inside sprint window (ends $ends) — nothing to do"
+          fi

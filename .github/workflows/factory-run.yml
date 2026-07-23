@@ -1,0 +1,70 @@
+name: factory-run
+
+# The main station loop. Dispatched by bootstrap.sh (first run), by
+# cron-prod.yml (resume / ceremony at sprint boundaries), or by hand.
+# One session: orient from the checkpoint, hold any due ceremonies, then
+# /factory-run bounded by max_iterations, ending at a clean committed
+# checkpoint. Serialized per station by the concurrency group — runs never
+# overlap; an in-flight loop finishes rather than being cancelled mid-commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_iterations:
+        description: bound on the lights-out loop (loop-guard hard cap)
+        type: string
+        default: "10"
+      model:
+        type: string
+        default: sonnet
+      effort:
+        type: string
+        default: high
+      runner:
+        description: "'icculus' for the self-hosted runner, else a hosted label"
+        type: string
+        default: ""
+  repository_dispatch:
+    types: [factory-resume]
+
+concurrency:
+  group: factory-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  session:
+    if: vars.FACTORY_HALT != 'true'
+    uses: ./.github/workflows/claude-session.yml
+    secrets: inherit
+    with:
+      station: factory-run
+      environment: coder
+      model: ${{ inputs.model || github.event.client_payload.model || 'sonnet' }}
+      effort: ${{ inputs.effort || github.event.client_payload.effort || 'high' }}
+      runner: ${{ inputs.runner || github.event.client_payload.runner || vars.FACTORY_RUNNER || 'ubuntu-latest' }}
+      max_turns: 200
+      timeout_minutes: 300
+      prompt: |
+        You are the conductor running the factory-run station headless in CI.
+        Orient per .claude/CLAUDE.md (auto-loaded): /factory-status, then factory-ops/state/checkpoint.json
+        and the current sprint file under factory-ops/sprints/.
+
+        1. If the checkpoint parks unfinished work, set /goal to that station's
+           completion condition and finish it first.
+        2. If no sprint is active or the sprint boundary (sprint_ends_at) has
+           passed, hold the ceremonies in order — review + retro for the ending
+           sprint (planner; retro files improvement issues against this plugin),
+           then planning for the next (planner + product-owner from the ranked
+           backlog) — writing every artifact under factory-ops/sprints/. Set
+           sprint_ends_at to now + SPRINT_HOURS (repo variable, default 24) as
+           an absolute UTC timestamp. Every 4th sprint, convene the board per
+           GOVERNANCE.md via the judge-panel machinery.
+        3. Then run /factory-run --max ${{ inputs.max_iterations || github.event.client_payload.max_iterations || '10' }}.
+        4. End ONLY at a clean checkpoint: update factory-ops/state/checkpoint.json
+           (station, sprint, sprint_ends_at, branch, issues, next_action), commit
+           it (chore:), and push. On usage limits or nearing the job timeout,
+           checkpoint immediately and end cleanly — never red on a limit; the
+           hourly cron resumes you.

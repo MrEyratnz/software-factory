@@ -12,7 +12,10 @@ conventions an agent is asked to follow; they are preconditions the harness
 **denies** via hooks locally and re-enforces in CI. It is for teams who want agents
 doing real, unattended production work without having to trust the agent's
 discipline. This repository builds the plugin and is governed by it: the working
-tree enforces itself (ADR-0002).
+tree enforces itself (ADR-0002), and the SDLC around it — sprints, triage, review,
+release — runs as an autonomous, event-driven factory in GitHub Actions (ADR-0003)
+whose standing goal is the decidable v1.0.0 Release Gate
+(`docs/specs/epic-1/spec.md`).
 
 ## Why it wins
 
@@ -40,7 +43,11 @@ Differentiators:
    than discourage them.
 4. **Self-hardened.** The plugin was designed by the method it encodes and
    dogfoods itself from its own working tree, so a hook regression surfaces in
-   the very session that introduces it.
+   the very session that introduces it — and its own backlog, sprints, and
+   releases are worked by the factory it implements, under per-role GitHub App
+   identities with security as the first pillar and token-efficiency as the
+   second (`GOVERNANCE.md`, `docs/security/README.md`,
+   `factory-ops/cost/ROUTING.md`).
 
 ## Product pillars
 
@@ -68,8 +75,11 @@ Differentiators:
   never change a hook's decision.
 - Per-agent token accounting.
 - Unbounded autonomy — no self-extending loops; the factory stops at its
-  iteration cap and hands back to a human.
+  iteration cap (locally) or its `FACTORY_HALT`/pause kill switches (in CI) and
+  hands back to a human.
 - Replacing CI or branch protection — CI remains the authoritative boundary;
   hooks are fast local pre-enforcement, not a substitute.
 - A mutating connector — the MCP server stays pure and read-only, and hooks stay
   POSIX + node stdlib with zero runtime dependencies.
+- Replacing human judgment where GitHub requires a human (account creation,
+  KYC/banking, app-install clicks) — those stay one-time `bootstrap.sh` acts.

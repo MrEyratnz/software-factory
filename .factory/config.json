@@ -3,10 +3,12 @@
   "roadmapPath": "docs/ROADMAP.md",
   "adrDir": "docs/adr",
   "releaseBranch": "main",
-  "sourceRegex": "^(connector/src/|hooks/(scripts|lib)/|scripts/)",
-  "testRegex": "(^connector/test/|^tests/|^scripts/test-)",
-  "testCommandRegex": "(node --test|hooks\\.contract\\.test\\.sh|test-triage-scripts\\.sh)",
+  "sourceRegex": "^(bootstrap\\.sh$|hooks/|connector/src/|commands/|agents/|skills/|schemas/|scripts/|\\.claude-plugin/|\\.github/workflows/)",
+  "testRegex": "(^tests/|^connector/test/|^scripts/test-|\\.test\\.mjs$)",
+  "testCommandRegex": "(bash tests/run-suite\\.sh|node --test|hooks\\.contract\\.test\\.sh|test-triage-scripts\\.sh)",
   "releaseVerbRegex": "(git tag v|gh release create|npm publish|release-please)",
+  "releaseProofCommandRegex": "(@anthropic-ai/claude-code@[0-9][0-9.]* plugin validate|claude plugin validate)",
+  "testCommand": "bash tests/run-suite.sh",
   "maxIterations": 10,
   "enforcement": {
     "requireGreenReceiptOnCommit": true,
@@ -17,8 +19,16 @@
     "protectTrustRoots": true
   },
   "gates": {
+    "typecheck": "bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh scripts/*.sh",
+    "boundaries": "bash tests/scaffold.contract.test.sh",
     "unit": "cd connector && node --test 'test/**/*.test.mjs'",
-    "bdd": "bash tests/hooks.contract.test.sh"
+    "bdd": "bash tests/hooks.contract.test.sh",
+    "build": "npx --yes @anthropic-ai/claude-code@2.1.218 plugin validate .claude-plugin/plugin.json --strict"
   },
-  "generators": []
+  "generators": [],
+  "otel": {
+    "enabled": false,
+    "endpoint": "http://localhost:4318",
+    "exporter": "otlphttp"
+  }
 }

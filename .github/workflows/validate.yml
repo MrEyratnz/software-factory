@@ -14,8 +14,9 @@ permissions:
 
 env:
   # Pinned claude-code CLI version for `plugin validate` — keep in sync with
-  # the same pin in .github/workflows/release-plugin.yml.
-  CLAUDE_CODE_VERSION: "2.1.202"
+  # the same pin in .github/workflows/release-plugin.yml. ≥ 2.1.203 is required
+  # by the factory session workflows (dynamic workflows + ultracode effort).
+  CLAUDE_CODE_VERSION: "2.1.218"
 
 jobs:
   connector:
@@ -35,8 +36,10 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
-      - name: shellcheck the hook scripts and lib
-        run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/hooks.contract.test.sh
+      - name: shellcheck the hook scripts, lib, tests, and bootstrap
+        run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh bootstrap.sh
+      - name: scaffold contract (factory workflows, config, ops state, docs spine)
+        run: bash tests/scaffold.contract.test.sh
       - name: hermetic hook contract tests (synthetic stdin, throwaway repos, gh shim)
         run: |
           git config --global user.email ci@example.com
@@ -156,3 +159,22 @@ jobs:
             }
             process.exit(bad);
           '
+
+  # The single aggregate context branch protection requires ("merged with green
+  # tests" needs ONE stable required-check name, not a moving list of job
+  # names). bootstrap.sh points the main-branch protection at this check.
+  green-gate:
+    name: green-gate
+    if: always()
+    needs: [connector, hooks, triage-scripts, manifests, structural]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every validate job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          echo "results: $RESULTS"
+          case ",$RESULTS," in
+            *,failure,*|*,cancelled,*|*,skipped,*) echo "a required job did not succeed"; exit 1 ;;
+            *) echo "green" ;;
+          esac
