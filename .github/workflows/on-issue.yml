@@ -24,6 +24,12 @@ permissions:
 jobs:
   triage:
     if: vars.FACTORY_HALT != 'true' && !endsWith(github.actor, '[bot]')
+    # Issue metadata only. This station reads attacker-controlled text, so it
+    # gets the narrowest ceiling of any station: no contents write, nothing that
+    # could alter the repository or its workflows. (#97)
+    permissions:
+      issues: write
+      contents: read
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit
     with:

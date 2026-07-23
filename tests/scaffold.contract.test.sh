@@ -31,7 +31,16 @@ for wf in $FACTORY_WORKFLOWS; do
   f=".github/workflows/$wf.yml"
   if [ ! -f "$f" ]; then bad "$f missing"; continue; fi
   if grep -q 'FACTORY_HALT' "$f"; then ok "$f has the FACTORY_HALT guard"; else bad "$f lacks the FACTORY_HALT guard"; fi
-  if grep -Eq '^[[:space:]]*permissions:' "$f"; then ok "$f declares permissions"; else bad "$f lacks an explicit permissions block"; fi
+  # claude-session.yml is the exception, and deliberately so: it is a REUSABLE
+  # workflow, where a permissions block caps every caller instead of restricting
+  # itself (#97). Its own rule — declare nothing — is asserted separately below.
+  if [ "$wf" = "claude-session" ]; then
+    ok "$f is the reusable session workflow — its permissions rule is asserted separately"
+  elif grep -Eq '^[[:space:]]*permissions:' "$f"; then
+    ok "$f declares permissions"
+  else
+    bad "$f lacks an explicit permissions block"
+  fi
   unpinned="$(grep -E '^[[:space:]]*(-[[:space:]]*)?uses:' "$f" | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)' | grep -v 'uses: ./' || true)"
   if [ -z "$unpinned" ]; then ok "$f pins every action by SHA"; else bad "$f has unpinned actions: $(printf '%s' "$unpinned" | tr '\n' ' ')"; fi
 done
@@ -99,6 +108,75 @@ sys.exit(0 if perms.get("pull-requests") == "write" and perms.get("contents") ==
     ok "$PR_WF self-merges only on an approving review"
   else
     bad "$PR_WF merges without requiring an approving review"
+  fi
+  # A hardcoded merge method fails outright on any repo whose policy differs —
+  # this one allows squash only, so the original `--auto --merge` could never
+  # have merged anything (#98).
+  if grep -q 'merge-method.mjs' "$PR_WF" && ! grep -qE 'gh pr merge .*--auto (--merge|--squash|--rebase)\b' "$PR_WF"; then
+    ok "$PR_WF picks a merge method the repository allows"
+  else
+    bad "$PR_WF hardcodes a merge method instead of reading the repository's policy"
+  fi
+fi
+
+# --- reusable-workflow permission semantics (#97) ----------------------------
+# GitHub's rule: the CALLER's job-level `permissions` is the ceiling, and
+# anything the called workflow declares can only downgrade it — never raise it.
+# claude-session.yml therefore must declare NO permissions of its own: a block
+# there silently caps every station regardless of what its caller grants, which
+# is exactly what left the review station unable to post a review after a
+# 37-minute session. Each caller declares its own station's needs instead.
+if python3 -c "import yaml" 2>/dev/null; then
+  if WF="$SESSION_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+bad = []
+if wf.get("permissions") is not None:
+    bad.append("workflow-level")
+if (wf["jobs"]["session"].get("permissions")) is not None:
+    bad.append("job-level")
+if bad:
+    print("declares " + " and ".join(bad) + " permissions, which cap every caller")
+    sys.exit(1)
+  '; then
+    ok "$SESSION_WF declares no permissions of its own (callers set the ceiling)"
+  else
+    bad "$SESSION_WF caps every station's token — remove its permissions block and grant per caller"
+  fi
+
+  # Every station that calls it must then say what it needs, or it runs on the
+  # repository default rather than a considered least-privilege set.
+  for caller in factory-run on-issue on-pr nightly-eval; do
+    f=".github/workflows/$caller.yml"
+    [ -f "$f" ] || continue
+    if WF="$f" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+callers = [n for n, j in wf["jobs"].items()
+           if isinstance(j.get("uses"), str) and "claude-session.yml" in j["uses"]]
+missing = [n for n in callers if not (wf["jobs"][n].get("permissions"))]
+sys.exit(1 if (not callers or missing) else 0)
+    '; then
+      ok "$f grants its session job an explicit permission set"
+    else
+      bad "$f calls claude-session.yml without declaring the station's permissions"
+    fi
+  done
+
+  # Security invariant: the inbound-triggered station reads attacker-controlled
+  # text, so it must never hold write access to repository contents.
+  if WF=".github/workflows/on-issue.yml" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+for n, j in wf["jobs"].items():
+    perms = j.get("permissions") or {}
+    if perms.get("contents") == "write":
+        sys.exit(1)
+sys.exit(0)
+  '; then
+    ok "on-issue.yml grants the untrusted-inbound station no contents write"
+  else
+    bad "on-issue.yml gives an inbound-triggered session contents:write — attacker-controlled input must never reach a writable token"
   fi
 fi
 

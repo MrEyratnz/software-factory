@@ -15,8 +15,23 @@ guidance) and files drift as `P1 security` issues.
   release: contents write; orchestrator: dispatch + merge). Private keys are
   **environment-scoped secrets**: a triage session physically cannot read the
   release key because its workflow job targets the `triage` environment only.
-- **Workflow `permissions:` blocks are explicit and minimal**; the default
-  `GITHUB_TOKEN` is read-only wherever an app token does the writing.
+- **Workflow `permissions:` blocks are explicit and minimal**, declared on the
+  job that *calls* the reusable session workflow. This placement is load-bearing:
+  for a reusable workflow the caller's job-level block is the **ceiling**, and
+  anything the called workflow declares can only downgrade it. A block inside
+  `claude-session.yml` therefore caps every station at once — which is exactly
+  how the review station came to run a full session and post nothing (#97). The
+  ceilings: triage `issues: write` (+ `contents: read`) and never contents
+  write, since it reads attacker-controlled text; review `pull-requests: write`;
+  QA `contents: write` + `issues: write`; factory-run additionally
+  `pull-requests: write`. `tests/scaffold.contract.test.sh` fails if the callee
+  regains a permissions block or a caller stops declaring one.
+- **`workflows` is not a `GITHUB_TOKEN` scope.** No caller can grant it, so a
+  station that edits `.github/workflows/**` — the factory modifying its own
+  machinery — needs a role App token (Workflows: write) or `FACTORY_PAT`. With
+  the default token GitHub rejects those pushes. This is a guardrail, not an
+  obstacle to route around: a self-modifying CI system that can rewrite its own
+  triggers with an ambient token has no meaningful boundary left.
 - **All third-party actions in factory workflows are pinned by full SHA** —
   enforced by `tests/scaffold.contract.test.sh` in the commit gate.
 - Commits from app identities; branch protection requires the `green-gate`
@@ -56,3 +71,4 @@ toggles idempotently.
 | SHA-pin audit of pre-factory workflows (`claude.yml`, `claude-code-review.yml` use tag refs) | every action SHA-pinned repo-wide | open — M2 roadmap item |
 | Signed commits from app identities | commit signature verification required by protection | open |
 | Egress firewall depends on sudo at bootstrap; without it the allowlist is proxy-only | enforced drop of non-proxy egress | open — bootstrap warns and files an issue when skipped |
+| Callers pass `secrets: inherit`, so a session job can see every repository secret (including `FACTORY_PAT`), not just its own role key | explicit per-station `secrets:` mapping | open — the session step exports only the credentials it needs, so the model never sees the rest, but the job could |

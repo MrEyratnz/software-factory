@@ -54,8 +54,23 @@ on:
         type: string
         default: ""
 
-permissions:
-  contents: read
+# NO permissions block here — deliberately, and it must stay that way.
+#
+# For a reusable workflow, the CALLER's job-level `permissions` is the ceiling
+# and anything declared here can only DOWNGRADE it, never raise it ("The
+# GITHUB_TOKEN permissions passed from the caller workflow can be only
+# downgraded (not elevated) by the called workflow"). A block here therefore
+# caps every station at once: the `contents: read` that used to sit here left
+# the review station unable to post its review, the triage station unable to
+# label, and factory-run unable to push — after running a full 37-minute
+# session and reporting success (#97). Each caller declares exactly what its
+# own station needs; see tests/scaffold.contract.test.sh, which fails if this
+# block ever comes back or if a caller stops declaring its set.
+#
+# One scope is unreachable this way: `workflows` is not a GITHUB_TOKEN
+# permission at all, so no caller can grant it. A station that edits files
+# under .github/workflows/ needs a role App token (or FACTORY_PAT) — with the
+# default token those pushes are rejected by GitHub, by design.
 
 jobs:
   session:
@@ -63,8 +78,6 @@ jobs:
     runs-on: ${{ inputs.runner == 'icculus' && fromJSON('["self-hosted","icculus"]') || inputs.runner }}
     environment: ${{ inputs.environment }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
-    permissions:
-      contents: read
     steps:
       - name: mint app token (when this role has an app)
         id: app

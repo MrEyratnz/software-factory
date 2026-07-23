@@ -39,6 +39,14 @@ jobs:
 
   review:
     if: vars.FACTORY_HALT != 'true' && github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    # Enough to post the review verdict and read the diff — no contents write:
+    # the reviewer is read-only by construction, and the merge job is what acts
+    # on its verdict. Without `pull-requests: write` the station cannot post a
+    # review at all, which is how a 37-minute session produced nothing (#97).
+    permissions:
+      pull-requests: write
+      contents: read
+      checks: read
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit
     with:
@@ -104,4 +112,13 @@ jobs:
             CHANGES_REQUESTED) echo "::notice::review requested changes — not merging"; exit 0 ;;
             *) echo "::notice::no approving review (verdict: $state) — not merging"; exit 0 ;;
           esac
-          gh pr merge "$PR" --repo "$REPO" --auto --merge
+          # Use a method the repository actually permits (#98): hardcoding one
+          # fails outright wherever the policy differs — this repo allows squash
+          # only, so the previous `--merge` could never have worked.
+          method="$(gh api "repos/$REPO" | node scripts/merge-method.mjs)"
+          if [ "$method" = "NONE" ]; then
+            echo "::error::$REPO has no merge method enabled — enable squash, merge, or rebase merges"
+            exit 1
+          fi
+          echo "merging by $method"
+          gh pr merge "$PR" --repo "$REPO" --auto "--$method"
