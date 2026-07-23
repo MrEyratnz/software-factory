@@ -1,0 +1,34 @@
+{
+  "stack": "custom",
+  "roadmapPath": "docs/ROADMAP.md",
+  "adrDir": "docs/adr",
+  "releaseBranch": "main",
+  "sourceRegex": "^(bootstrap\\.sh$|hooks/|connector/src/|commands/|agents/|skills/|schemas/|\\.claude-plugin/|\\.github/workflows/)",
+  "testRegex": "(^tests/|^connector/test/|\\.test\\.mjs$)",
+  "testCommandRegex": "(bash tests/run-suite\\.sh|node --test)",
+  "releaseVerbRegex": "(git tag v|gh release create|npm publish|release-please)",
+  "releaseProofCommandRegex": "(@anthropic-ai/claude-code@[0-9][0-9.]* plugin validate|claude plugin validate)",
+  "testCommand": "bash tests/run-suite.sh",
+  "maxIterations": 20,
+  "enforcement": {
+    "requireGreenReceiptOnCommit": true,
+    "requireTestsFirst": true,
+    "conventionalCommitLint": true,
+    "requireReleaseProof": true,
+    "enforceProjectDirScope": true,
+    "protectTrustRoots": true
+  },
+  "gates": {
+    "typecheck": "bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh",
+    "boundaries": "bash tests/scaffold.contract.test.sh",
+    "unit": "cd connector && node --test test/factory-core.test.mjs test/protocol.test.mjs",
+    "bdd": "bash tests/hooks.contract.test.sh",
+    "build": "npx --yes @anthropic-ai/claude-code@2.1.218 plugin validate .claude-plugin/plugin.json --strict"
+  },
+  "generators": [],
+  "otel": {
+    "enabled": false,
+    "endpoint": "http://localhost:4318",
+    "exporter": "otlphttp"
+  }
+}

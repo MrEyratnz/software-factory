@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "station": "idle",
+  "sprint": 0,
+  "sprint_ends_at": null,
+  "branch": null,
+  "issues": [],
+  "next_action": "factory-run",
+  "notes": "freshly bootstrapped — the first factory-run session plans sprint 1 from the seeded Epic 1 backlog"
+}

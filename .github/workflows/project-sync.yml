@@ -1,0 +1,40 @@
+name: project-sync
+
+# Keeps the Projects v2 board (created by bootstrap.sh) in sync: every new
+# issue and same-repo PR is added as a board item. Work OWNERSHIP lives in the
+# board's Owner field because GitHub cannot assign issues to apps (ADR 0002).
+# User-owned Projects v2 cannot be written with GITHUB_TOKEN, so this uses
+# FACTORY_PAT and degrades to a no-op (with a notice) when it is absent.
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  add-to-board:
+    if: vars.FACTORY_HALT != 'true' && vars.PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: add item to the factory board
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_PAT }}
+          PROJECT_ID: ${{ vars.PROJECT_ID }}
+          CONTENT_ID: ${{ github.event.issue.node_id || github.event.pull_request.node_id }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::FACTORY_PAT not available (fork PR or unset) — skipping board sync"
+            exit 0
+          fi
+          gh api graphql \
+            -f query='mutation($project: ID!, $content: ID!) {
+              addProjectV2ItemById(input: {projectId: $project, contentId: $content}) {
+                item { id }
+              }
+            }' \
+            -f project="$PROJECT_ID" -f content="$CONTENT_ID"

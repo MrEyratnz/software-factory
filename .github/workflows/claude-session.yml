@@ -1,0 +1,165 @@
+name: claude-session
+
+# Reusable headless Claude Code session — the one place the CLI invocation
+# lives, so every station (factory-run, on-issue, on-pr, nightly-eval) runs
+# identically and a fix lands once. Sessions load THIS repo as the active
+# plugin (--plugin-dir .) so the factory dogfoods its own hooks; the
+# marketplace copy is disabled in-session to avoid double-loading.
+#
+# Identity: each caller targets a role environment (triage/reviewer/coder/…)
+# holding that role's GitHub App id (APP_ID env variable) + private key
+# (APP_PRIVATE_KEY env secret). Pushes made with the minted app token DO
+# trigger workflows (default GITHUB_TOKEN pushes do not — ADR 0002), and the
+# environment scoping means a triage session physically cannot read the
+# release key. Fallback order: app token → FACTORY_PAT → GITHUB_TOKEN.
+
+on:
+  workflow_call:
+    inputs:
+      station:
+        description: station name (checkpointing + cost records key off it)
+        required: true
+        type: string
+      prompt:
+        description: the station prompt (passed to claude -p via env, never inlined in shell)
+        required: true
+        type: string
+      environment:
+        description: role environment holding APP_ID / APP_PRIVATE_KEY
+        required: true
+        type: string
+      model:
+        type: string
+        default: sonnet
+      effort:
+        description: low|medium|high|xhigh|max|ultracode — routed per factory-ops/cost/ROUTING.md
+        type: string
+        default: high
+      max_turns:
+        type: number
+        default: 120
+      runner:
+        description: "'icculus' targets [self-hosted, icculus]; anything else is a hosted label"
+        type: string
+        default: ubuntu-latest
+      timeout_minutes:
+        type: number
+        default: 120
+      permission_mode:
+        description: bypassPermissions for trusted stations in ephemeral runners; dontAsk + allowed_tools for inbound-facing ones
+        type: string
+        default: bypassPermissions
+      allowed_tools:
+        description: optional --allowedTools rule list (least-privilege stations)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  session:
+    if: vars.FACTORY_HALT != 'true'
+    runs-on: ${{ inputs.runner == 'icculus' && fromJSON('["self-hosted","icculus"]') || inputs.runner }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    permissions:
+      contents: read
+    steps:
+      - name: mint app token (when this role has an app)
+        id: app
+        if: vars.APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: resolve git identity + token
+        id: ident
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
+          FALLBACK: ${{ github.token }}
+        run: |
+          token="${APP_TOKEN:-${FACTORY_PAT:-$FALLBACK}}"
+          slug="${APP_SLUG:-dsf-factory}"
+          { echo "token=$token"; echo "slug=$slug"; } >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$token"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          token: ${{ steps.ident.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with: { node-version: 22 }
+
+      # Pin ≥ 2.1.203: dynamic workflows + the ultracode effort setting need it.
+      - name: install pinned claude-code CLI
+        run: npm install -g "@anthropic-ai/claude-code@${{ vars.CLAUDE_CODE_VERSION || '2.1.218' }}"
+
+      - name: session identity
+        env:
+          SLUG: ${{ steps.ident.outputs.slug }}
+        run: |
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${SLUG}[bot]@users.noreply.github.com"
+
+      - name: run station session
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+          SESSION_PROMPT: ${{ inputs.prompt }}
+          SESSION_STATION: ${{ inputs.station }}
+          ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
+        run: |
+          extra=()
+          if [ -n "$ALLOWED_TOOLS" ]; then extra+=(--allowedTools "$ALLOWED_TOOLS"); fi
+          claude -p "$SESSION_PROMPT" \
+            --plugin-dir "$GITHUB_WORKSPACE" \
+            --settings '{"enabledPlugins":{"dark-software-factory@software-factory":false}}' \
+            --permission-mode "${{ inputs.permission_mode }}" \
+            --model "${{ inputs.model }}" \
+            --effort "${{ inputs.effort }}" \
+            --max-turns "${{ inputs.max_turns }}" \
+            --output-format json \
+            "${extra[@]}" | tee "$RUNNER_TEMP/session-result.json"
+
+      # Cost telemetry (efficiency program): usage + duration per station to the
+      # job summary and an artifact; the efficiency engineer's ingestion turns
+      # these into factory-ops/cost/ records and the retro trend.
+      - name: record cost summary
+        if: always()
+        env:
+          SESSION_STATION: ${{ inputs.station }}
+          SESSION_MODEL: ${{ inputs.model }}
+          SESSION_EFFORT: ${{ inputs.effort }}
+        run: |
+          if [ -f "$RUNNER_TEMP/session-result.json" ]; then
+            node -e '
+              const fs = require("fs");
+              let o = {};
+              try { o = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/session-result.json", "utf8")); } catch (e) {}
+              const row = {
+                station: process.env.SESSION_STATION,
+                model: process.env.SESSION_MODEL,
+                effort: process.env.SESSION_EFFORT,
+                cost_usd: o.total_cost_usd ?? null,
+                duration_ms: o.duration_ms ?? null,
+                turns: o.num_turns ?? null,
+                usage: o.usage ?? null,
+                is_error: o.is_error ?? null,
+              };
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "```json\n" + JSON.stringify(row, null, 2) + "\n```\n");
+            '
+          fi
+
+      - name: upload session result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: session-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/session-result.json
+          if-no-files-found: ignore
+          retention-days: 30

@@ -1,0 +1,9 @@
+# Funding handles — maintained by the treasurer agent DOWNSTREAM of the
+# handles; creating the accounts themselves (KYC/banking) is a one-time human
+# act. bootstrap.sh fills these from env vars when set (FUNDING_GITHUB,
+# FUNDING_BUYMEACOFFEE, FUNDING_KOFI, FUNDING_OPENCOLLECTIVE); until then they
+# stay commented placeholders.
+# github: [your-github-sponsors-login]
+# buy_me_a_coffee: your-buymeacoffee-handle
+# ko_fi: your-kofi-handle
+# open_collective: your-opencollective-handle
