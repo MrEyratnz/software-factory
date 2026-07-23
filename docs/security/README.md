@@ -21,11 +21,27 @@ guidance) and files drift as `P1 security` issues.
   anything the called workflow declares can only downgrade it. A block inside
   `claude-session.yml` therefore caps every station at once — which is exactly
   how the review station came to run a full session and post nothing (#97). The
-  ceilings: triage `issues: write` (+ `contents: read`) and never contents
-  write, since it reads attacker-controlled text; review `pull-requests: write`;
-  QA `contents: write` + `issues: write`; factory-run additionally
-  `pull-requests: write`. `tests/scaffold.contract.test.sh` fails if the callee
-  regains a permissions block or a caller stops declaring one.
+  ceilings in full:
+
+  | Station | Ceiling |
+  |---|---|
+  | triage (inbound) | `issues: write`, `contents: read` |
+  | review (inbound) | `pull-requests: write`, `issues: write` (to file tech-debt), `contents: read`, `checks: read` |
+  | QA (nightly) | `contents: write`, `issues: write`, `actions: read` |
+  | factory-run (dispatch only) | `contents: write`, `pull-requests: write`, `issues: write`, `actions: read` |
+
+  Neither inbound station holds contents write. `tests/scaffold.contract.test.sh`
+  discovers the callers rather than listing them and fails if the callee regains
+  a permissions block, if any caller stops declaring one, or if an
+  inbound-triggered station gains contents write.
+
+  **What this does and does not bind.** A workflow `permissions:` block bounds
+  the `GITHUB_TOKEN` only. Sessions prefer a role App token (then `FACTORY_PAT`),
+  and those carry their OWN scopes — so on the App path the effective authority
+  is the App's permission set, not the ceiling above. The two are kept aligned by
+  `bootstrap.sh`'s per-role permission sets, and that alignment is a convention
+  the steward audits, not something CI can currently prove. Treat the table as
+  the intended authority and the App scopes as the thing to audit against it.
 - **`workflows` is not a `GITHUB_TOKEN` scope.** No caller can grant it, so a
   station that edits `.github/workflows/**` — the factory modifying its own
   machinery — needs a role App token (Workflows: write) or `FACTORY_PAT`. With

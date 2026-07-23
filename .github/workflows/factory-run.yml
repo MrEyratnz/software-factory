@@ -47,6 +47,8 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      # actions: read — the loop opens a PR and must then see whether its own CI
+      # went green before it checkpoints and moves on (`gh pr checks`/`gh run`).
       actions: read
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit

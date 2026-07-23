@@ -38,6 +38,12 @@ jobs:
         with: { node-version: 22 }
       - name: shellcheck the hook scripts, lib, tests, and bootstrap
         run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh bootstrap.sh
+      # The scaffold contract's #97 permission invariants need pyyaml to parse
+      # the workflows. Install it here rather than relying on the runner image
+      # shipping it: without it those checks would defer to a CI job that never
+      # runs them, and the invariant would quietly stop being enforced anywhere.
+      - name: ensure pyyaml (the scaffold contract's permission invariants need it)
+        run: python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
       - name: scaffold contract (factory workflows, config, ops state, docs spine)
         run: bash tests/scaffold.contract.test.sh
       - name: hermetic hook contract tests (synthetic stdin, throwaway repos, gh shim)

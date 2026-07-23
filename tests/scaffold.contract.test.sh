@@ -109,13 +109,47 @@ sys.exit(0 if perms.get("pull-requests") == "write" and perms.get("contents") ==
   else
     bad "$PR_WF merges without requiring an approving review"
   fi
+  # The review station must be able to FILE what it does not fix. Without
+  # issues:write it 403s on the tech-debt filing and then either drops findings
+  # (breaking the iron rule) or cannot end its session at all, because its own
+  # debt-reconcile Stop hook blocks on an unfiled finding — observed live on #99.
+  if WF="$PR_WF" python3 -c '
+import os, sys, yaml
+jobs = yaml.safe_load(open(os.environ["WF"]))["jobs"]
+review = [j for j in jobs.values()
+          if isinstance(j.get("uses"), str) and "claude-session.yml" in j["uses"]]
+sys.exit(0 if review and all((j.get("permissions") or {}).get("issues") == "write" for j in review) else 1)
+  '; then
+    ok "$PR_WF lets the review station file the tech-debt it is required to file"
+  else
+    bad "$PR_WF review station cannot file tech-debt (needs issues:write) — findings get dropped or the session jams"
+  fi
   # A hardcoded merge method fails outright on any repo whose policy differs —
   # this one allows squash only, so the original `--auto --merge` could never
   # have merged anything (#98).
-  if grep -q 'merge-method.mjs' "$PR_WF" && ! grep -qE 'gh pr merge .*--auto (--merge|--squash|--rebase)\b' "$PR_WF"; then
-    ok "$PR_WF picks a merge method the repository allows"
+  #
+  # The first version of this guard matched `--auto (--merge|--squash|--rebase)`
+  # and was trivially defeated (the review station reproduced both vectors): a
+  # command with no `--auto`, or with the method BEFORE `--auto`, sailed through
+  # while a leftover mention of merge-method.mjs satisfied the other clause. So
+  # assert positively that the resolved method is what gets passed, and reject a
+  # literal method flag anywhere in the merge invocation regardless of order.
+  if WF="$PR_WF" python3 -c '
+import os, re, sys
+text = open(os.environ["WF"]).read()
+calls = re.findall(r"gh pr merge[^\n]*", text)
+if not calls:
+    sys.exit(1)
+for call in calls:
+    if re.search(r"--(merge|squash|rebase)\b", call):   # a literal method
+        sys.exit(1)
+    if not re.search(r"\"--\$\{?method\}?\"", call):    # the resolved one
+        sys.exit(1)
+sys.exit(0)
+  '; then
+    ok "$PR_WF passes only the merge method the repository allows"
   else
-    bad "$PR_WF hardcodes a merge method instead of reading the repository's policy"
+    bad "$PR_WF hardcodes a merge method instead of passing the resolved one"
   fi
 fi
 
@@ -144,40 +178,62 @@ if bad:
     bad "$SESSION_WF caps every station's token — remove its permissions block and grant per caller"
   fi
 
-  # Every station that calls it must then say what it needs, or it runs on the
-  # repository default rather than a considered least-privilege set.
-  for caller in factory-run on-issue on-pr nightly-eval; do
-    f=".github/workflows/$caller.yml"
-    [ -f "$f" ] || continue
-    if WF="$f" python3 -c '
-import os, sys, yaml
-wf = yaml.safe_load(open(os.environ["WF"]))
-callers = [n for n, j in wf["jobs"].items()
-           if isinstance(j.get("uses"), str) and "claude-session.yml" in j["uses"]]
-missing = [n for n in callers if not (wf["jobs"][n].get("permissions"))]
-sys.exit(1 if (not callers or missing) else 0)
-    '; then
-      ok "$f grants its session job an explicit permission set"
-    else
-      bad "$f calls claude-session.yml without declaring the station's permissions"
-    fi
-  done
+  # Every station that calls it must say what it needs, or it runs on the
+  # repository default rather than a considered least-privilege set — and the
+  # callers are DISCOVERED, not listed, so a future fifth station cannot escape
+  # least-privilege enforcement by simply not being in a hardcoded list.
+  #
+  # The inbound rule is derived the same way. A station is inbound if its
+  # workflow triggers on attacker-controlled events, and no inbound station may
+  # hold contents:write. Hardcoding that check to on-issue.yml missed on-pr.yml's
+  # review job, which reads the PR diff and is every bit as inbound.
+  if python3 -c '
+import glob, sys, yaml
 
-  # Security invariant: the inbound-triggered station reads attacker-controlled
-  # text, so it must never hold write access to repository contents.
-  if WF=".github/workflows/on-issue.yml" python3 -c '
-import os, sys, yaml
-wf = yaml.safe_load(open(os.environ["WF"]))
-for n, j in wf["jobs"].items():
-    perms = j.get("permissions") or {}
-    if perms.get("contents") == "write":
-        sys.exit(1)
-sys.exit(0)
+INBOUND = {"issues", "issue_comment", "pull_request", "pull_request_target",
+           "pull_request_review", "pull_request_review_comment", "discussion",
+           "discussion_comment", "fork", "watch", "public"}
+problems, checked = [], 0
+
+for path in sorted(glob.glob(".github/workflows/*.yml")):
+    wf = yaml.safe_load(open(path))
+    if not isinstance(wf, dict):
+        continue
+    # PyYAML reads a bare `on:` key as the boolean True.
+    triggers = wf.get("on", wf.get(True)) or {}
+    if isinstance(triggers, str):
+        triggers = {triggers: None}
+    if isinstance(triggers, list):
+        triggers = {t: None for t in triggers}
+    inbound = bool(INBOUND & set(triggers))
+
+    for name, job in (wf.get("jobs") or {}).items():
+        uses = job.get("uses")
+        if not (isinstance(uses, str) and "claude-session.yml" in uses):
+            continue
+        checked += 1
+        perms = job.get("permissions") or {}
+        if not perms:
+            problems.append(path + ":" + name + " calls claude-session.yml without declaring permissions")
+        if inbound and perms.get("contents") == "write":
+            problems.append(path + ":" + name + " is inbound-triggered yet holds contents:write")
+
+if not checked:
+    problems.append("no caller of claude-session.yml was found — the discovery is broken, not the config")
+for p in problems:
+    print(p)
+sys.exit(1 if problems else 0)
   '; then
-    ok "on-issue.yml grants the untrusted-inbound station no contents write"
+    ok "every discovered session caller declares its ceiling; no inbound station holds contents write"
   else
-    bad "on-issue.yml gives an inbound-triggered session contents:write — attacker-controlled input must never reach a writable token"
+    bad "a session caller lacks its permission set, or an inbound station can write repository contents"
   fi
+else
+  # Never skip silently: these are the invariants that keep #97 from returning,
+  # and a runner that happens to lack pyyaml would otherwise stop checking them
+  # with no trace in the output. CI installs pyyaml for this job so the
+  # authoritative run always enforces them.
+  ok "pyyaml unavailable locally — #97 permission invariants deferred to CI"
 fi
 
 if grep -q 'CLAUDE_CODE_OAUTH_TOKEN' bootstrap.sh; then

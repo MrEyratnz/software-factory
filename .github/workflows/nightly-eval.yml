@@ -43,6 +43,8 @@ jobs:
     permissions:
       contents: write
       issues: write
+      # actions: read — QA is told to quote the failing output in the bug it
+      # files, which means reading this run's job logs (`gh run view --log`).
       actions: read
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit

@@ -47,6 +47,14 @@ jobs:
       pull-requests: write
       contents: read
       checks: read
+      # issues: write — not for the review itself but for the law that follows
+      # it: every finding this station does not fix must be filed as a
+      # `tech-debt` issue. Without this the station 403s on the filing, and then
+      # either drops findings (breaking the iron rule) or cannot end its session
+      # at all, because its own debt-reconcile Stop hook blocks on an unfiled
+      # finding — the loop jams on any PR that has findings. Deliberately still
+      # no contents write: this station reads an attacker-controlled diff.
+      issues: write
     uses: ./.github/workflows/claude-session.yml
     secrets: inherit
     with:
@@ -96,6 +104,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
       - name: enable auto-merge (waits on the required green-gate check)
+        shell: bash   # pipefail: a failing `gh api` must not masquerade as "no merge method"
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.FACTORY_PAT || github.token }}
           PR: ${{ github.event.pull_request.number }}
