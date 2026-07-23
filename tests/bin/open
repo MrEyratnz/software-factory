@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake macOS `open` — records the URL, opens nothing.
+: "${CALL_LOG:=/dev/null}"
+printf 'open %s\n' "$*" >> "$CALL_LOG"
+exit 0

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fake `claude` — only needs to satisfy the `command -v claude` prereq check.
+exit 0

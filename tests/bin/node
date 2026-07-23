@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake `node` — only needs to satisfy `command -v node` for the prereq check and
+# to log calls. The full-run tests use FACTORY_APPS_SKIP=true, so the real
+# manifest/JWT node code is never driven through this stub.
+: "${CALL_LOG:=/dev/null}"
+printf 'node %s\n' "$*" >> "$CALL_LOG"
+exit 0

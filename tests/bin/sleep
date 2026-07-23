@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake `sleep` — returns instantly so the dispatch/poll loops don't stall the
+# hermetic test (bootstrap sleeps 5s per poll iteration).
+exit 0
