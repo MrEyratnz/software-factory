@@ -23,7 +23,7 @@ jobs:
     name: connector (unit + stdio protocol)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
       - name: connector tests (zero-dep, node --test)
@@ -33,7 +33,7 @@ jobs:
     name: hooks contract + shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
       - name: shellcheck the hook scripts, lib, tests, and bootstrap
@@ -63,7 +63,7 @@ jobs:
     name: triage wrapper scripts (shellcheck + argument-contract tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck the triage + project-status scripts
         run: shellcheck -S warning scripts/*.sh
       # The triage wrapper scripts are the Issue Triage workflow's enforcement
@@ -78,7 +78,7 @@ jobs:
     name: manifest + component validation (claude plugin validate --strict)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
       - name: validate plugin components (commands/agents/skills/hooks frontmatter)
@@ -90,7 +90,7 @@ jobs:
     name: structural checks (JSON + frontmatter presence)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
       # release-plugin.yml triggers only on push to main, so it is never
