@@ -124,15 +124,61 @@ sys.exit(0 if review and all((j.get("permissions") or {}).get("issues") == "writ
   else
     bad "$PR_WF review station cannot file tech-debt (needs issues:write) — findings get dropped or the session jams"
   fi
-  # …but claude-session.yml prefers the App token when present, so the ceiling
-  # above only fixes the fallback path. The reviewer App scope bootstrap mints
-  # must ALSO grant issues:write, or the normal (bootstrapped) path 403s on the
-  # filing while the ceiling check stays green — false confidence that ships a
-  # non-functional loop (#103/#104, found live on this PR).
-  if [ -f bootstrap.sh ] && grep -A1 'reviewer)' bootstrap.sh | grep -q '"issues":"write"'; then
-    ok "bootstrap.sh mints the reviewer App with issues:write (App scope matches the ceiling)"
+  # …but claude-session.yml prefers the App token when present, so a caller's
+  # GITHUB_TOKEN ceiling only bounds the FALLBACK path. The App bootstrap mints
+  # for each station is the effective authority on the normal path, so its scope
+  # must COVER that station's ceiling — every time, for every station, or a role
+  # ships a token that 403s on work its ceiling says it can do. Checking one
+  # role/scope pair at a time just moves the gap to the next role (reviewer/issues
+  # #103, then coder/actions #115). This proves the whole class at once: for each
+  # claude-session caller, bootstrap's App scope for its environment must grant
+  # every ceiling permission (write satisfies read), mapping the GITHUB_TOKEN
+  # hyphen names to the App underscore names, ignoring `workflows` (not a
+  # GITHUB_TOKEN scope, so it never appears in a ceiling). (#104/#116)
+  if python3 -c '
+import glob, re, sys, yaml
+
+# bootstrap role_perms arms: `role) printf {json} ;;` -> {role: {perm: level}}.
+apps = {}
+for m in re.finditer(r"^\s*([a-z-]+)\)\s*printf\s*'"'"'(\{.*?\})'"'"'", open("bootstrap.sh").read(), re.M):
+    apps[m.group(1)] = yaml.safe_load(m.group(2))
+RANK = {"read": 1, "write": 2}
+H2U = {"pull-requests": "pull_requests", "security-events": "security_events"}  # GITHUB_TOKEN → App name
+
+problems = []
+for path in sorted(glob.glob(".github/workflows/*.yml")):
+    wf = yaml.safe_load(open(path))
+    if not isinstance(wf, dict):
+        continue
+    for name, job in (wf.get("jobs") or {}).items():
+        uses = job.get("uses")
+        if not (isinstance(uses, str) and "claude-session.yml" in uses):
+            continue
+        # The role env is a reusable-workflow INPUT (with.environment), which
+        # claude-session.yml applies to its own job — not a top-level job key.
+        env = (job.get("with") or {}).get("environment")
+        ceiling = job.get("permissions") or {}
+        if not env:
+            problems.append(f"{path}:{name} calls the session with no environment (cannot map to an App)")
+            continue
+        scope = apps.get(env)
+        if scope is None:
+            problems.append(f"{path}:{name} targets environment {env!r} that bootstrap role_perms does not mint")
+            continue
+        for perm, lvl in ceiling.items():
+            app_perm = H2U.get(perm, perm)
+            if app_perm == "workflows":
+                continue  # not a GITHUB_TOKEN scope; never in a ceiling anyway
+            have = scope.get(app_perm)
+            if have is None or RANK.get(have, 0) < RANK.get(lvl, 0):
+                problems.append(f"{env} App is missing {app_perm}:{lvl} that {path}:{name} needs (has {have})")
+for p in problems:
+    print(p)
+sys.exit(1 if problems else 0)
+  '; then
+    ok "every station's App scope covers its caller ceiling (App-token path can do its ceiling work)"
   else
-    bad "bootstrap.sh reviewer App lacks issues:write — the App-token path cannot file tech-debt even when the ceiling can"
+    bad "a station App scope does not cover its ceiling — the App-token path will 403 on work the ceiling allows"
   fi
   # A hardcoded merge method fails outright on any repo whose policy differs —
   # this one allows squash only, so the original `--auto --merge` could never

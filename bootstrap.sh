@@ -181,9 +181,9 @@ role_perms() {
   # Least privilege per role — mirrors the plugin's guard scopes (docs/security).
   case "$1" in
     orchestrator) printf '{"contents":"write","actions":"write","issues":"write","pull_requests":"write"}' ;;
-    coder)        printf '{"contents":"write","issues":"write","pull_requests":"write","workflows":"write"}' ;;
+    coder)        printf '{"contents":"write","issues":"write","pull_requests":"write","workflows":"write","actions":"read"}' ;;
     reviewer)     printf '{"contents":"read","pull_requests":"write","checks":"read","issues":"write"}' ;;
-    triage)       printf '{"issues":"write"}' ;;
+    triage)       printf '{"issues":"write","contents":"read"}' ;;
     qa)           printf '{"contents":"write","issues":"write","actions":"read"}' ;;
     release)      printf '{"contents":"write","pull_requests":"write","issues":"read"}' ;;
     security)     printf '{"contents":"write","issues":"write","security_events":"read"}' ;;
