@@ -382,8 +382,51 @@ receipt_embed_sig() {
 # suite to completion and mints when it finishes. These two markers live in the
 # protected state dir (hook-written, agent-unwritable) so guard-commit can tell
 # "the gate is still running" apart from "the tests were red".
-gate_marker() { printf '%s' "$STATE_DIR/gate-running"; }
-gate_lock()   { printf '%s' "$STATE_DIR/gate-lock"; }
+#
+# Both are keyed to the repo whose suite is running, by the SAME rule
+# receipt_file uses (issue #28): the session repo keeps the canonical name, any
+# other repo gets a name derived from its root. Session-global markers would
+# report repo A's run as repo B's, and — worse — one global lock would let only
+# one repo's suite run at a time in a multi-repo session.
+_gate_key() {
+  local root="${1:-$PROJECT_DIR}" sroot
+  sroot="$(repo_root "$PROJECT_DIR")"
+  if [ -z "$root" ] || [ "$root" = "$sroot" ] || [ "$root" = "$PROJECT_DIR" ]; then
+    printf ''
+  else
+    printf -- '-%s' "$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+  fi
+}
+gate_marker() { printf '%s' "$STATE_DIR/gate-running$(_gate_key "${1:-}")"; }
+gate_lock()   { printf '%s' "$STATE_DIR/gate-lock$(_gate_key "${1:-}")"; }
+
+# A lock is a lease, not a tombstone. The runner clears both files in an EXIT
+# trap, but a trap cannot run if the process is SIGKILLed — an OOM kill, a
+# reclaimed CI runner, a reboot. Without an expiry those leftovers would decline
+# every future gate run and tell the agent to "wait for the suite" forever, i.e.
+# the deadlock this whole mechanism exists to remove. The lease is the runner's
+# own cap plus slack, so it can only expire after the suite could not still be
+# running. An unreadable or malformed stamp counts as expired: the failure we
+# must avoid is the permanent wedge, and a wrongly-reclaimed lock costs one
+# duplicated suite run.
+#
+# The stamp cannot be written atomically with the mkdir that takes the lock, so a
+# missing stamp is AMBIGUOUS: it is either a lock created microseconds ago whose
+# owner has not written it yet, or one from an older version. Falling back to the
+# lock directory's own mtime resolves both without ever reading "brand new" as
+# "abandoned" — which would let two runners run the same suite at once, defeating
+# the lock entirely. If neither is readable the lease is treated as LIVE: mutual
+# exclusion is the property worth keeping when we cannot tell.
+_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+gate_lease_expired() {
+  local lock="$1" started now
+  started="$(cat "$lock/started" 2>/dev/null)"
+  case "$started" in ''|*[!0-9]*) started="$(_mtime "$lock")" ;; esac
+  case "$started" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s 2>/dev/null)"
+  case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$((now - started))" -gt "$(( ${FACTORY_GATE_MAX_SECONDS:-1800} + 120 ))" ]
+}
 
 # mint_receipt <target-root> <exit-code> — the ONE place a gate receipt is
 # written, shared by the in-hook path (record-green) and the out-of-band runner

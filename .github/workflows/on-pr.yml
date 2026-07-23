@@ -66,8 +66,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: orchestrator
+    # Merging needs write scope. Without it the fallback token fails with
+    # "Resource not accessible by integration (mergePullRequest)" — which is how
+    # this job failed on the PR that introduced it.
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
     steps:
       - name: mint orchestrator token
         id: app
@@ -82,9 +86,15 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          decision="$(gh pr view "$PR" --repo "$REPO" --json reviewDecision --jq .reviewDecision)"
-          if [ "$decision" = "CHANGES_REQUESTED" ]; then
-            echo "review requested changes — not merging"
-            exit 0
-          fi
+          # Merge only on a real approving review — never merely on the ABSENCE
+          # of a rejection, which would let a change whose review never ran (or
+          # errored) reach main unexamined. Read the reviews directly rather
+          # than reviewDecision: with zero required approvals GitHub reports an
+          # empty decision even when an approval exists.
+          reviews="$(gh pr view "$PR" --repo "$REPO" --json reviews --jq '[.reviews[].state] | join(",")')"
+          case ",$reviews," in
+            *,CHANGES_REQUESTED,*) echo "::notice::review requested changes — not merging"; exit 0 ;;
+            *,APPROVED,*)          : ;;
+            *) echo "::notice::no approving review (states: ${reviews:-none}) — not merging"; exit 0 ;;
+          esac
           gh pr merge "$PR" --repo "$REPO" --auto --merge

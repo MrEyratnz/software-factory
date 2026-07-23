@@ -39,12 +39,19 @@ tc="$(config_get_for "$root" testCommand '')"
 [ -n "$tc" ] || exit 0
 
 mkdir -p "$STATE_DIR"
-lock="$(gate_lock)"
-marker="$(gate_marker)"
+lock="$(gate_lock "$root")"
+marker="$(gate_marker "$root")"
 
-# One gate run at a time: mkdir is the atomic test-and-set. A second runner
-# declines rather than doubling the machine's load and racing the mint.
-mkdir "$lock" 2>/dev/null || exit 0
+# One gate run per repo at a time: mkdir is the atomic test-and-set. A second
+# runner for the SAME repo declines rather than doubling the machine's load and
+# racing the mint — but a lock left behind by a killed runner is reclaimed once
+# its lease expires, so a SIGKILL cannot wedge the gate permanently.
+if ! mkdir "$lock" 2>/dev/null; then
+  gate_lease_expired "$lock" || exit 0
+  rm -rf "$lock"; rm -f "$marker"
+  mkdir "$lock" 2>/dev/null || exit 0
+fi
+date +%s > "$lock/started"
 trap 'rm -rf "$lock"; rm -f "$marker"' EXIT INT TERM
 
 start_tree="$(tree_hash "$root")"

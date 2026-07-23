@@ -1460,6 +1460,83 @@ mkdir -p "$R/.factory/state/gate-lock"
 CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
 assert_file absent "$R/.factory/state/gate-receipt.json" "#93: a locked gate run declines instead of double-running"
 
+echo "# gate-run: per-repo isolation and stale-lock recovery (review of #96)"
+# Both defects below were found by the factory's own review station on the PR
+# that introduced gate-run.sh, and both are the same class the receipts already
+# solved: state that is keyed to the SESSION when it should be keyed to the repo
+# the suite actually ran in, and a lock with no lease.
+
+# (1) The in-flight marker must be keyed to the repo whose suite is running,
+# exactly like the receipt it accompanies (receipt_file keys non-session repos by
+# root — issue #28). Session-global markers mean a slow suite in the session repo
+# tells the agent to "wait for the gate" on every commit to an unrelated repo,
+# and the single lock lets only one of them run at all.
+R="$(mkrepo)"; B="$(mkrepo)"
+export CLAUDE_PROJECT_DIR="$R"
+mkdir -p "$B/src"; echo x > "$B/src/b.ts"; ( cd "$B" && git add -A )
+SCRIPT="$S/record-green.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && npm test"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+# …now a slow suite is in flight for the SESSION repo R (its own marker+lock).
+mkdir -p "$R/.factory/state/gate-lock"; date +%s > "$R/.factory/state/gate-lock/started"
+printf '{"tree":"inflight","root":"%s"}' "$R" > "$R/.factory/state/gate-running"
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$B"' && git commit -m \"chore: b\""}')"
+assert_exit 0 "#96: an in-flight gate run for the session repo does not block a commit to sibling B"
+
+# The lock is the load-bearing half: one global lock means B's suite cannot even
+# START while R's is running, so a multi-repo session serializes into a deadlock
+# for as long as the first suite takes.
+C="$(mkrepo)"; mkdir -p "$C/src"; echo x > "$C/src/c.ts"; ( cd "$C" && git add -A )
+set_cfg "$C" testCommand "exit 0"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$C" >/dev/null 2>&1
+CKEY="$(printf '%s' "$C" | cksum | cut -d' ' -f1)"
+assert_file exists "$R/.factory/state/gate-receipt-$CKEY.json" "#96: a gate run for repo C proceeds while the session repo's own run holds its lock"
+
+# And the message must not claim a suite is running for a repo whose suite has
+# never run: repo D has no receipt, and R's in-flight run says nothing about D.
+D="$(mkrepo)"; mkdir -p "$D/src"; echo x > "$D/src/d.ts"; ( cd "$D" && git add -A )
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"cd '"$D"' && git commit -m \"chore: d\""}')"
+MSG="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
+case "$MSG" in
+  *"in flight"*) FAIL=$((FAIL+1)); echo "FAIL - #96: another repo's in-flight run must not be reported as this repo's" ;;
+  *) PASS=$((PASS+1)) ;;
+esac
+
+# (2) A lock whose owner was killed (SIGKILL: OOM, runner reclamation, reboot)
+# must not wedge the gate forever. Both the marker and the lock carry a lease:
+# past it, the next runner reclaims them instead of declining for all time.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "exit 0"
+mkdir -p "$R/.factory/state/gate-lock"
+echo "$(( $(date +%s) - 100000 ))" > "$R/.factory/state/gate-lock/started"
+printf '{"tree":"stale","root":"%s"}' "$R" > "$R/.factory/state/gate-running"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
+assert_file exists "$R/.factory/state/gate-receipt.json" "#96: an abandoned lock past its lease is reclaimed, not deadlocked"
+
+# A lock whose owner is alive and within the lease is still honoured.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+set_cfg "$R" testCommand "exit 0"
+mkdir -p "$R/.factory/state/gate-lock"
+date +%s > "$R/.factory/state/gate-lock/started"
+CLAUDE_PROJECT_DIR="$R" bash "$S/gate-run.sh" "$R" >/dev/null 2>&1
+assert_file absent "$R/.factory/state/gate-receipt.json" "#96: a live lock within its lease still wins"
+
+# (3) guard-commit must not promise "wait" on the strength of an abandoned
+# marker — past the lease it is not evidence of a running suite.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"; echo x > "$R/src/a.ts"; ( cd "$R" && git add -A )
+mkdir -p "$R/.factory/state/gate-lock"
+echo "$(( $(date +%s) - 100000 ))" > "$R/.factory/state/gate-lock/started"
+printf '{"tree":"stale","root":"%s"}' "$R" > "$R/.factory/state/gate-running"
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$R" Bash '{"command":"git commit -m \"chore: x\""}')"
+MSG="$(printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 >/dev/null)"
+case "$MSG" in
+  *"in flight"*) FAIL=$((FAIL+1)); echo "FAIL - #96: a stale marker must not claim a gate run is in flight" ;;
+  *) PASS=$((PASS+1)) ;;
+esac
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

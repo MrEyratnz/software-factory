@@ -89,7 +89,7 @@ else
       # whenever the detached process happens to get scheduled; the runner owns
       # clearing it (its EXIT trap).
       mkdir -p "$STATE_DIR"
-      printf '{"tree":%s,"root":%s}' "$(json_str "$(tree_hash "$target_root")")" "$(json_str "$target_root")" > "$(gate_marker)"
+      printf '{"tree":%s,"root":%s}' "$(json_str "$(tree_hash "$target_root")")" "$(json_str "$target_root")" > "$(gate_marker "$target_root")"
       ( nohup "$PLUGIN_ROOT/hooks/scripts/gate-run.sh" "$target_root" >/dev/null 2>&1 & disown ) 2>/dev/null \
         || ( "$PLUGIN_ROOT/hooks/scripts/gate-run.sh" "$target_root" >/dev/null 2>&1 & ) 2>/dev/null
       allow

@@ -79,6 +79,29 @@ else
   bad "$SESSION_WF missing"
 fi
 
+# The self-merge job needs write scope to merge at all — with only `contents:
+# read` its fallback token fails with "Resource not accessible by integration"
+# — and it must merge ONLY on a real approving review, never merely on the
+# absence of a rejection (an unreviewed change must not reach main).
+PR_WF=".github/workflows/on-pr.yml"
+if [ -f "$PR_WF" ] && python3 -c "import yaml" 2>/dev/null; then
+  if WF="$PR_WF" python3 -c '
+import os, sys, yaml
+job = yaml.safe_load(open(os.environ["WF"]))["jobs"]["merge"]
+perms = job.get("permissions") or {}
+sys.exit(0 if perms.get("pull-requests") == "write" and perms.get("contents") == "write" else 1)
+  '; then
+    ok "$PR_WF merge job declares the write scope a merge actually needs"
+  else
+    bad "$PR_WF merge job cannot merge: its permissions lack contents/pull-requests write"
+  fi
+  if grep -q 'APPROVED' "$PR_WF"; then
+    ok "$PR_WF self-merges only on an approving review"
+  else
+    bad "$PR_WF merges without requiring an approving review"
+  fi
+fi
+
 if grep -q 'CLAUDE_CODE_OAUTH_TOKEN' bootstrap.sh; then
   ok "bootstrap.sh stores whichever Claude credential the human already has"
 else
