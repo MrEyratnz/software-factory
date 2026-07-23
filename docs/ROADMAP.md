@@ -15,7 +15,18 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 - [x] Claude issue-triage and adversarial code-review workflows with ready-label / project-board handoff
 - [x] Docs spine (ADR 0001–0002) and self-dogfooding: the repo runs the plugin from its own working tree (lands in the same PR as this file)
 
-## M1 — Hardening
+## M1 — Coordination substrate (milestone v1.0.0)
+
+**The first work after bootstrapping**, and a v1.0.0 gate item (owner-decided
+2026-07-23).
+
+- [ ] Make labels the single coordination substrate; demote the Projects board
+  to a factory-invisible human dashboard — removes the `FACTORY_PAT`/
+  `PROJECT_TOKEN` dependency (App tokens cannot reach a user-owned Projects v2
+  board), and supersedes ADR 0003's board-ownership with an `owner:<role>`
+  label convention (#138)
+
+## M2 — Hardening
 
 - [ ] Node adapter `sourceRegex`/`testRegex` cover `.tsx` and monorepo source roots so the tests-first gate stops under-firing (#47)
 - [ ] `roadmap-proof.json` gains a sanctioned CI/runner producer so `/roadmap check` has an in-repo path to succeed (#51)
@@ -24,7 +35,7 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 - [ ] Review workflow's `gh pr comment` is pinned to the triggering PR instead of prefix-matched (#60)
 - [ ] Triage runs lose the direct `gh label create` write — labels are ensured deterministically before the model step (#61)
 
-## M2 — Epic 1: the plugin test suite (milestone v1.0.0)
+## M3 — Epic 1: the plugin test suite (milestone v1.0.0)
 
 - [ ] Static validation layer in the commit gate: manifest + frontmatter schema
   checks for every command/agent/skill/hook config, `${CLAUDE_PLUGIN_ROOT}`
@@ -43,7 +54,7 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 - [ ] Wire all suite layers into `.factory/config.json` green stages so the
   receipt/commit contract enforces them permanently
 
-## M3 — Autonomous SDLC hardening (milestone v1.0.0)
+## M4 — Autonomous SDLC hardening (milestone v1.0.0)
 
 - [ ] Fix the bootstrap-era receipt bugs: `record-green`'s 30s hook timeout vs
   multi-minute suites, the `/factory-init` config chicken-and-egg, and the
@@ -57,7 +68,7 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
   pinned container images per `docs/security/README.md` gap register
 - [ ] Board session #1 held via judge-panel with a synthesized ADR
 
-## M4 — v1.0.0 (milestone v1.0.0)
+## M5 — v1.0.0 (milestone v1.0.0)
 
 - [ ] Release Gate script green: zero open `bug`/`tech-debt`, zero unresolved
   review findings, v1.0.0 roadmap 100% merged-green, coverage + eval
@@ -65,7 +76,7 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 
-## M5 — Post-1.0 (milestone v1.1.0)
+## M6 — Post-1.0 (milestone v1.1.0)
 
 - [ ] Feature-freeze overflow: `idea`/`research`/retro issues routed here by
   the product owner once the v1.0.0 gate is within one sprint of holding
