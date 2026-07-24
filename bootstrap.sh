@@ -207,6 +207,9 @@ env_has_app() {
 }
 
 APP_STATE_DIR="factory-ops/state/.bootstrap-apps"
+# Host-local runner artifacts (the egress proxy's squid.conf) that outlive the
+# run: the proxy restarts unless-stopped, so its config must not sit in /tmp.
+RUNNER_STATE_DIR="factory-ops/state/.bootstrap-runner"
 
 # mint_app_jwt <app_id> <pem_file> — an RS256-signed App JWT (iat/exp/iss), so
 # we can call the App-authenticated `GET /repos/$REPO/installation` to VERIFY the
@@ -565,12 +568,19 @@ else
   else
     log "registering Dockerized runner 'icculus' with egress-allowlist proxy"
     docker network inspect factory-net >/dev/null 2>&1 || docker network create factory-net >&2
-    if ! docker ps --format '{{.Names}}' | grep -Fxq factory-proxy; then
-      proxy_conf="$(mktemp)"
-      cat > "$proxy_conf" <<'SQUID'
+
+    # The config lives in a stable, gitignored state dir — NOT mktemp: the proxy
+    # runs `--restart unless-stopped`, so a /tmp sweep or reboot would remount a
+    # vanished path and squid would come back configless.
+    mkdir -p "$RUNNER_STATE_DIR"
+    proxy_conf="$(cd "$RUNNER_STATE_DIR" && pwd)/squid.conf"
+    # dstdomain entries must not shadow one another: squid >=6 rejects an ACL
+    # that lists both `.github.com` and `github.com` as a FATAL config error, and
+    # a leading dot already matches the bare domain plus every subdomain.
+    cat > "$proxy_conf" <<'SQUID'
 # Egress allowlist for factory runner traffic: GitHub, Anthropic API, package
 # registries only. Everything else is denied at the proxy.
-acl allowed dstdomain .github.com github.com .githubusercontent.com .githubassets.com ghcr.io .blob.core.windows.net .anthropic.com registry.npmjs.org .npmjs.org pypi.org files.pythonhosted.org
+acl allowed dstdomain .github.com .githubusercontent.com .githubassets.com .ghcr.io .blob.core.windows.net .anthropic.com .npmjs.org .pypi.org .pythonhosted.org
 acl SSL_ports port 443
 acl CONNECT method CONNECT
 http_access deny CONNECT !SSL_ports
@@ -578,40 +588,77 @@ http_access allow allowed
 http_access deny all
 http_port 3128
 SQUID
-      docker run -d --restart unless-stopped --name factory-proxy --network factory-net \
-        -v "$proxy_conf:/etc/squid/squid.conf:ro" ubuntu/squid:latest >&2
+    # Recreate every run rather than skipping when the name exists: a
+    # crash-looping container still lists in `docker ps`, so presence is not
+    # health, and a name check would pin a broken proxy forever and stop a fixed
+    # config from ever landing.
+    docker rm -f factory-proxy >/dev/null 2>&1 || true
+    docker run -d --restart unless-stopped --name factory-proxy --network factory-net \
+      -v "$proxy_conf:/etc/squid/squid.conf:ro" ubuntu/squid:latest >&2
+
+    # A runner pointed at a dead proxy retries forever and never registers, so
+    # prove the proxy serves BEFORE spending a registration token on it.
+    proxy_healthy=false
+    for _ in $(seq 1 20); do
+      if [ "$(docker inspect factory-proxy --format '{{.State.Running}}' 2>/dev/null)" = "true" ] &&
+         docker exec factory-proxy sh -c 'exec 3<>/dev/tcp/127.0.0.1/3128' 2>/dev/null; then
+        proxy_healthy=true
+        break
+      fi
+      sleep 3
+    done
+    if [ "$proxy_healthy" != true ]; then
+      warn "egress proxy is not serving on :3128 — refusing to register a runner that cannot reach it"
+      docker logs --tail 30 factory-proxy >&2 2>&1 || true
+      ensure_issue "Egress proxy failed to start on the self-hosted runner host" "P1,security" \
+"bootstrap.sh started factory-proxy but it never served on :3128, so the icculus runner was not registered and the factory is running on hosted runners. Check 'docker logs factory-proxy' on the runner host."
     fi
-    if sudo -n true 2>/dev/null; then
+
+    if [ "$proxy_healthy" = true ] && sudo -n iptables -L DOCKER-USER -n >/dev/null 2>&1; then
       subnet="$(docker network inspect factory-net --format '{{(index .IPAM.Config 0).Subnet}}')"
       proxy_ip="$(docker inspect factory-proxy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
+      # `docker inspect` prints the literal string "invalid IP" (not an empty
+      # one) for a container with no live network, which would otherwise be
+      # handed to `iptables -d` and silently leave the firewall unapplied.
+      case "$proxy_ip" in
+        *[!0-9.]*|'') die "could not read factory-proxy's IP on factory-net (got '${proxy_ip}')" ;;
+      esac
       sudo iptables -C DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT
       sudo iptables -C DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT
       sudo iptables -C DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT
       sudo iptables -C DOCKER-USER -s "$subnet" -j DROP 2>/dev/null || sudo iptables -A DOCKER-USER -s "$subnet" -j DROP
       log "egress firewall applied to factory-net (allowlist proxy only)"
-    else
-      warn "no passwordless sudo — egress enforcement is proxy-config only (direct egress not dropped)"
+    elif [ "$proxy_healthy" = true ]; then
+      # The probe above exercises iptables itself rather than some unrelated
+      # command: a correctly scoped `NOPASSWD: /usr/sbin/iptables` rule permits
+      # only iptables, so probing anything else reports "no sudo" and skips the
+      # firewall on a host that in fact allows it.
+      warn "no passwordless sudo for iptables — egress enforcement is proxy-config only (direct egress not dropped)"
       ensure_issue "Runner egress firewall not enforced at the network layer" "P1,security" \
-"bootstrap.sh had no sudo to install DOCKER-USER iptables rules on the factory-net subnet, so runner egress is restricted only by proxy configuration, not by packet filtering. Apply the drop rules on icculus (see docs/security/README.md gap register)."
+"bootstrap.sh had no sudo to install DOCKER-USER iptables rules on the factory-net subnet, so runner egress is restricted only by proxy configuration, not by packet filtering. Grant 'NOPASSWD: /usr/sbin/iptables' on icculus and re-run, or apply the drop rules by hand (see docs/security/README.md gap register)."
     fi
-    rtoken="$(gh api -X POST "repos/$REPO/actions/runners/registration-token" --jq .token)"
-    docker rm -f dsf-runner-icculus >/dev/null 2>&1 || true
-    docker run -d --restart unless-stopped --name dsf-runner-icculus --network factory-net \
-      -e http_proxy=http://factory-proxy:3128 -e https_proxy=http://factory-proxy:3128 \
-      -e no_proxy=localhost,127.0.0.1,factory-proxy \
-      ghcr.io/actions/actions-runner:latest \
-      /bin/bash -c "./config.sh --url 'https://github.com/$REPO' --token '$rtoken' --name icculus --labels icculus --unattended --replace && ./run.sh" >&2
-    for _ in $(seq 1 24); do
-      if gh api "repos/$REPO/actions/runners" --jq '.runners[] | select(.name == "icculus") | .status' 2>/dev/null | grep -q .; then
-        RUNNER_OK=true
-        break
+
+    if [ "$proxy_healthy" = true ]; then
+      rtoken="$(gh api -X POST "repos/$REPO/actions/runners/registration-token" --jq .token)"
+      docker rm -f dsf-runner-icculus >/dev/null 2>&1 || true
+      docker run -d --restart unless-stopped --name dsf-runner-icculus --network factory-net \
+        -e http_proxy=http://factory-proxy:3128 -e https_proxy=http://factory-proxy:3128 \
+        -e no_proxy=localhost,127.0.0.1,factory-proxy \
+        ghcr.io/actions/actions-runner:latest \
+        /bin/bash -c "./config.sh --url 'https://github.com/$REPO' --token '$rtoken' --name icculus --labels icculus --unattended --replace && ./run.sh" >&2
+      for _ in $(seq 1 24); do
+        if gh api "repos/$REPO/actions/runners" --jq '.runners[] | select(.name == "icculus") | .status' 2>/dev/null | grep -q .; then
+          RUNNER_OK=true
+          break
+        fi
+        sleep 5
+      done
+      if [ "$RUNNER_OK" = true ]; then
+        log "runner 'icculus' registered"
+      else
+        warn "runner did not register — check 'docker logs dsf-runner-icculus'"
+        docker logs --tail 30 dsf-runner-icculus >&2 2>&1 || true
       fi
-      sleep 5
-    done
-    if [ "$RUNNER_OK" = true ]; then
-      log "runner 'icculus' registered"
-    else
-      warn "runner did not appear yet — check 'docker logs dsf-runner-icculus'"
     fi
   fi
 fi
