@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.8](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.7...dark-software-factory-v0.1.8) (2026-07-24)
+
+
+### Features
+
+* **factory:** stand up the autonomous lights-out SDLC scaffolding ([#91](https://github.com/MrEyratnz/software-factory/issues/91)) ([58eb401](https://github.com/MrEyratnz/software-factory/commit/58eb401a8ac28c633110dd9cf0f5e0356975ed02))
+
+
+### Bug Fixes
+
+* **docs:** flip M1 roadmap checkboxes to match merged-green reality ([#204](https://github.com/MrEyratnz/software-factory/issues/204)) ([fbc1867](https://github.com/MrEyratnz/software-factory/commit/fbc1867b60b785d5cbe1d44228d5f3a99256ff2f)), closes [#175](https://github.com/MrEyratnz/software-factory/issues/175)
+* **factory:** give each station the permissions its work needs ([#99](https://github.com/MrEyratnz/software-factory/issues/99)) ([225264f](https://github.com/MrEyratnz/software-factory/commit/225264fc727a920d654c0b1f5c4e869730faead1))
+* **factory:** make the factory able to run — session auth, loud failures, and receipts for slow suites ([#96](https://github.com/MrEyratnz/software-factory/issues/96)) ([a3cc68c](https://github.com/MrEyratnz/software-factory/commit/a3cc68c312743d30fae84ac35245137524476ca3))
+
 ## [0.1.7](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.6...dark-software-factory-v0.1.7) (2026-07-11)
 
 
