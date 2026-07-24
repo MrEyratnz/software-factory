@@ -211,6 +211,23 @@ APP_STATE_DIR="factory-ops/state/.bootstrap-apps"
 # run: the proxy restarts unless-stopped, so its config must not sit in /tmp.
 RUNNER_STATE_DIR="factory-ops/state/.bootstrap-runner"
 
+# valid_ipv4 <string> — a real dotted quad, so a `docker inspect` miss ("invalid
+# IP", an empty string, or two networks' addresses concatenated) can never be
+# handed to iptables as a firewall rule that then silently fails to apply.
+valid_ipv4() {
+  local ip="$1" o
+  case "$ip" in ''|*[!0-9.]*) return 1 ;; esac
+  local IFS=.
+  # shellcheck disable=SC2086 # deliberate split on IFS into the four octets
+  set -- $ip
+  [ "$#" -eq 4 ] || return 1
+  for o in "$@"; do
+    case "$o" in ''|*[!0-9]*) return 1 ;; esac
+    [ "${#o}" -le 3 ] && [ "$o" -le 255 ] || return 1
+  done
+  return 0
+}
+
 # mint_app_jwt <app_id> <pem_file> — an RS256-signed App JWT (iat/exp/iss), so
 # we can call the App-authenticated `GET /repos/$REPO/installation` to VERIFY the
 # app is actually installed on THIS repo. No installation id needed — the CI
@@ -612,29 +629,41 @@ SQUID
     if [ "$proxy_healthy" != true ]; then
       warn "egress proxy is not serving on :3128 — refusing to register a runner that cannot reach it"
       docker logs --tail 30 factory-proxy >&2 2>&1 || true
+      # Leave no crash-looping container behind: `--restart unless-stopped`
+      # would otherwise respawn a dead proxy forever until the next good run.
+      docker rm -f factory-proxy >/dev/null 2>&1 || true
       ensure_issue "Egress proxy failed to start on the self-hosted runner host" "P1,security" \
-"bootstrap.sh started factory-proxy but it never served on :3128, so the icculus runner was not registered and the factory is running on hosted runners. Check 'docker logs factory-proxy' on the runner host."
+"bootstrap.sh started factory-proxy but it never served on :3128, so the icculus runner was not registered and the factory is running on hosted runners. Re-run bootstrap.sh on the runner host and read the squid startup output it prints."
     fi
 
     if [ "$proxy_healthy" = true ] && sudo -n iptables -L DOCKER-USER -n >/dev/null 2>&1; then
       subnet="$(docker network inspect factory-net --format '{{(index .IPAM.Config 0).Subnet}}')"
-      proxy_ip="$(docker inspect factory-proxy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
+      # Scope the lookup to factory-net: ranging over every network concatenates
+      # the addresses of a multi-homed container into one unusable string.
+      proxy_ip="$(docker inspect factory-proxy --format '{{(index .NetworkSettings.Networks "factory-net").IPAddress}}' 2>/dev/null || true)"
       # `docker inspect` prints the literal string "invalid IP" (not an empty
       # one) for a container with no live network, which would otherwise be
-      # handed to `iptables -d` and silently leave the firewall unapplied.
-      case "$proxy_ip" in
-        *[!0-9.]*|'') die "could not read factory-proxy's IP on factory-net (got '${proxy_ip}')" ;;
-      esac
-      # The proxy lives in the same subnet the DROP rule covers, so without an
-      # explicit ACCEPT for it squid cannot reach anything either and every
-      # CONNECT ends in a 60s timeout and a TCP_TUNNEL/503. Packet-level egress
-      # for the proxy host is intended: the allowlist is enforced inside squid.
-      sudo iptables -C DOCKER-USER -s "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$proxy_ip" -j ACCEPT
-      sudo iptables -C DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT
-      sudo iptables -C DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT
-      sudo iptables -C DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT
-      sudo iptables -C DOCKER-USER -s "$subnet" -j DROP 2>/dev/null || sudo iptables -A DOCKER-USER -s "$subnet" -j DROP
-      log "egress firewall applied to factory-net (allowlist proxy only)"
+      # handed to `iptables -d` and silently leave the firewall unapplied. A
+      # char-class check is not enough — it accepts "1.2.3.4.5" — so require a
+      # real dotted quad.
+      if valid_ipv4 "$proxy_ip"; then
+        # The proxy lives in the same subnet the DROP rule covers, so without an
+        # explicit ACCEPT for it squid cannot reach anything either and every
+        # CONNECT ends in a 60s timeout and a TCP_TUNNEL/503. Packet-level egress
+        # for the proxy host is intended: the allowlist is enforced inside squid.
+        sudo iptables -C DOCKER-USER -s "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$proxy_ip" -j ACCEPT
+        sudo iptables -C DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT
+        sudo iptables -C DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT
+        sudo iptables -C DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT
+        sudo iptables -C DOCKER-USER -s "$subnet" -j DROP 2>/dev/null || sudo iptables -A DOCKER-USER -s "$subnet" -j DROP
+        log "egress firewall applied to factory-net (allowlist proxy only)"
+      else
+        # Degrade like every sibling failure in this section rather than aborting
+        # the whole bootstrap: the runner is still worth registering.
+        warn "could not read factory-proxy's address on factory-net (got '${proxy_ip}') — egress firewall not applied"
+        ensure_issue "Runner egress firewall not enforced at the network layer" "P1,security" \
+"bootstrap.sh could not determine the egress proxy's address on factory-net, so the DOCKER-USER drop rules were not installed and runner egress is restricted only by proxy configuration, not by packet filtering. Apply the drop rules on icculus (see docs/security/README.md gap register)."
+      fi
     elif [ "$proxy_healthy" = true ]; then
       # The probe above exercises iptables itself rather than some unrelated
       # command: a correctly scoped `NOPASSWD: /usr/sbin/iptables` rule permits

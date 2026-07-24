@@ -204,6 +204,9 @@ dupe="$(printf '%s\n' "$acl_line" | awk '
     for (i = 1; i <= n; i++) for (j = 1; j <= n; j++) {
       if (i == j) continue
       a = d[i]; b = d[j]
+      # An exact repeat is squid-fatal too, and is not caught by the
+      # covers-relation below (which requires the entries to differ).
+      if (a == b) { if (i < j) print a " repeats"; continue }
       if (substr(a, 1, 1) != ".") continue
       bare = substr(a, 2)
       # a (leading-dot .x.com) covers b when b IS x.com or ends in .x.com
@@ -233,10 +236,21 @@ expect "[proxy-stale-config] the proxy is recreated from the current config each
 # proxy-not-health-checked (blocker) — bootstrap must verify the proxy is really
 # serving before it registers a runner against it, and must fail loudly with the
 # proxy's own logs instead of leaving a crash-looping runner behind.
-if grep -q 'proxy_healthy' "$BOOTSTRAP"; then rc=0; else rc=1; fi
-expect "[proxy-not-health-checked] the proxy is health-checked before the runner starts" "$rc"
-if grep -q 'docker logs factory-proxy' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+# A bare `grep proxy_healthy` would match a comment, so bind the ORDER: the
+# registration token must be requested strictly after the guard that proves the
+# proxy serves. Delete the guard and this assertion goes red.
+hg="$(grep -n '\[ "\$proxy_healthy" = true \]; then' "$BOOTSTRAP" | tail -1 | cut -d: -f1)"
+rt="$(grep -n 'actions/runners/registration-token' "$BOOTSTRAP" | head -1 | cut -d: -f1)"
+if [ -n "$hg" ] && [ -n "$rt" ] && [ "$rt" -gt "$hg" ]; then rc=0; else rc=1; fi
+expect "[proxy-not-health-checked] a registration token is only spent behind the health guard" "$rc"
+# Assert the real invocation, not the phrase as it happens to appear in the
+# issue body: `docker logs --tail N factory-proxy >` redirecting to the operator.
+if grep -qE 'docker logs (--tail [0-9]+ )?factory-proxy *>' "$BOOTSTRAP"; then rc=0; else rc=1; fi
 expect "[proxy-not-health-checked] a dead proxy surfaces its own logs" "$rc"
+# A proxy that failed its probe must not be left respawning under
+# `--restart unless-stopped` until some later run happens to fix it.
+if awk -v s="$hg" 'NR < s && /docker rm -f factory-proxy/ { n++ } END { exit !(n >= 2) }' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-not-health-checked] a proxy that fails the probe is torn down, not left crash-looping" "$rc"
 
 # health-probe-wrong-shell (blocker) — the probe uses bash's /dev/tcp, which
 # does not exist in a POSIX sh; running it under `sh` fails on a perfectly
@@ -263,8 +277,22 @@ expect "[js-actions-proxy-blind] the runner exports NODE_USE_ENV_PROXY for JS ac
 # proxy-ip-unvalidated (major) — `docker inspect` prints "invalid IP" (not an
 # empty string) for a container with no live network, so an unvalidated capture
 # feeds garbage to `iptables -d` and the firewall silently fails to apply.
-if grep -qE 'case .\$proxy_ip. in|proxy_ip.*\[0-9\]' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+if grep -q 'valid_ipv4 "\$proxy_ip"' "$BOOTSTRAP"; then rc=0; else rc=1; fi
 expect "[proxy-ip-unvalidated] the captured proxy IP is validated before use" "$rc"
+# A character-class check accepts "1.2.3.4.5" and a two-network concatenation,
+# so drive the real validator over the shapes docker actually produces.
+eval "$(extract_func valid_ipv4)"
+for good in 172.18.0.2 10.0.0.1 255.255.255.255; do
+  if valid_ipv4 "$good"; then rc=0; else rc=1; fi
+  expect "[proxy-ip-unvalidated] valid_ipv4 accepts $good" "$rc"
+done
+for bad in '' 'invalid IP' 1.2.3.4.5 172.18.0.2172.19.0.3 1.2.3 256.1.1.1 1.2.3.; do
+  if valid_ipv4 "$bad"; then rc=1; else rc=0; fi
+  expect "[proxy-ip-unvalidated] valid_ipv4 rejects '${bad}'" "$rc"
+done
+# The unreadable-IP path must degrade like its siblings, never abort the run.
+if grep -q 'egress firewall not applied' "$BOOTSTRAP" && ! grep -q 'die "could not read' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-ip-unvalidated] an unreadable proxy IP degrades instead of aborting bootstrap" "$rc"
 
 # =============================================================================
 # Static regression guards for defects whose trigger path needs a live browser /
