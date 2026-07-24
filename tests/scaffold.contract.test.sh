@@ -157,13 +157,27 @@ else
 fi
 # The guard must key on the real deliverable, not a bare commit count: a PR
 # opened/advanced or a non-chore work commit measured against a baseline SHA.
+# The VERDICT must come from scripts/session-progress.mjs, which is fixture-
+# tested — inline logic in the workflow is unreachable by any test (#256).
 if [ -f "$SESS_WF" ] \
    && grep -q 'require_progress' "$SESS_WF" \
-   && grep -qE 'pr list|headRefOid' "$SESS_WF" \
+   && grep -q 'session-progress.mjs' "$SESS_WF" \
    && grep -qE 'not .*BASE_SHA|--not "\$BASE_SHA"' "$SESS_WF"; then
-  ok "$SESS_WF no-op guard keys on the deliverable (PR or non-chore commit vs baseline), not a bare commit count"
+  ok "$SESS_WF no-op guard delegates its verdict to the fixture-tested session-progress module"
 else
-  bad "$SESS_WF lacks a deliverable-based no-op guard for require_progress stations (#228/#251/#252)"
+  bad "$SESS_WF lacks a deliverable-based no-op guard delegating to session-progress.mjs (#228/#251/#252/#256)"
+fi
+# The behaviour itself is pinned by fixtures, not by grepping this workflow;
+# that suite must exist and must be wired into the gate.
+if [ -f scripts/session-progress.mjs ] && [ -f scripts/session-progress.test.mjs ]; then
+  ok "the no-op guard's logic is extracted and fixture-tested (scripts/session-progress*.mjs)"
+else
+  bad "scripts/session-progress.mjs + .test.mjs missing — the guard's behaviour is not exercised by any test (#256)"
+fi
+if grep -q 'session-progress.test.mjs' tests/run-suite.sh; then
+  ok "session-progress tests run in the suite"
+else
+  bad "session-progress tests are not wired into tests/run-suite.sh"
 fi
 # A bare `git rev-list --all --count` diff must NOT be how progress is judged —
 # that is exactly the #251/#252 hole; pin that it is gone.
@@ -181,8 +195,8 @@ wf = yaml.safe_load(open(os.environ["WF"]))
 steps = wf["jobs"]["session"]["steps"]
 guard = [s for s in steps
          if "require_progress" in str(s.get("if", ""))
-         and "exit 1" in str(s.get("run", ""))
-         and ("pr list" in str(s.get("run", "")) or "headRefOid" in str(s.get("run", "")))]
+         and "exit(1)" in str(s.get("run", "")).replace(" ", "")
+         and "session-progress.mjs" in str(s.get("run", ""))]
 sys.exit(0 if guard else 1)
   '; then
     ok "$SESS_WF no-op guard exits non-zero when the session built nothing (fails the job)"

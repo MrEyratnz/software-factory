@@ -139,9 +139,17 @@ jobs:
           GH_TOKEN: ${{ steps.ident.outputs.token }}
         run: |
           echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
-            --json number,headRefOid > "$RUNNER_TEMP/prs-before.json" 2>/dev/null \
-            || echo '[]' > "$RUNNER_TEMP/prs-before.json"
+          # Write the snapshot ONLY on success. An empty-list fallback would fail
+          # OPEN: with no "before" set every already-open PR looks newly advanced,
+          # so a no-op passes green and a single gh hiccup silently disables the
+          # guard. No file => the guard cannot prove progress => it fails closed.
+          # (A genuine zero-PR repo writes a real, empty `[]` here — that is
+          # distinguishable from "could not read", which writes nothing.)
+          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,headRefOid 2>/dev/null)"; then
+            printf '%s' "$out" > "$RUNNER_TEMP/prs-before.json"
+          else
+            echo "::warning::could not snapshot open PRs for the no-op guard — it will fail closed."
+          fi
 
       # Claude Code in CI authenticates with EITHER credential; a repo that holds
       # the one we don't pass runs every station unauthenticated. Fail here,
@@ -220,34 +228,43 @@ jobs:
           GH_TOKEN: ${{ steps.ident.outputs.token }}
           BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
         run: |
-          # Fail CLOSED if the baseline never ran (#254): no baseline => cannot
-          # prove progress => treat as no-op rather than passing by default.
-          if [ -z "${BASE_SHA:-}" ] || [ ! -f "$RUNNER_TEMP/prs-before.json" ]; then
-            echo "::error::no-op guard baseline missing — failing closed (see #228/#254)."
-            exit 1
+          # Collect the evidence here; the VERDICT lives in
+          # scripts/session-progress.mjs so it is exercised by fixtures
+          # (scripts/session-progress.test.mjs) rather than duplicated inline
+          # where no test can reach it (#256).
+          #
+          # Work commits: non-chore subjects reachable from a local branch but
+          # NOT from the baseline tip, so a concurrent fetch into refs/remotes
+          # cannot satisfy the guard (#252).
+          git log --branches --not "${BASE_SHA:-HEAD}" --no-merges --pretty=%s \
+            > "$RUNNER_TEMP/work-subjects.txt" 2>/dev/null || : > "$RUNNER_TEMP/work-subjects.txt"
+          # PRs after: on a gh failure write nothing — an absent "after" yields
+          # no PR signal (the commit signal still stands), never a false pass.
+          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,headRefOid 2>/dev/null)"; then
+            printf '%s' "$out" > "$RUNNER_TEMP/prs-after.json"
           fi
-          # (b) non-chore work commits on local branches this session created,
-          # reachable from a local head but NOT from the baseline tip.
-          work="$(git log --branches --not "$BASE_SHA" --no-merges --pretty=%s 2>/dev/null \
-            | grep -vcE '^(chore|ci)(\([^)]*\))?:' || true)"
-          # (a) a PR opened or advanced (head moved) since the baseline.
-          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
-            --json number,headRefOid > "$RUNNER_TEMP/prs-after.json" 2>/dev/null \
-            || echo '[]' > "$RUNNER_TEMP/prs-after.json"
-          pr="$(node -e '
-            const fs = require("fs");
-            const rd = p => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return []; } };
-            const before = new Map(rd(process.env.RUNNER_TEMP + "/prs-before.json").map(p => [p.number, p.headRefOid]));
-            const after = rd(process.env.RUNNER_TEMP + "/prs-after.json");
-            const advanced = after.some(p => !before.has(p.number) || before.get(p.number) !== p.headRefOid);
-            process.stdout.write(advanced ? "1" : "0");
-          ')"
-          if [ "${work:-0}" -eq 0 ] && [ "${pr:-0}" -eq 0 ]; then
-            echo "::error::factory-run built nothing this iteration — no PR opened/advanced and no non-chore work commit (see #228)." \
-                 "Orienting with /factory-status and writing only the checkpoint is a no-op, not progress."
-            exit 1
-          fi
-          echo "progress: non-chore work commits=${work:-0}, PR opened/advanced=${pr:-0}"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { evaluateProgress } from "'"$GITHUB_WORKSPACE"'/scripts/session-progress.mjs";
+            const T = process.env.RUNNER_TEMP;
+            // null (not []) means "could not read" — the distinction that makes
+            // the guard fail CLOSED instead of OPEN (#254).
+            const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
+            const readLines = (p) => { try { return fs.readFileSync(p, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+            const verdict = evaluateProgress({
+              result: readJson(T + "/session-result.json") ?? {},
+              baselineSha: process.env.BASE_SHA || "",
+              prsBefore: readJson(T + "/prs-before.json"),
+              prsAfter: readJson(T + "/prs-after.json"),
+              commitSubjects: readLines(T + "/work-subjects.txt"),
+            });
+            if (!verdict.ok) {
+              console.log("::error::factory-run built nothing this iteration — " + verdict.reason +
+                ". Orienting with /factory-status and writing only the checkpoint is a no-op, not progress.");
+              process.exit(1);
+            }
+            console.log("no-op guard: " + verdict.reason);
+          '
 
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns
