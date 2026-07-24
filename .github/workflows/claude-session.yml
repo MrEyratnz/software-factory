@@ -145,7 +145,10 @@ jobs:
           # guard. No file => the guard cannot prove progress => it fails closed.
           # (A genuine zero-PR repo writes a real, empty `[]` here — that is
           # distinguishable from "could not read", which writes nothing.)
-          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,headRefOid 2>/dev/null)"; then
+          # --author @me: the signal must be THIS identity's PRs, matching the
+          # "after" snapshot, so a concurrent station's PR cannot credit this
+          # session (#288).
+          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --author "@me" --json number,headRefOid 2>/dev/null)"; then
             printf '%s' "$out" > "$RUNNER_TEMP/prs-before.json"
           else
             echo "::warning::could not snapshot open PRs for the no-op guard — it will fail closed."
@@ -228,43 +231,27 @@ jobs:
           GH_TOKEN: ${{ steps.ident.outputs.token }}
           BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
         run: |
-          # Collect the evidence here; the VERDICT lives in
-          # scripts/session-progress.mjs so it is exercised by fixtures
-          # (scripts/session-progress.test.mjs) rather than duplicated inline
-          # where no test can reach it (#256).
+          # Collect evidence here; every DECISION (including the fail-closed
+          # null-vs-[] parse) lives in scripts/session-progress.mjs so fixtures
+          # cover it — inline glue is unreachable by any test (#256, #285).
           #
-          # Work commits: non-chore subjects reachable from a local branch but
-          # NOT from the baseline tip, so a concurrent fetch into refs/remotes
-          # cannot satisfy the guard (#252).
-          git log --branches --not "${BASE_SHA:-HEAD}" --no-merges --pretty=%s \
+          # Work commits + changed paths: scoped to commits reachable from a
+          # local branch but NOT from the baseline tip, so a concurrent fetch
+          # into refs/remotes cannot satisfy the guard (#252).
+          git log --branches --not "$BASE_SHA" --no-merges --pretty=%s \
             > "$RUNNER_TEMP/work-subjects.txt" 2>/dev/null || : > "$RUNNER_TEMP/work-subjects.txt"
-          # PRs after: on a gh failure write nothing — an absent "after" yields
-          # no PR signal (the commit signal still stands), never a false pass.
-          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,headRefOid 2>/dev/null)"; then
+          git diff --name-only "$BASE_SHA" -- \
+            > "$RUNNER_TEMP/changed-paths.txt" 2>/dev/null || : > "$RUNNER_TEMP/changed-paths.txt"
+          git log --branches --not "$BASE_SHA" --name-only --pretty=format: \
+            >> "$RUNNER_TEMP/changed-paths.txt" 2>/dev/null || true
+          # PRs after — restricted to THIS identity's PRs so another actor's
+          # concurrent PR cannot credit this session (#288). On a gh failure
+          # write nothing: an absent "after" yields no PR signal (the commit
+          # signal still stands), never a false pass.
+          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --author "@me" --json number,headRefOid 2>/dev/null)"; then
             printf '%s' "$out" > "$RUNNER_TEMP/prs-after.json"
           fi
-          node --input-type=module -e '
-            import fs from "node:fs";
-            import { evaluateProgress } from "'"$GITHUB_WORKSPACE"'/scripts/session-progress.mjs";
-            const T = process.env.RUNNER_TEMP;
-            // null (not []) means "could not read" — the distinction that makes
-            // the guard fail CLOSED instead of OPEN (#254).
-            const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
-            const readLines = (p) => { try { return fs.readFileSync(p, "utf8").split("\n").filter(Boolean); } catch { return []; } };
-            const verdict = evaluateProgress({
-              result: readJson(T + "/session-result.json") ?? {},
-              baselineSha: process.env.BASE_SHA || "",
-              prsBefore: readJson(T + "/prs-before.json"),
-              prsAfter: readJson(T + "/prs-after.json"),
-              commitSubjects: readLines(T + "/work-subjects.txt"),
-            });
-            if (!verdict.ok) {
-              console.log("::error::factory-run built nothing this iteration — " + verdict.reason +
-                ". Orienting with /factory-status and writing only the checkpoint is a no-op, not progress.");
-              process.exit(1);
-            }
-            console.log("no-op guard: " + verdict.reason);
-          '
+          node "$GITHUB_WORKSPACE/scripts/session-progress.mjs" "$RUNNER_TEMP"
 
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns

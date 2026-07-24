@@ -20,15 +20,32 @@
 //     would fail OPEN: with no "before" set every already-open PR reads as
 //     newly advanced.
 
+// Structured fields only — NEVER `result.result`. That field is the model's
+// free-form final message, which per CLAUDE.md routinely quotes untrusted issue
+// and PR text; substring-matching it let any no-op whose summary happened to
+// contain "timeout" (or an inbound issue titled "usage limit …") exempt itself
+// and pass green, re-opening the very hole this guard closes (#287).
+const LIMIT_STOP_VALUES = new Set([
+  "max_turns",
+  "max_tokens",
+  "timeout",
+  "usage_limit",
+  "session_limit",
+  "rate_limit",
+  "error_max_turns",
+]);
+
 /** True when the session stopped on a usage limit or timeout (exempt path). */
 export function isLimitStop(result) {
   if (!result || typeof result !== "object") return false;
   if (result.api_error_status === 429) return true;
-  const hay = [result.result, result.subtype, result.stop_reason, result.terminal_reason]
-    .filter((v) => typeof v === "string")
-    .join(" ")
-    .toLowerCase();
-  return /usage limit|session limit|rate limit|monthly spend|max_turns|maximum turns|timeout/.test(hay);
+  // Exact matches against an allow-list of machine-set fields, case- and
+  // separator-normalized ("max turns"/"maxTurns" -> "max_turns").
+  return [result.subtype, result.stop_reason, result.terminal_reason].some((v) => {
+    if (typeof v !== "string") return false;
+    const norm = v.trim().toLowerCase().replace(/[\s-]+/g, "_");
+    return LIMIT_STOP_VALUES.has(norm);
+  });
 }
 
 /** Commit subjects that count as work — `chore:`/`ci:` (any scope) do not. */
@@ -47,11 +64,33 @@ export function prAdvanced(before, after) {
   return after.some((p) => !seen.has(p.number) || seen.get(p.number) !== p.headRefOid);
 }
 
+// A sprint-boundary session legitimately produces ceremony artifacts rather
+// than code: planning/retro write factory-ops/sprints/**, a retro files issues,
+// a board session lands docs/adr/**. The conductor prompt explicitly allows
+// ending there ("unless step 1 or 2 genuinely consumed the whole session"), so
+// counting only code would red a compliant run and wedge the hourly cron on a
+// permanent red (#281). These paths are ceremony OUTPUT, not the checkpoint.
+const CEREMONY_PATH = /^(factory-ops\/sprints\/|docs\/adr\/)/;
+
+/** True when the session produced ceremony artifacts (sprint files, ADRs). */
+export function ceremonyOutput(changedPaths) {
+  if (!Array.isArray(changedPaths)) return false;
+  return changedPaths.some((p) => typeof p === "string" && CEREMONY_PATH.test(p.trim()));
+}
+
 /**
  * The guard's verdict.
  * @returns {{ok: boolean, reason: string}} ok=false means fail the job.
  */
-export function evaluateProgress({ result, baselineSha, prsBefore, prsAfter, commitSubjects }) {
+export function evaluateProgress({
+  result,
+  baselineSha,
+  prsBefore,
+  prsAfter,
+  commitSubjects,
+  changedPaths,
+  issuesFiled,
+}) {
   if (isLimitStop(result)) {
     return { ok: true, reason: "limit-stop: usage limit/timeout — checkpoint-and-resume is sanctioned (#253)" };
   }
@@ -61,8 +100,74 @@ export function evaluateProgress({ result, baselineSha, prsBefore, prsAfter, com
   }
   const work = countWorkCommits(commitSubjects);
   const pr = prAdvanced(prsBefore, Array.isArray(prsAfter) ? prsAfter : []);
-  if (work === 0 && !pr) {
-    return { ok: false, reason: "no PR opened/advanced and no non-chore work commit — a no-op (#228)" };
+  const ceremony = ceremonyOutput(changedPaths);
+  const filed = Number.isInteger(issuesFiled) && issuesFiled > 0;
+  if (!work && !pr && !ceremony && !filed) {
+    return {
+      ok: false,
+      reason: "no PR opened/advanced, no work commit, no ceremony artifact, no issue filed — a no-op (#228)",
+    };
   }
-  return { ok: true, reason: `progress: work commits=${work}, PR opened/advanced=${pr ? 1 : 0}` };
+  return {
+    ok: true,
+    reason:
+      `progress: work commits=${work}, PR opened/advanced=${pr ? 1 : 0}, ` +
+      `ceremony artifacts=${ceremony ? 1 : 0}, issues filed=${filed ? issuesFiled : 0}`,
+  };
+}
+
+// --- evidence readers (kept HERE, not in workflow glue) ----------------------
+// The null-vs-[] distinction is what makes the guard fail CLOSED (#254): a
+// parse failure must read as "could not prove", never as "nothing was there".
+// Living in the module means the fixtures cover it; in inline `node -e` glue a
+// plausible `catch { return [] }` simplification would silently defeat it
+// (#285).
+
+/** Parse JSON from a file; `null` when absent or unparseable (NOT `[]`). */
+export function readJsonOrNull(path, fs) {
+  try {
+    return JSON.parse(fs.readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Read a newline-delimited file into trimmed non-empty lines. */
+export function readLines(path, fs) {
+  try {
+    return fs.readFileSync(path, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Build the guard input from a temp dir of evidence files, then evaluate. */
+export function evaluateFromDir(dir, env, fs) {
+  const issues = Number.parseInt(env?.ISSUES_FILED ?? "", 10);
+  return evaluateProgress({
+    result: readJsonOrNull(`${dir}/session-result.json`, fs) ?? {},
+    baselineSha: env?.BASE_SHA || "",
+    prsBefore: readJsonOrNull(`${dir}/prs-before.json`, fs),
+    prsAfter: readJsonOrNull(`${dir}/prs-after.json`, fs),
+    commitSubjects: readLines(`${dir}/work-subjects.txt`, fs),
+    changedPaths: readLines(`${dir}/changed-paths.txt`, fs),
+    issuesFiled: Number.isNaN(issues) ? 0 : issues,
+  });
+}
+
+// CLI: `node session-progress.mjs <evidence-dir>` — prints the verdict and
+// exits non-zero when the station built nothing, so the workflow step is a
+// one-liner and every decision path stays inside the fixture-tested module.
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop())) {
+  const fs = await import("node:fs");
+  const verdict = evaluateFromDir(process.argv[2] || ".", process.env, fs.default ?? fs);
+  if (!verdict.ok) {
+    console.log(
+      `::error::factory-run built nothing this iteration — ${verdict.reason}. ` +
+        "Orienting with /factory-status and writing only the checkpoint is a no-op, not progress.",
+    );
+    process.exitCode = 1;
+  } else {
+    console.log(`no-op guard: ${verdict.reason}`);
+  }
 }

@@ -188,6 +188,28 @@ else
 fi
 # The guard must FAIL the job (exit non-zero) and fail CLOSED on a missing
 # baseline (#254), not merely log.
+# Behaviour, not spelling: run the real module against a no-op fixture and
+# require a non-zero exit. Any refactor that keeps the behaviour (exit 1,
+# process.exitCode, a thrown error) passes; one that stops failing does not
+# (#276 — the previous assertion grepped for a literal `exit(1)`).
+guard_tmp="$(mktemp -d)"
+printf '{"is_error":false}\n'              > "$guard_tmp/session-result.json"
+printf '[{"number":1,"headRefOid":"x"}]\n' > "$guard_tmp/prs-before.json"
+printf '[{"number":1,"headRefOid":"x"}]\n' > "$guard_tmp/prs-after.json"
+printf 'chore(checkpoint): update state\n' > "$guard_tmp/work-subjects.txt"
+: > "$guard_tmp/changed-paths.txt"
+if BASE_SHA=deadbeef node scripts/session-progress.mjs "$guard_tmp" >/dev/null 2>&1; then
+  bad "the no-op guard PASSES a chore-checkpoint-only session — #228's false-green is open"
+else
+  ok "the no-op guard fails a chore-checkpoint-only session (exercised, not grepped)"
+fi
+printf 'feat: implement the next roadmap item\n' > "$guard_tmp/work-subjects.txt"
+if BASE_SHA=deadbeef node scripts/session-progress.mjs "$guard_tmp" >/dev/null 2>&1; then
+  ok "the no-op guard passes a session that produced real work"
+else
+  bad "the no-op guard REDS a session that produced a work commit — it would wedge the loop"
+fi
+rm -rf "$guard_tmp"
 if python3 -c "import yaml" 2>/dev/null && [ -f "$SESS_WF" ]; then
   if WF="$SESS_WF" python3 -c '
 import os, sys, yaml
@@ -195,16 +217,15 @@ wf = yaml.safe_load(open(os.environ["WF"]))
 steps = wf["jobs"]["session"]["steps"]
 guard = [s for s in steps
          if "require_progress" in str(s.get("if", ""))
-         and "exit(1)" in str(s.get("run", "")).replace(" ", "")
          and "session-progress.mjs" in str(s.get("run", ""))]
 sys.exit(0 if guard else 1)
   '; then
-    ok "$SESS_WF no-op guard exits non-zero when the session built nothing (fails the job)"
+    ok "$SESS_WF wires the no-op guard step to the tested module"
   else
-    bad "$SESS_WF no-op guard never exits non-zero — a no-op would still report success"
+    bad "$SESS_WF has no require_progress step invoking session-progress.mjs"
   fi
 else
-  ok "pyyaml unavailable locally — no-op guard fail-hard check deferred to CI"
+  ok "pyyaml unavailable locally — no-op guard wiring check deferred to CI"
 fi
 
 # The self-merge job needs write scope to merge at all — with only `contents:
