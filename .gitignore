@@ -19,6 +19,10 @@ coverage/
 # resume (0600). Deleted once the secret+variable are stored; must never commit.
 factory-ops/state/.bootstrap-apps/
 
+# Host-local self-hosted-runner artifacts written by bootstrap.sh (the egress
+# proxy's squid.conf, bind-mounted into a container that restarts on boot).
+factory-ops/state/.bootstrap-runner/
+
 # Personal Claude Code overrides — never committed (the shared project
 # settings live in .claude/settings.json, which IS committed).
 .claude/settings.local.json
