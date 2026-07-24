@@ -88,6 +88,52 @@ else
   bad "$SESSION_WF missing"
 fi
 
+# --- the cron heartbeat must be able to actually WAKE the factory ------------
+# cron-prod's only job is to POST a repository_dispatch (event_type
+# factory-resume) that starts factory-run. Two GitHub facts make the bare
+# GITHUB_TOKEN wrong for that call, and both fail silently-ish (a 403 the loop
+# swallows, or a dispatch that no-ops):
+#   1. creating a repository_dispatch needs `contents: write`; the job ceiling
+#      is `contents: read`, so github.token 403s ("Resource not accessible by
+#      integration") every hour and the factory never resumes;
+#   2. even WITH write, a repository_dispatch raised by GITHUB_TOKEN does NOT
+#      trigger another workflow run (GitHub's recursion guard) — so the wake
+#      must be sent with an App token or a PAT, never github.token.
+# Pin: cron-prod mints an App token (or uses FACTORY_PAT) and the dispatch runs
+# under that identity, not github.token.
+CRON_WF=".github/workflows/cron-prod.yml"
+if [ -f "$CRON_WF" ]; then
+  if grep -q 'create-github-app-token' "$CRON_WF" || grep -q 'FACTORY_PAT' "$CRON_WF"; then
+    ok "$CRON_WF resolves a dispatch identity beyond github.token"
+  else
+    bad "$CRON_WF dispatches factory-resume with the bare github.token — 403s hourly and cannot trigger a run"
+  fi
+  # The step that actually posts the dispatch must not bind GH_TOKEN to
+  # github.token; it must use the resolved app/PAT token.
+  if python3 -c "import yaml" 2>/dev/null; then
+    if WF="$CRON_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["resume"]["steps"]
+disp = [s for s in steps if "dispatches" in str(s.get("run", ""))]
+if not disp:
+    sys.exit(1)
+bad = [s for s in disp
+       if str((s.get("env") or {}).get("GH_TOKEN", "")).strip() in
+          ("${{ github.token }}", "${{ secrets.GITHUB_TOKEN }}")]
+sys.exit(1 if bad else 0)
+    '; then
+      ok "$CRON_WF posts the dispatch with the resolved token, not github.token"
+    else
+      bad "$CRON_WF posts the repository_dispatch under github.token — the wake will not fire"
+    fi
+  else
+    ok "pyyaml unavailable locally — cron-prod dispatch-token check deferred to CI"
+  fi
+else
+  bad "$CRON_WF missing"
+fi
+
 # The self-merge job needs write scope to merge at all — with only `contents:
 # read` its fallback token fails with "Resource not accessible by integration"
 # — and it must merge ONLY on a real approving review, never merely on the

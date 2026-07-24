@@ -24,13 +24,46 @@ jobs:
   resume:
     if: vars.FACTORY_HALT != 'true'
     runs-on: ubuntu-latest
+    # The orchestrator environment holds the orchestrator App's APP_ID +
+    # APP_PRIVATE_KEY. That App carries contents:write (which repository_dispatch
+    # requires) and, being an App rather than GITHUB_TOKEN, its dispatch actually
+    # triggers factory-run — a repository_dispatch raised by github.token is
+    # silently dropped by GitHub's workflow-recursion guard.
+    environment: orchestrator
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: mint the orchestrator app token
+        id: app
+        if: vars.APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: resolve the wake identity
+        id: ident
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
+        run: |
+          # A repository_dispatch must NOT go out under github.token: it lacks
+          # contents:write here and, even with it, would not trigger a run.
+          # Prefer the App token, then a PAT; fail loudly if neither exists
+          # rather than silently 403 every hour.
+          if [ -n "$APP_TOKEN" ]; then
+            echo "token=$APP_TOKEN" >> "$GITHUB_OUTPUT"
+          elif [ -n "$FACTORY_PAT" ]; then
+            echo "token=$FACTORY_PAT" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::cron-prod has no App token or FACTORY_PAT to raise a factory-resume dispatch — the factory cannot self-resume." >&2
+            exit 1
+          fi
+
       - name: decide and dispatch
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           ck=factory-ops/state/checkpoint.json
