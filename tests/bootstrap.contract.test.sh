@@ -7,8 +7,9 @@
 # stdout and exiting 1; a GraphQL no-scope error document; a protected-branch
 # push rejection).
 #
-# It pins the CORRECT post-fix behaviour for the 15 audited defects. Against
-# today's (unfixed) bootstrap.sh it is EXPECTED TO FAIL — that is the red phase.
+# It pins the CORRECT post-fix behaviour for the 15 audited defects, plus the
+# runner/egress-proxy failures observed on the first live bootstrap. Every
+# assertion is a regression guard: green here means the defect stays fixed.
 #
 # Three techniques, by what each defect actually needs:
 #   * full hermetic runs — copy bootstrap.sh into a temp workspace and run it end
@@ -81,7 +82,7 @@ run_bootstrap() {
   fi
 }
 
-echo "# bootstrap.sh contract (red phase — expected to fail on the unfixed script)"
+echo "# bootstrap.sh contract"
 
 # --- sanity: the script under test parses ------------------------------------
 if bash -n "$BOOTSTRAP" 2>/dev/null; then ok "bootstrap.sh parses (bash -n)"; else bad "bootstrap.sh fails bash -n"; fi
@@ -182,6 +183,116 @@ if [ "$RC" -eq 0 ]; then expect "[final-poll-set-e] a failing run-list poll does
 lines="$(grep -c . "$OUT" 2>/dev/null || printf 0)"
 if grep -q '^Factory is live: ' "$OUT" && [ "$lines" -eq 1 ]; then rc=0; else rc=1; fi
 expect "[final-poll-set-e] stdout carries ONLY the single Factory-is-live line" "$rc"
+
+# =============================================================================
+# Runner + egress-proxy section. These are static parse assertions because the
+# real path needs a docker daemon, which the suite must not require; each one
+# pins a failure observed on the icculus host after the first live bootstrap.
+# =============================================================================
+
+# squid-acl-fatal (blocker) — squid >=6 treats a dstdomain ACL that lists both a
+# domain and a wildcard covering it ('.github.com' + 'github.com') as a FATAL
+# config error, so the proxy never listens, so the runner cannot reach
+# factory-proxy:3128 and crash-loops forever while FACTORY_RUNNER silently falls
+# back to hosted runners. No entry may cover another entry in the same ACL.
+acl_line="$(grep -m1 '^acl allowed dstdomain ' "$BOOTSTRAP" || true)"
+if [ -n "$acl_line" ]; then rc=0; else rc=1; fi
+expect "[squid-acl-fatal] bootstrap declares a dstdomain allowlist" "$rc"
+dupe="$(printf '%s\n' "$acl_line" | awk '
+  { for (i = 4; i <= NF; i++) d[++n] = $i }
+  END {
+    for (i = 1; i <= n; i++) for (j = 1; j <= n; j++) {
+      if (i == j) continue
+      a = d[i]; b = d[j]
+      # An exact repeat is squid-fatal too, and is not caught by the
+      # covers-relation below (which requires the entries to differ).
+      if (a == b) { if (i < j) print a " repeats"; continue }
+      if (substr(a, 1, 1) != ".") continue
+      bare = substr(a, 2)
+      # a (leading-dot .x.com) covers b when b IS x.com or ends in .x.com
+      if (b == bare || (length(b) > length(a) && substr(b, length(b) - length(a) + 1) == a))
+        print a " covers " b
+    }
+  }')"
+if [ -z "$dupe" ]; then rc=0; else rc=1; fi
+expect "[squid-acl-fatal] no allowlist entry shadows another (squid 6 fatals): ${dupe:-none}" "$rc"
+
+# sudo-probe-mismatch (major) — the privilege probe must test the command it
+# actually runs (iptables). Probing `sudo -n true` reports "no sudo" for a
+# correctly scoped NOPASSWD:/usr/sbin/iptables rule, so bootstrap skips the
+# egress firewall and files a false P1 security issue.
+if grep -q 'sudo -n true' "$BOOTSTRAP"; then rc=1; else rc=0; fi
+expect "[sudo-probe-mismatch] the privilege probe is not the unrelated 'sudo -n true'" "$rc"
+if grep -qE 'sudo -n iptables' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[sudo-probe-mismatch] the privilege probe exercises iptables itself" "$rc"
+
+# proxy-stale-config (blocker) — presence is not health: a crash-looping
+# container still lists in `docker ps`, so a name check makes a broken proxy
+# permanent and means a fixed config never lands on re-run. The proxy must be
+# recreated from the current config every run.
+if grep -q "docker rm -f factory-proxy" "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-stale-config] the proxy is recreated from the current config each run" "$rc"
+
+# proxy-not-health-checked (blocker) — bootstrap must verify the proxy is really
+# serving before it registers a runner against it, and must fail loudly with the
+# proxy's own logs instead of leaving a crash-looping runner behind.
+# A bare `grep proxy_healthy` would match a comment, so bind the ORDER: the
+# registration token must be requested strictly after the guard that proves the
+# proxy serves. Delete the guard and this assertion goes red.
+hg="$(grep -n '\[ "\$proxy_healthy" = true \]; then' "$BOOTSTRAP" | tail -1 | cut -d: -f1)"
+rt="$(grep -n 'actions/runners/registration-token' "$BOOTSTRAP" | head -1 | cut -d: -f1)"
+if [ -n "$hg" ] && [ -n "$rt" ] && [ "$rt" -gt "$hg" ]; then rc=0; else rc=1; fi
+expect "[proxy-not-health-checked] a registration token is only spent behind the health guard" "$rc"
+# Assert the real invocation, not the phrase as it happens to appear in the
+# issue body: `docker logs --tail N factory-proxy >` redirecting to the operator.
+if grep -qE 'docker logs (--tail [0-9]+ )?factory-proxy *>' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-not-health-checked] a dead proxy surfaces its own logs" "$rc"
+# A proxy that failed its probe must not be left respawning under
+# `--restart unless-stopped` until some later run happens to fix it.
+if awk -v s="$hg" 'NR < s && /docker rm -f factory-proxy/ { n++ } END { exit !(n >= 2) }' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-not-health-checked] a proxy that fails the probe is torn down, not left crash-looping" "$rc"
+
+# health-probe-wrong-shell (blocker) — the probe uses bash's /dev/tcp, which
+# does not exist in a POSIX sh; running it under `sh` fails on a perfectly
+# healthy proxy, so bootstrap would refuse to ever register the runner.
+if grep -q 'dev/tcp' "$BOOTSTRAP"; then
+  if grep -E 'docker exec factory-proxy (sh|/bin/sh) ' "$BOOTSTRAP" | grep -q 'dev/tcp'; then rc=1; else rc=0; fi
+else rc=1; fi
+expect "[health-probe-wrong-shell] the /dev/tcp probe runs under bash, not sh" "$rc"
+
+# proxy-egress-dropped (blocker) — the DROP rule covers the whole factory-net
+# subnet, and the PROXY lives in that subnet, so squid itself cannot reach the
+# internet: every CONNECT ends in a 60s timeout and a TCP_TUNNEL/503. The proxy
+# host needs an explicit ACCEPT; the allowlist is enforced in squid, not here.
+if grep -qE 'iptables .*-s "\$proxy_ip" -j ACCEPT' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-egress-dropped] the proxy's own egress is accepted above the subnet DROP" "$rc"
+
+# js-actions-proxy-blind (blocker) — Node >=24 refuses to honour http_proxy
+# unless NODE_USE_ENV_PROXY is set, so on a proxied runner EVERY JavaScript
+# action (starting with create-github-app-token, the first step of every
+# station) dies before the session runs. The runner container must export it.
+if grep -q 'NODE_USE_ENV_PROXY=1' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[js-actions-proxy-blind] the runner exports NODE_USE_ENV_PROXY for JS actions" "$rc"
+
+# proxy-ip-unvalidated (major) — `docker inspect` prints "invalid IP" (not an
+# empty string) for a container with no live network, so an unvalidated capture
+# feeds garbage to `iptables -d` and the firewall silently fails to apply.
+if grep -q 'valid_ipv4 "\$proxy_ip"' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-ip-unvalidated] the captured proxy IP is validated before use" "$rc"
+# A character-class check accepts "1.2.3.4.5" and a two-network concatenation,
+# so drive the real validator over the shapes docker actually produces.
+eval "$(extract_func valid_ipv4)"
+for good in 172.18.0.2 10.0.0.1 255.255.255.255; do
+  if valid_ipv4 "$good"; then rc=0; else rc=1; fi
+  expect "[proxy-ip-unvalidated] valid_ipv4 accepts $good" "$rc"
+done
+for bad in '' 'invalid IP' 1.2.3.4.5 172.18.0.2172.19.0.3 1.2.3 256.1.1.1 1.2.3.; do
+  if valid_ipv4 "$bad"; then rc=1; else rc=0; fi
+  expect "[proxy-ip-unvalidated] valid_ipv4 rejects '${bad}'" "$rc"
+done
+# The unreadable-IP path must degrade like its siblings, never abort the run.
+if grep -q 'egress firewall not applied' "$BOOTSTRAP" && ! grep -q 'die "could not read' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-ip-unvalidated] an unreadable proxy IP degrades instead of aborting bootstrap" "$rc"
 
 # =============================================================================
 # Static regression guards for defects whose trigger path needs a live browser /
