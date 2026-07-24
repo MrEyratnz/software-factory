@@ -252,6 +252,18 @@ expect "[proxy-not-health-checked] a dead proxy surfaces its own logs" "$rc"
 if awk -v s="$hg" 'NR < s && /docker rm -f factory-proxy/ { n++ } END { exit !(n >= 2) }' "$BOOTSTRAP"; then rc=0; else rc=1; fi
 expect "[proxy-not-health-checked] a proxy that fails the probe is torn down, not left crash-looping" "$rc"
 
+# runner-restart-reconfig (blocker) — the runner container entrypoint conflates
+# one-time `config.sh` with the `run.sh` loop under `--restart unless-stopped`.
+# On ANY restart (host reboot, docker restart, OOM) config.sh runs again, fails
+# with "already configured", and the runner never comes back — so the factory
+# does not survive a reboot. config must be guarded by the persisted `.runner`
+# marker so a restart goes straight to run.sh.
+if grep -qE '\.runner|config\.sh remove' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[runner-restart-reconfig] the runner entrypoint is idempotent across container restarts" "$rc"
+# Bind it precisely: config.sh must be gated, not unconditional && run.sh.
+if grep -qE 'config\.sh .*&& \./run\.sh' "$BOOTSTRAP"; then rc=1; else rc=0; fi
+expect "[runner-restart-reconfig] config.sh is not run unconditionally before every run.sh" "$rc"
+
 # health-probe-wrong-shell (blocker) — the probe uses bash's /dev/tcp, which
 # does not exist in a POSIX sh; running it under `sh` fails on a perfectly
 # healthy proxy, so bootstrap would refuse to ever register the runner.

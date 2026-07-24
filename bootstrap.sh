@@ -682,7 +682,12 @@ SQUID
         -e no_proxy=localhost,127.0.0.1,factory-proxy \
         -e NODE_USE_ENV_PROXY=1 \
         ghcr.io/actions/actions-runner:latest \
-        /bin/bash -c "./config.sh --url 'https://github.com/$REPO' --token '$rtoken' --name icculus --labels icculus --unattended --replace && ./run.sh" >&2
+        /bin/bash -c "[ -f .runner ] || ./config.sh --url 'https://github.com/$REPO' --token '$rtoken' --name icculus --labels icculus --unattended --replace; exec ./run.sh" >&2
+      # Guard config.sh behind the persisted .runner marker: the container runs
+      # --restart unless-stopped, so on a host reboot or docker restart the
+      # entrypoint runs again. An unconditional config.sh fails there with
+      # "already configured" and the runner never rejoins — the factory would
+      # not survive a reboot. When .runner exists we go straight to run.sh.
       for _ in $(seq 1 24); do
         if gh api "repos/$REPO/actions/runners" --jq '.runners[] | select(.name == "icculus") | .status' 2>/dev/null | grep -q .; then
           RUNNER_OK=true
