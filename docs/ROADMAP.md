@@ -17,12 +17,12 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 ## M1 — Hardening
 
-- [ ] Node adapter `sourceRegex`/`testRegex` cover `.tsx` and monorepo source roots so the tests-first gate stops under-firing (#47)
-- [ ] `roadmap-proof.json` gains a sanctioned CI/runner producer so `/roadmap check` has an in-repo path to succeed (#51)
-- [ ] Hard gates surface loudly (or fail closed) instead of silently failing open when `node` is unavailable (#52)
-- [ ] Target-aware gates read enforcement config from the target repo, not the session repo, in multi-repo sessions (#53)
-- [ ] Review workflow's `gh pr comment` is pinned to the triggering PR instead of prefix-matched (#60)
-- [ ] Triage runs lose the direct `gh label create` write — labels are ensured deterministically before the model step (#61)
+- [x] Node adapter `sourceRegex`/`testRegex` cover `.tsx` and monorepo source roots so the tests-first gate stops under-firing (#47)
+- [x] `roadmap-proof.json` gains a sanctioned CI/runner producer so `/roadmap check` has an in-repo path to succeed (#51)
+- [x] Hard gates surface loudly (or fail closed) instead of silently failing open when `node` is unavailable (#52)
+- [x] Target-aware gates read enforcement config from the target repo, not the session repo, in multi-repo sessions (#53)
+- [x] Review workflow's `gh pr comment` is pinned to the triggering PR instead of prefix-matched (#60)
+- [x] Triage runs lose the direct `gh label create` write — labels are ensured deterministically before the model step (#61)
 
 ## M2 — Epic 1: the plugin test suite (milestone v1.0.0)
 
