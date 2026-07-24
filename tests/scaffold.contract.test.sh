@@ -134,6 +134,47 @@ else
   bad "$CRON_WF missing"
 fi
 
+# --- the build loop must actually BUILD, or fail loudly (#228) ----------------
+# The factory-run conductor was observed orienting (/factory-status) and ending
+# its turn without implementing anything — a green run that produced no commit,
+# no PR, no checkpoint delta. `is_error` is false in that case, so the existing
+# error guard does not catch it. Two properties keep the build loop honest:
+#   1. factory-run asks claude-session to enforce progress (require_progress);
+#   2. claude-session, when asked, fails the job if the session produced zero
+#      new commits — turning a silent orient-and-stop no-op into a red run.
+FR_WF=".github/workflows/factory-run.yml"
+SESS_WF=".github/workflows/claude-session.yml"
+if [ -f "$FR_WF" ] && grep -q 'require_progress:[[:space:]]*true' "$FR_WF"; then
+  ok "$FR_WF asks claude-session to enforce progress (no-op guard on)"
+else
+  bad "$FR_WF does not set require_progress: true — an orient-and-stop no-op stays silently green (#228)"
+fi
+if [ -f "$SESS_WF" ] && grep -q 'require_progress' "$SESS_WF" && grep -qE 'rev-list --all --count' "$SESS_WF"; then
+  ok "$SESS_WF has the no-op guard (fails when a require_progress session makes no commit)"
+else
+  bad "$SESS_WF lacks the commit-based no-op guard for require_progress stations (#228)"
+fi
+# The guard must FAIL the job (exit non-zero), not just log — mirror the
+# is_error guard's discipline.
+if python3 -c "import yaml" 2>/dev/null && [ -f "$SESS_WF" ]; then
+  if WF="$SESS_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+guard = [s for s in steps
+         if "require_progress" in str(s.get("if", ""))
+         and "rev-list" in str(s.get("run", ""))
+         and "exit 1" in str(s.get("run", ""))]
+sys.exit(0 if guard else 1)
+  '; then
+    ok "$SESS_WF no-op guard exits non-zero on zero-commit (fails the job)"
+  else
+    bad "$SESS_WF no-op guard never exits non-zero — a no-op would still report success"
+  fi
+else
+  ok "pyyaml unavailable locally — no-op guard fail-hard check deferred to CI"
+fi
+
 # The self-merge job needs write scope to merge at all — with only `contents:
 # read` its fallback token fails with "Resource not accessible by integration"
 # — and it must merge ONLY on a real approving review, never merely on the
