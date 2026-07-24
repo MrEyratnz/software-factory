@@ -134,6 +134,100 @@ else
   bad "$CRON_WF missing"
 fi
 
+# --- the build loop must fail loudly when it builds nothing (#228) ------------
+# The factory-run conductor was observed orienting (/factory-status) and ending
+# its turn without building — a green run that opened no PR and wrote no code.
+# `is_error` is false in that case, so the existing error guard does not catch
+# it. Three properties keep the build loop honest (a static scaffold check can
+# only assert the guard is WIRED and fails hard; whether the conductor actually
+# builds is exercised by a live dispatch, not here):
+#   1. factory-run asks claude-session to enforce progress (require_progress);
+#   2. claude-session, when asked, measures the session's OWN deliverable — a PR
+#      opened/advanced, or a non-chore work commit scoped to the baseline tip —
+#      NOT a bare commit count (a mandated checkpoint commit must not pass it,
+#      #251) and NOT the whole ref graph (a concurrent fetch must not pass it,
+#      #252);
+#   3. the guard exits non-zero, turning a silent no-op into a red run.
+FR_WF=".github/workflows/factory-run.yml"
+SESS_WF=".github/workflows/claude-session.yml"
+if [ -f "$FR_WF" ] && grep -q 'require_progress:[[:space:]]*true' "$FR_WF"; then
+  ok "$FR_WF asks claude-session to enforce progress (no-op guard on)"
+else
+  bad "$FR_WF does not set require_progress: true — an orient-and-stop no-op stays silently green (#228)"
+fi
+# The guard must key on the real deliverable, not a bare commit count: a PR
+# opened/advanced or a non-chore work commit measured against a baseline SHA.
+# The VERDICT must come from scripts/session-progress.mjs, which is fixture-
+# tested — inline logic in the workflow is unreachable by any test (#256).
+if [ -f "$SESS_WF" ] \
+   && grep -q 'require_progress' "$SESS_WF" \
+   && grep -q 'session-progress.mjs' "$SESS_WF" \
+   && grep -qE 'not .*BASE_SHA|--not "\$BASE_SHA"' "$SESS_WF"; then
+  ok "$SESS_WF no-op guard delegates its verdict to the fixture-tested session-progress module"
+else
+  bad "$SESS_WF lacks a deliverable-based no-op guard delegating to session-progress.mjs (#228/#251/#252/#256)"
+fi
+# The behaviour itself is pinned by fixtures, not by grepping this workflow;
+# that suite must exist and must be wired into the gate.
+if [ -f scripts/session-progress.mjs ] && [ -f scripts/session-progress.test.mjs ]; then
+  ok "the no-op guard's logic is extracted and fixture-tested (scripts/session-progress*.mjs)"
+else
+  bad "scripts/session-progress.mjs + .test.mjs missing — the guard's behaviour is not exercised by any test (#256)"
+fi
+if grep -q 'session-progress.test.mjs' tests/run-suite.sh; then
+  ok "session-progress tests run in the suite"
+else
+  bad "session-progress tests are not wired into tests/run-suite.sh"
+fi
+# A bare `git rev-list --all --count` diff must NOT be how progress is judged —
+# that is exactly the #251/#252 hole; pin that it is gone.
+if grep -qE 'rev-list --all --count' "$SESS_WF"; then
+  bad "$SESS_WF still judges progress by 'rev-list --all --count' — defeated by the mandated checkpoint commit (#251) and remote refs (#252)"
+else
+  ok "$SESS_WF does not judge progress by a bare all-ref commit count"
+fi
+# The guard must FAIL the job (exit non-zero) and fail CLOSED on a missing
+# baseline (#254), not merely log.
+# Behaviour, not spelling: run the real module against a no-op fixture and
+# require a non-zero exit. Any refactor that keeps the behaviour (exit 1,
+# process.exitCode, a thrown error) passes; one that stops failing does not
+# (#276 — the previous assertion grepped for a literal `exit(1)`).
+guard_tmp="$(mktemp -d)"
+printf '{"is_error":false}\n'              > "$guard_tmp/session-result.json"
+printf '[{"number":1,"headRefOid":"x"}]\n' > "$guard_tmp/prs-before.json"
+printf '[{"number":1,"headRefOid":"x"}]\n' > "$guard_tmp/prs-after.json"
+printf 'chore(checkpoint): update state\n' > "$guard_tmp/work-subjects.txt"
+: > "$guard_tmp/changed-paths.txt"
+if BASE_SHA=deadbeef node scripts/session-progress.mjs "$guard_tmp" >/dev/null 2>&1; then
+  bad "the no-op guard PASSES a chore-checkpoint-only session — #228's false-green is open"
+else
+  ok "the no-op guard fails a chore-checkpoint-only session (exercised, not grepped)"
+fi
+printf 'feat: implement the next roadmap item\n' > "$guard_tmp/work-subjects.txt"
+if BASE_SHA=deadbeef node scripts/session-progress.mjs "$guard_tmp" >/dev/null 2>&1; then
+  ok "the no-op guard passes a session that produced real work"
+else
+  bad "the no-op guard REDS a session that produced a work commit — it would wedge the loop"
+fi
+rm -rf "$guard_tmp"
+if python3 -c "import yaml" 2>/dev/null && [ -f "$SESS_WF" ]; then
+  if WF="$SESS_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+guard = [s for s in steps
+         if "require_progress" in str(s.get("if", ""))
+         and "session-progress.mjs" in str(s.get("run", ""))]
+sys.exit(0 if guard else 1)
+  '; then
+    ok "$SESS_WF wires the no-op guard step to the tested module"
+  else
+    bad "$SESS_WF has no require_progress step invoking session-progress.mjs"
+  fi
+else
+  ok "pyyaml unavailable locally — no-op guard wiring check deferred to CI"
+fi
+
 # The self-merge job needs write scope to merge at all — with only `contents:
 # read` its fallback token fails with "Resource not accessible by integration"
 # — and it must merge ONLY on a real approving review, never merely on the

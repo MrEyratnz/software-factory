@@ -17,7 +17,7 @@ bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh scripts/*
 stage "boundaries (scaffold + bootstrap contract + config schema + triage-script contracts)"
 bash tests/scaffold.contract.test.sh
 bash tests/bootstrap.contract.test.sh
-node --test scripts/validate-config.test.mjs scripts/pr-review-state.test.mjs scripts/merge-method.test.mjs
+node --test scripts/validate-config.test.mjs scripts/pr-review-state.test.mjs scripts/merge-method.test.mjs scripts/session-progress.test.mjs
 node scripts/validate-config.mjs .factory/config.json schemas/factory.config.schema.json
 node scripts/validate-config.mjs templates/factory/config.json.tmpl schemas/factory.config.schema.json
 ./scripts/test-triage-scripts.sh

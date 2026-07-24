@@ -53,6 +53,14 @@ on:
         description: optional --allowedTools rule list (least-privilege stations)
         type: string
         default: ""
+      require_progress:
+        description: >-
+          when true, fail the job if the session produced no new commit — the
+          no-op / false-green guard for the build loop (#228). Only factory-run
+          sets this; stations that legitimately make no commit (review, triage)
+          leave it false.
+        type: boolean
+        default: false
 
 # NO permissions block here — deliberately, and it must stay that way.
 #
@@ -119,6 +127,33 @@ jobs:
           git config user.name "${SLUG}[bot]"
           git config user.email "${SLUG}[bot]@users.noreply.github.com"
 
+      # Baseline for the no-op guard (#228): the checkout tip this session starts
+      # from, plus the set of open PRs. The guard below measures the session's
+      # OWN output against these — a work commit on a branch it creates, or a PR
+      # it opens/advances — never the whole ref graph (which a concurrent fetch
+      # would inflate, #252).
+      - name: baseline for the no-op guard
+        id: baseline
+        if: ${{ inputs.require_progress }}
+        env:
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+        run: |
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # Write the snapshot ONLY on success. An empty-list fallback would fail
+          # OPEN: with no "before" set every already-open PR looks newly advanced,
+          # so a no-op passes green and a single gh hiccup silently disables the
+          # guard. No file => the guard cannot prove progress => it fails closed.
+          # (A genuine zero-PR repo writes a real, empty `[]` here — that is
+          # distinguishable from "could not read", which writes nothing.)
+          # --author @me: the signal must be THIS identity's PRs, matching the
+          # "after" snapshot, so a concurrent station's PR cannot credit this
+          # session (#288).
+          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --author "@me" --json number,headRefOid 2>/dev/null)"; then
+            printf '%s' "$out" > "$RUNNER_TEMP/prs-before.json"
+          else
+            echo "::warning::could not snapshot open PRs for the no-op guard — it will fail closed."
+          fi
+
       # Claude Code in CI authenticates with EITHER credential; a repo that holds
       # the one we don't pass runs every station unauthenticated. Fail here,
       # loudly and early, rather than letting the session no-op (see the result
@@ -179,6 +214,44 @@ jobs:
             }
             console.log("station completed: " + (o.num_turns ?? "?") + " turns");
           ' "$f"
+
+      # No-op / false-green guard (#228): a factory-run session that oriented
+      # (/factory-status) and ended its turn without building is is_error:false —
+      # the guard above passes it — yet it opened no PR and wrote no code. Require
+      # the REAL deliverable, not merely "a commit": the conductor is told to
+      # commit a chore: checkpoint every run, so counting any commit would let an
+      # orient → checkpoint → stop run pass green (#251). Progress means either
+      #   (a) a PR opened or advanced this session, or
+      #   (b) a non-chore work commit authored on a branch this session created,
+      # measured against the baseline tip so a concurrent fetch into refs/remotes
+      # cannot satisfy it (#252). A lone checkpoint commit counts as neither.
+      - name: require the station produced work (no-op guard)
+        if: ${{ inputs.require_progress }}
+        env:
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+          BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
+        run: |
+          # Collect evidence here; every DECISION (including the fail-closed
+          # null-vs-[] parse) lives in scripts/session-progress.mjs so fixtures
+          # cover it — inline glue is unreachable by any test (#256, #285).
+          #
+          # Work commits + changed paths: scoped to commits reachable from a
+          # local branch but NOT from the baseline tip, so a concurrent fetch
+          # into refs/remotes cannot satisfy the guard (#252).
+          git log --branches --not "$BASE_SHA" --no-merges --pretty=%s \
+            > "$RUNNER_TEMP/work-subjects.txt" 2>/dev/null || : > "$RUNNER_TEMP/work-subjects.txt"
+          git diff --name-only "$BASE_SHA" -- \
+            > "$RUNNER_TEMP/changed-paths.txt" 2>/dev/null || : > "$RUNNER_TEMP/changed-paths.txt"
+          git log --branches --not "$BASE_SHA" --name-only --pretty=format: \
+            >> "$RUNNER_TEMP/changed-paths.txt" 2>/dev/null || true
+          # PRs after — restricted to THIS identity's PRs so another actor's
+          # concurrent PR cannot credit this session (#288). On a gh failure
+          # write nothing: an absent "after" yields no PR signal (the commit
+          # signal still stands), never a false pass.
+          if out="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --author "@me" --json number,headRefOid 2>/dev/null)"; then
+            printf '%s' "$out" > "$RUNNER_TEMP/prs-after.json"
+          fi
+          node "$GITHUB_WORKSPACE/scripts/session-progress.mjs" "$RUNNER_TEMP"
 
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns
