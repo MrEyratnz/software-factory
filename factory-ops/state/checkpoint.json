@@ -1,10 +1,10 @@
 {
   "version": 1,
   "station": "idle",
-  "sprint": 0,
-  "sprint_ends_at": null,
+  "sprint": 1,
+  "sprint_ends_at": "2026-07-25T02:42:24Z",
   "branch": null,
-  "issues": [],
+  "issues": [175, 97, 98, 100, 101, 120, 132, 115, 159],
   "next_action": "factory-run",
-  "notes": "freshly bootstrapped — the first factory-run session plans sprint 1 from the seeded Epic 1 backlog"
+  "notes": "sprint 1 active — plan at factory-ops/sprints/1/plan.md; run /factory-run on the picked issues in plan order (start #175). Checkpoint reconciled by hand to clear the cold-start trap (the planner wrote the plan but not the checkpoint); the durable end-of-turn write-back fix is #206 and the no-op/false-green guard is #228."
 }
