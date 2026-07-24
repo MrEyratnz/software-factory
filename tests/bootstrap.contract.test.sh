@@ -238,6 +238,28 @@ expect "[proxy-not-health-checked] the proxy is health-checked before the runner
 if grep -q 'docker logs factory-proxy' "$BOOTSTRAP"; then rc=0; else rc=1; fi
 expect "[proxy-not-health-checked] a dead proxy surfaces its own logs" "$rc"
 
+# health-probe-wrong-shell (blocker) — the probe uses bash's /dev/tcp, which
+# does not exist in a POSIX sh; running it under `sh` fails on a perfectly
+# healthy proxy, so bootstrap would refuse to ever register the runner.
+if grep -q 'dev/tcp' "$BOOTSTRAP"; then
+  if grep -E 'docker exec factory-proxy (sh|/bin/sh) ' "$BOOTSTRAP" | grep -q 'dev/tcp'; then rc=1; else rc=0; fi
+else rc=1; fi
+expect "[health-probe-wrong-shell] the /dev/tcp probe runs under bash, not sh" "$rc"
+
+# proxy-egress-dropped (blocker) — the DROP rule covers the whole factory-net
+# subnet, and the PROXY lives in that subnet, so squid itself cannot reach the
+# internet: every CONNECT ends in a 60s timeout and a TCP_TUNNEL/503. The proxy
+# host needs an explicit ACCEPT; the allowlist is enforced in squid, not here.
+if grep -qE 'iptables .*-s "\$proxy_ip" -j ACCEPT' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[proxy-egress-dropped] the proxy's own egress is accepted above the subnet DROP" "$rc"
+
+# js-actions-proxy-blind (blocker) — Node >=24 refuses to honour http_proxy
+# unless NODE_USE_ENV_PROXY is set, so on a proxied runner EVERY JavaScript
+# action (starting with create-github-app-token, the first step of every
+# station) dies before the session runs. The runner container must export it.
+if grep -q 'NODE_USE_ENV_PROXY=1' "$BOOTSTRAP"; then rc=0; else rc=1; fi
+expect "[js-actions-proxy-blind] the runner exports NODE_USE_ENV_PROXY for JS actions" "$rc"
+
 # proxy-ip-unvalidated (major) — `docker inspect` prints "invalid IP" (not an
 # empty string) for a container with no live network, so an unvalidated capture
 # feeds garbage to `iptables -d` and the firewall silently fails to apply.

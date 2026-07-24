@@ -600,8 +600,10 @@ SQUID
     # prove the proxy serves BEFORE spending a registration token on it.
     proxy_healthy=false
     for _ in $(seq 1 20); do
+      # bash, not sh: /dev/tcp is a bash builtin and does not exist in a POSIX
+      # shell, so probing under sh fails against a perfectly healthy proxy.
       if [ "$(docker inspect factory-proxy --format '{{.State.Running}}' 2>/dev/null)" = "true" ] &&
-         docker exec factory-proxy sh -c 'exec 3<>/dev/tcp/127.0.0.1/3128' 2>/dev/null; then
+         docker exec factory-proxy bash -c 'exec 3<>/dev/tcp/127.0.0.1/3128' 2>/dev/null; then
         proxy_healthy=true
         break
       fi
@@ -623,6 +625,11 @@ SQUID
       case "$proxy_ip" in
         *[!0-9.]*|'') die "could not read factory-proxy's IP on factory-net (got '${proxy_ip}')" ;;
       esac
+      # The proxy lives in the same subnet the DROP rule covers, so without an
+      # explicit ACCEPT for it squid cannot reach anything either and every
+      # CONNECT ends in a 60s timeout and a TCP_TUNNEL/503. Packet-level egress
+      # for the proxy host is intended: the allowlist is enforced inside squid.
+      sudo iptables -C DOCKER-USER -s "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$proxy_ip" -j ACCEPT
       sudo iptables -C DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$proxy_ip" -j ACCEPT
       sudo iptables -C DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -m state --state ESTABLISHED,RELATED -j ACCEPT
       sudo iptables -C DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -s "$subnet" -d "$subnet" -j ACCEPT
@@ -644,6 +651,7 @@ SQUID
       docker run -d --restart unless-stopped --name dsf-runner-icculus --network factory-net \
         -e http_proxy=http://factory-proxy:3128 -e https_proxy=http://factory-proxy:3128 \
         -e no_proxy=localhost,127.0.0.1,factory-proxy \
+        -e NODE_USE_ENV_PROXY=1 \
         ghcr.io/actions/actions-runner:latest \
         /bin/bash -c "./config.sh --url 'https://github.com/$REPO' --token '$rtoken' --name icculus --labels icculus --unattended --replace && ./run.sh" >&2
       for _ in $(seq 1 24); do
