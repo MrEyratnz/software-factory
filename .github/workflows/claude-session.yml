@@ -127,14 +127,21 @@ jobs:
           git config user.name "${SLUG}[bot]"
           git config user.email "${SLUG}[bot]@users.noreply.github.com"
 
-      # Baseline for the no-op guard (#228): count every commit reachable from
-      # any ref BEFORE the session. The session creates its work commits locally
-      # (on a branch it then pushes), so a real build raises this count and a
-      # pure orient-and-stop /factory-status run leaves it unchanged.
-      - name: baseline commit count (no-op guard)
+      # Baseline for the no-op guard (#228): the checkout tip this session starts
+      # from, plus the set of open PRs. The guard below measures the session's
+      # OWN output against these — a work commit on a branch it creates, or a PR
+      # it opens/advances — never the whole ref graph (which a concurrent fetch
+      # would inflate, #252).
+      - name: baseline for the no-op guard
         id: baseline
         if: ${{ inputs.require_progress }}
-        run: echo "count=$(git rev-list --all --count)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+        run: |
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
+            --json number,headRefOid > "$RUNNER_TEMP/prs-before.json" 2>/dev/null \
+            || echo '[]' > "$RUNNER_TEMP/prs-before.json"
 
       # Claude Code in CI authenticates with EITHER credential; a repo that holds
       # the one we don't pass runs every station unauthenticated. Fail here,
@@ -198,25 +205,49 @@ jobs:
           ' "$f"
 
       # No-op / false-green guard (#228): a factory-run session that oriented
-      # (/factory-status) and ended its turn without implementing anything is
-      # is_error:false — so the guard above passes it — yet it produced no
-      # commit, no PR, no checkpoint delta, and the loop makes zero progress
-      # while reporting success. Require at least one new commit: the conductor
-      # is instructed to open a PR AND commit the checkpoint, so a genuine
-      # iteration always commits, and only a status-only stall does not.
+      # (/factory-status) and ended its turn without building is is_error:false —
+      # the guard above passes it — yet it opened no PR and wrote no code. Require
+      # the REAL deliverable, not merely "a commit": the conductor is told to
+      # commit a chore: checkpoint every run, so counting any commit would let an
+      # orient → checkpoint → stop run pass green (#251). Progress means either
+      #   (a) a PR opened or advanced this session, or
+      #   (b) a non-chore work commit authored on a branch this session created,
+      # measured against the baseline tip so a concurrent fetch into refs/remotes
+      # cannot satisfy it (#252). A lone checkpoint commit counts as neither.
       - name: require the station produced work (no-op guard)
         if: ${{ inputs.require_progress }}
         env:
-          BEFORE: ${{ steps.baseline.outputs.count }}
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+          BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
         run: |
-          after="$(git rev-list --all --count)"
-          if [ "${after:-0}" -le "${BEFORE:-0}" ]; then
-            echo "::error::factory-run produced no commit this iteration — an orient-and-stop no-op (see #228)." \
-                 "The session must implement the next item and open a PR, not just report /factory-status." \
-                 "commits before=${BEFORE:-0} after=${after:-0}"
+          # Fail CLOSED if the baseline never ran (#254): no baseline => cannot
+          # prove progress => treat as no-op rather than passing by default.
+          if [ -z "${BASE_SHA:-}" ] || [ ! -f "$RUNNER_TEMP/prs-before.json" ]; then
+            echo "::error::no-op guard baseline missing — failing closed (see #228/#254)."
             exit 1
           fi
-          echo "progress: $((after - ${BEFORE:-0})) new commit(s) this session"
+          # (b) non-chore work commits on local branches this session created,
+          # reachable from a local head but NOT from the baseline tip.
+          work="$(git log --branches --not "$BASE_SHA" --no-merges --pretty=%s 2>/dev/null \
+            | grep -vcE '^(chore|ci)(\([^)]*\))?:' || true)"
+          # (a) a PR opened or advanced (head moved) since the baseline.
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
+            --json number,headRefOid > "$RUNNER_TEMP/prs-after.json" 2>/dev/null \
+            || echo '[]' > "$RUNNER_TEMP/prs-after.json"
+          pr="$(node -e '
+            const fs = require("fs");
+            const rd = p => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return []; } };
+            const before = new Map(rd(process.env.RUNNER_TEMP + "/prs-before.json").map(p => [p.number, p.headRefOid]));
+            const after = rd(process.env.RUNNER_TEMP + "/prs-after.json");
+            const advanced = after.some(p => !before.has(p.number) || before.get(p.number) !== p.headRefOid);
+            process.stdout.write(advanced ? "1" : "0");
+          ')"
+          if [ "${work:-0}" -eq 0 ] && [ "${pr:-0}" -eq 0 ]; then
+            echo "::error::factory-run built nothing this iteration — no PR opened/advanced and no non-chore work commit (see #228)." \
+                 "Orienting with /factory-status and writing only the checkpoint is a no-op, not progress."
+            exit 1
+          fi
+          echo "progress: non-chore work commits=${work:-0}, PR opened/advanced=${pr:-0}"
 
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns

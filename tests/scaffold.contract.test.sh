@@ -134,14 +134,20 @@ else
   bad "$CRON_WF missing"
 fi
 
-# --- the build loop must actually BUILD, or fail loudly (#228) ----------------
+# --- the build loop must fail loudly when it builds nothing (#228) ------------
 # The factory-run conductor was observed orienting (/factory-status) and ending
-# its turn without implementing anything — a green run that produced no commit,
-# no PR, no checkpoint delta. `is_error` is false in that case, so the existing
-# error guard does not catch it. Two properties keep the build loop honest:
+# its turn without building — a green run that opened no PR and wrote no code.
+# `is_error` is false in that case, so the existing error guard does not catch
+# it. Three properties keep the build loop honest (a static scaffold check can
+# only assert the guard is WIRED and fails hard; whether the conductor actually
+# builds is exercised by a live dispatch, not here):
 #   1. factory-run asks claude-session to enforce progress (require_progress);
-#   2. claude-session, when asked, fails the job if the session produced zero
-#      new commits — turning a silent orient-and-stop no-op into a red run.
+#   2. claude-session, when asked, measures the session's OWN deliverable — a PR
+#      opened/advanced, or a non-chore work commit scoped to the baseline tip —
+#      NOT a bare commit count (a mandated checkpoint commit must not pass it,
+#      #251) and NOT the whole ref graph (a concurrent fetch must not pass it,
+#      #252);
+#   3. the guard exits non-zero, turning a silent no-op into a red run.
 FR_WF=".github/workflows/factory-run.yml"
 SESS_WF=".github/workflows/claude-session.yml"
 if [ -f "$FR_WF" ] && grep -q 'require_progress:[[:space:]]*true' "$FR_WF"; then
@@ -149,13 +155,25 @@ if [ -f "$FR_WF" ] && grep -q 'require_progress:[[:space:]]*true' "$FR_WF"; then
 else
   bad "$FR_WF does not set require_progress: true — an orient-and-stop no-op stays silently green (#228)"
 fi
-if [ -f "$SESS_WF" ] && grep -q 'require_progress' "$SESS_WF" && grep -qE 'rev-list --all --count' "$SESS_WF"; then
-  ok "$SESS_WF has the no-op guard (fails when a require_progress session makes no commit)"
+# The guard must key on the real deliverable, not a bare commit count: a PR
+# opened/advanced or a non-chore work commit measured against a baseline SHA.
+if [ -f "$SESS_WF" ] \
+   && grep -q 'require_progress' "$SESS_WF" \
+   && grep -qE 'pr list|headRefOid' "$SESS_WF" \
+   && grep -qE 'not .*BASE_SHA|--not "\$BASE_SHA"' "$SESS_WF"; then
+  ok "$SESS_WF no-op guard keys on the deliverable (PR or non-chore commit vs baseline), not a bare commit count"
 else
-  bad "$SESS_WF lacks the commit-based no-op guard for require_progress stations (#228)"
+  bad "$SESS_WF lacks a deliverable-based no-op guard for require_progress stations (#228/#251/#252)"
 fi
-# The guard must FAIL the job (exit non-zero), not just log — mirror the
-# is_error guard's discipline.
+# A bare `git rev-list --all --count` diff must NOT be how progress is judged —
+# that is exactly the #251/#252 hole; pin that it is gone.
+if grep -qE 'rev-list --all --count' "$SESS_WF"; then
+  bad "$SESS_WF still judges progress by 'rev-list --all --count' — defeated by the mandated checkpoint commit (#251) and remote refs (#252)"
+else
+  ok "$SESS_WF does not judge progress by a bare all-ref commit count"
+fi
+# The guard must FAIL the job (exit non-zero) and fail CLOSED on a missing
+# baseline (#254), not merely log.
 if python3 -c "import yaml" 2>/dev/null && [ -f "$SESS_WF" ]; then
   if WF="$SESS_WF" python3 -c '
 import os, sys, yaml
@@ -163,11 +181,11 @@ wf = yaml.safe_load(open(os.environ["WF"]))
 steps = wf["jobs"]["session"]["steps"]
 guard = [s for s in steps
          if "require_progress" in str(s.get("if", ""))
-         and "rev-list" in str(s.get("run", ""))
-         and "exit 1" in str(s.get("run", ""))]
+         and "exit 1" in str(s.get("run", ""))
+         and ("pr list" in str(s.get("run", "")) or "headRefOid" in str(s.get("run", "")))]
 sys.exit(0 if guard else 1)
   '; then
-    ok "$SESS_WF no-op guard exits non-zero on zero-commit (fails the job)"
+    ok "$SESS_WF no-op guard exits non-zero when the session built nothing (fails the job)"
   else
     bad "$SESS_WF no-op guard never exits non-zero — a no-op would still report success"
   fi
