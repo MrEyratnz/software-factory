@@ -231,6 +231,18 @@ grep -q '^factory-ops/state/\.bootstrap-runner/' .gitignore \
   && ok "the runner state dir (holding observability.env) is gitignored" \
   || bad ".gitignore does not ignore factory-ops/state/.bootstrap-runner/"
 
+# A healthy Langfuse is NOT a working pipeline. The collector authenticates with
+# Basic credentials, and a 401 is swallowed by its retry queue and sending
+# queue — from the runner's side that is indistinguishable from a healthy
+# export. So the credential pair has to be proved against Langfuse itself, not
+# inferred from the health endpoint.
+grep -q '401' "$UPSCRIPT" \
+  && ok "$UPSCRIPT distinguishes a rejected credential from a healthy stack" \
+  || bad "$UPSCRIPT never checks for a 401 — a bad Langfuse key would look healthy"
+grep -q 'api/public/otel' "$UPSCRIPT" \
+  && ok "$UPSCRIPT verifies against the OTLP endpoint the collector actually posts to" \
+  || bad "$UPSCRIPT does not exercise the Langfuse OTLP endpoint"
+
 # --- bootstrap wiring --------------------------------------------------------
 # The runner runs behind an egress allowlist proxy. Without the collector in
 # no_proxy, every OTLP POST goes to squid, which denies it — telemetry that is
@@ -258,6 +270,18 @@ if [ -f "$SESSION_WF" ]; then
   grep -q "inputs.runner == 'icculus'" "$SESSION_WF" \
     && ok "$SESSION_WF scopes telemetry to the runner that can reach the collector" \
     || bad "$SESSION_WF does not gate telemetry on the icculus runner"
+  # OTEL_RESOURCE_ATTRIBUTES is comma/equals delimited, so ANY interpolated
+  # value carrying one of those splits a single attribute into two and corrupts
+  # every attribute after it. Sanitizing only some of them is the asymmetry that
+  # becomes a bug the first time a caller threads a less-trusted value through
+  # `inputs.station`.
+  if grep -q 'OTEL_RESOURCE_ATTRIBUTES' "$SESSION_WF" &&
+     grep 'OTEL_RESOURCE_ATTRIBUTES' "$SESSION_WF" | grep -Eq '\$(SESSION_STATION|SESSION_MODEL|SESSION_EFFORT|GITHUB_WORKFLOW)'; then
+    bad "$SESSION_WF interpolates a raw value into OTEL_RESOURCE_ATTRIBUTES (must be sanitized first)"
+  else
+    ok "$SESSION_WF sanitizes every value it puts in OTEL_RESOURCE_ATTRIBUTES"
+  fi
+
   # Prompts, responses, tool inputs and raw bodies stay redacted: sessions read
   # untrusted issue text and hold minted App tokens.
   for leak in OTEL_LOG_USER_PROMPTS OTEL_LOG_ASSISTANT_RESPONSES OTEL_LOG_TOOL_CONTENT OTEL_LOG_RAW_API_BODIES; do

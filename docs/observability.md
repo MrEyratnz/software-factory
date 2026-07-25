@@ -46,7 +46,12 @@ runner. It:
 2. brings up `docker-compose.observability.yml`;
 3. waits for a real `200` from Langfuse's health endpoint (first boot runs
    clickhouse + postgres migrations — a couple of minutes is normal);
-4. prints the endpoint the runner dials: `http://factory-collector:4318`.
+4. **proves the collector's credentials against Langfuse's OTLP endpoint.** A
+   healthy Langfuse is not a working pipeline: if it rejects the Basic
+   credentials, the collector's retry and sending queues swallow the `401`, the
+   runner sees its exports accepted, and the UI just stays empty. The script
+   says so loudly instead;
+5. prints the endpoint the runner dials: `http://factory-collector:4318`.
 
 `bootstrap.sh` then sets the **`FACTORY_OTEL_ENDPOINT` repo variable**, and only
 on a stack it proved healthy. That variable is the single switch every station
@@ -125,7 +130,8 @@ running.
   `observability.env`. Regenerating it would hand Langfuse a new project key
   while the old project keeps every trace already ingested: an empty-looking UI
   and a healthy-looking collector. To start clean, delete the env file *and* the
-  `langfuse_*` volumes together.
+  `langfuse_*` volumes together. `observability-up.sh` catches exactly this case
+  on its next run — the credential check comes back `401`.
 * **A runner container created before the collector** carries a `no_proxy`
   without `factory-collector`, so its OTLP posts go to the egress-allowlist
   proxy, which denies them — telemetry configured, enabled, and thrown away.

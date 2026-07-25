@@ -116,6 +116,40 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
   if [ "$healthy" = true ]; then
     log "langfuse is healthy — UI at http://127.0.0.1:3000 (ssh -N -L 3000:127.0.0.1:3000 <host>)"
     log "sign in with the credentials in $ENV_FILE (LANGFUSE_INIT_USER_*)"
+
+    # A healthy Langfuse is not a working pipeline. The collector authenticates
+    # with the Basic credentials generated above, and if Langfuse rejects them
+    # the collector's retry + sending queue swallows the 401: exports look
+    # accepted from the runner's side, the collector logs stay quiet at warn
+    # level, and the UI simply stays empty. So prove the credential pair against
+    # the same OTLP endpoint the collector posts to, before declaring success.
+    #
+    # Only 401/403 is a verdict here: any other status (including a 400 for the
+    # deliberately-empty payload below) means Langfuse read the credentials and
+    # got as far as parsing the body, which is all this check is asking.
+    auth="$(sed -n 's/^LANGFUSE_OTLP_AUTHORIZATION=//p' "$ENV_FILE" | head -1)"
+    # `|| code=000` on the ASSIGNMENT, not inside the substitution: a curl that
+    # cannot connect writes its own "000" from -w AND exits non-zero, so an
+    # `|| echo 000` inside would concatenate two codes into a string that
+    # matches no case branch and reports a connection failure as success.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 10 \
+      -X POST http://127.0.0.1:3000/api/public/otel/v1/traces \
+      -H "Authorization: $auth" -H 'Content-Type: application/json' \
+      -d '{"resourceSpans":[]}' 2>/dev/null)" || code=000
+    case "$code" in
+      401|403)
+        warn "langfuse REJECTED the collector's credentials (HTTP $code) — traces will be dropped silently"
+        warn "the project keys in $ENV_FILE do not match the project langfuse initialised."
+        warn "that happens when the env file was regenerated against existing langfuse_* volumes."
+        warn "fix: docker compose -f $COMPOSE_FILE down -v, delete $ENV_FILE, and re-run this script"
+        ;;
+      000)
+        warn "could not reach the langfuse OTLP endpoint to verify credentials — check by hand before trusting the UI"
+        ;;
+      *)
+        log "langfuse accepted the collector's credentials (HTTP $code) — the trace path is live"
+        ;;
+    esac
   else
     warn "langfuse did not become healthy in 5 minutes — 'docker compose -f $COMPOSE_FILE logs langfuse-web'"
     warn "the collector is still up and queuing; re-run this script once langfuse recovers"

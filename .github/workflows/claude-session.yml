@@ -156,10 +156,17 @@ jobs:
           SESSION_MODEL: ${{ inputs.model }}
           SESSION_EFFORT: ${{ inputs.effort }}
         run: |
-          # OTEL_RESOURCE_ATTRIBUTES is comma/equals delimited, and a workflow
-          # NAME is free text — an unescaped space or comma there would split
-          # one attribute into two and corrupt every attribute after it.
+          # OTEL_RESOURCE_ATTRIBUTES is comma/equals delimited, so ANY value
+          # carrying one of those splits a single attribute into two and
+          # corrupts every attribute after it. Sanitize all of them, not just
+          # the obviously free-text workflow name: station/model/effort are
+          # fixed strings from this repo's own workflows today, but they are
+          # `inputs.*` on a reusable workflow, and the first caller to thread a
+          # less-trusted value through one would inherit the gap.
           wf="${GITHUB_WORKFLOW//[ ,=]/_}"
+          st="${SESSION_STATION//[ ,=]/_}"
+          md="${SESSION_MODEL//[ ,=]/_}"
+          ef="${SESSION_EFFORT//[ ,=]/_}"
           {
             # The factory's OWN gate metrics (factory_gate_*, factory_commits_*)
             # ride the same collector. Env, not .factory/config.json: that file
@@ -176,7 +183,7 @@ jobs:
             echo "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"
             echo "OTEL_EXPORTER_OTLP_ENDPOINT=$OTEL_ENDPOINT"
             echo "OTEL_SERVICE_NAME=dark-software-factory"
-            echo "OTEL_RESOURCE_ATTRIBUTES=factory.station=$SESSION_STATION,factory.model=$SESSION_MODEL,factory.effort=$SESSION_EFFORT,factory.repo=$GITHUB_REPOSITORY,factory.run_id=$GITHUB_RUN_ID,factory.workflow=$wf"
+            echo "OTEL_RESOURCE_ATTRIBUTES=factory.station=$st,factory.model=$md,factory.effort=$ef,factory.repo=$GITHUB_REPOSITORY,factory.run_id=$GITHUB_RUN_ID,factory.workflow=$wf"
             # A station can finish inside one export interval; flush often
             # enough that a short run is not invisible.
             echo "OTEL_METRIC_EXPORT_INTERVAL=10000"
