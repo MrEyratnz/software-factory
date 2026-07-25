@@ -61,10 +61,17 @@ jobs:
       max_turns: 200
       timeout_minutes: 300
       prompt: |
-        You are the conductor running the factory-run station headless in CI.
-        Orient per .claude/CLAUDE.md (auto-loaded): /factory-status, then factory-ops/state/checkpoint.json
-        and the current sprint file under factory-ops/sprints/.
+        You are the conductor of the factory-run station, running headless in CI.
+        Your job THIS run is to ADVANCE THE ROADMAP by producing real work — a
+        commit and a pull request. Producing only a status report is a FAILURE:
+        the run accomplished nothing and the next hourly wake starts over.
 
+        Orient FIRST, briefly — this is the means, not the deliverable. Read
+        /factory-status, factory-ops/state/checkpoint.json, and the active sprint
+        file under factory-ops/sprints/. DO NOT STOP after orienting; orientation
+        is never the finished product.
+
+        Then act, in order:
         1. If the checkpoint parks unfinished work, set /goal to that station's
            completion condition and finish it first.
         2. If no sprint is active or the sprint boundary (sprint_ends_at) has
@@ -75,9 +82,16 @@ jobs:
            sprint_ends_at to now + SPRINT_HOURS (repo variable, default 24) as
            an absolute UTC timestamp. Every 4th sprint, convene the board per
            GOVERNANCE.md via the judge-panel machinery.
-        3. Then run /factory-run --max ${{ inputs.max_iterations || github.event.client_payload.max_iterations || '10' }}.
+        3. REQUIRED — the point of this run: run /factory-run --max ${{ inputs.max_iterations || github.event.client_payload.max_iterations || '10' }}
+           to implement the next roadmap/sprint item red→green→refactor and open
+           its PR. Do this unless step 1 or 2 genuinely consumed the whole
+           session. The minimum successful outcome is: the next open sprint item
+           picked up, a failing test written, made green, and a PR opened.
         4. End ONLY at a clean checkpoint: update factory-ops/state/checkpoint.json
            (station, sprint, sprint_ends_at, branch, issues, next_action), commit
            it (chore:), and push. On usage limits or nearing the job timeout,
            checkpoint immediately and end cleanly — never red on a limit; the
            hourly cron resumes you.
+
+        You hold contents:write, pull-requests:write, issues:write — use them.
+        Ending with no commit and no PR means you did not do the job.
