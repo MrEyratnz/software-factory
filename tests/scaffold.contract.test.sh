@@ -338,6 +338,52 @@ else
   ok "pyyaml unavailable locally — #97 permission invariants deferred to CI"
 fi
 
+# --- secrets forwarding boundary (#120/#132) ---------------------------------
+# `secrets: inherit` hands a caller's ENTIRE secrets context — including the
+# full-scope FACTORY_PAT — to every job it calls, regardless of that job's
+# GITHUB_TOKEN permission ceiling. The two INBOUND stations (triage reads
+# issue/comment bodies, review reads PR diffs/descriptions) have their
+# GITHUB_TOKEN ceilings deliberately narrowed for exactly this reason, but
+# `secrets: inherit` punches straight through that: a single added or
+# compromised step in an inbound session's job could reach FACTORY_PAT. No
+# caller may use the bare inherit form; each must pass only the named secrets
+# its station needs (FACTORY_PAT withheld from the inbound two).
+if grep -rnE '^[[:space:]]*secrets:[[:space:]]*inherit[[:space:]]*$' .github/workflows/*.yml; then
+  bad "a workflow uses 'secrets: inherit' — forwards FACTORY_PAT to whatever job it calls, ceiling or not"
+else
+  ok "no workflow uses 'secrets: inherit' — every caller passes an explicit secrets map"
+fi
+
+if python3 -c "import yaml" 2>/dev/null; then
+  if python3 -c '
+import glob, sys, yaml
+
+problems = []
+for path in ("on-issue.yml", "on-pr.yml"):
+    p = ".github/workflows/" + path
+    wf = yaml.safe_load(open(p))
+    for name, job in (wf.get("jobs") or {}).items():
+        uses = job.get("uses")
+        if not (isinstance(uses, str) and "claude-session.yml" in uses):
+            continue
+        secrets = job.get("secrets")
+        if secrets == "inherit" or not isinstance(secrets, dict):
+            problems.append(f"{p}:{name} has no explicit secrets: mapping")
+            continue
+        if "FACTORY_PAT" in secrets:
+            problems.append(f"{p}:{name} forwards FACTORY_PAT to an inbound station")
+for pr in problems:
+    print(pr)
+sys.exit(1 if problems else 0)
+  '; then
+    ok "on-issue.yml and on-pr.yml withhold FACTORY_PAT from their claude-session.yml call"
+  else
+    bad "an inbound station (on-issue.yml/on-pr.yml) forwards FACTORY_PAT to its claude-session.yml call"
+  fi
+else
+  ok "pyyaml unavailable locally — FACTORY_PAT-withholding check deferred to CI"
+fi
+
 if grep -q 'CLAUDE_CODE_OAUTH_TOKEN' bootstrap.sh; then
   ok "bootstrap.sh stores whichever Claude credential the human already has"
 else
