@@ -459,6 +459,82 @@ printf '{"tree":"%s","ok":true,"stages":[{"name":"suite","ok":true}]}' "$TH" > "
 EVENT="$(evt "$R" Bash '{"command":"git commit -m \"feat: add a\""}')"
 assert_exit_fast 0 "otel enabled + unreachable endpoint: allow still returns exit 0 promptly" 3000
 
+# --- FACTORY_OTEL_ENDPOINT: the ambient override ----------------------------
+# CI cannot turn otel on the way a human does. `.factory/config.json` is a
+# hook-managed trust root — a workflow step that edits it dirties the tree and
+# trips the very gates it is trying to instrument. So the runner exports
+# FACTORY_OTEL_ENDPOINT instead, and that alone is enough to enable the emit and
+# to choose where it goes. Proven with a `node` shim that records the endpoint
+# the emit actually resolved, because a wrong-but-plausible endpoint fails
+# exactly like a healthy one (fire-and-forget, always exit 0).
+OTELBIN="$TMPROOT/otel-bin"; mkdir -p "$OTELBIN"
+# Intercept ONLY the emit invocation and hand every other `node` call straight
+# through: common.sh reads config with node too, so a blanket shim would both
+# blind config_get and record a probe for a call that never emitted anything.
+cat > "$OTELBIN/node" <<SHIM
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    *otel-emit.mjs) printf '%s\n' "\${OTEL_ENDPOINT:-<unset>}" > "\$OTEL_PROBE"; exit 0 ;;
+  esac
+done
+exec "$(command -v node)" "\$@"
+SHIM
+chmod +x "$OTELBIN/node"
+
+# probe_emit <config-json-or-empty> <env-endpoint> — run otel_emit under the
+# shim and print the endpoint it dialled ("<none>" when it never forked).
+probe_emit() {
+  local cfg="$1" envep="$2" probe="$TMPROOT/otel-probe.$$"
+  local pr; pr="$(mkrepo)"
+  [ -n "$cfg" ] && printf '%s' "$cfg" > "$pr/.factory/config.json"
+  rm -f "$probe"
+  ( export PATH="$OTELBIN:$PATH" OTEL_PROBE="$probe" CLAUDE_PROJECT_DIR="$pr"
+    if [ -n "$envep" ]; then export FACTORY_OTEL_ENDPOINT="$envep"; fi
+    printf '{}' | HOOK_INPUT="" bash "$TMPROOT/otel-harness.sh" >/dev/null 2>&1 )
+  # The emit is backgrounded and disowned, so the write races the harness exit.
+  local i=0
+  while [ ! -s "$probe" ] && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i+1)); done
+  if [ -s "$probe" ]; then head -1 "$probe"; else printf '<none>\n'; fi
+}
+
+CFG_OFF='{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "testCommandRegex": "(node --test)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [], "otel": { "enabled": false } }'
+CFG_ON='{ "sourceRegex": "^src/", "testRegex": "(\\.test\\.)", "testCommandRegex": "(node --test)",
+  "roadmapPath": "docs/ROADMAP.md", "releaseBranch": "main", "generators": [],
+  "otel": { "enabled": true, "endpoint": "http://config-endpoint.invalid:4318" } }'
+
+got="$(probe_emit "" "http://env-endpoint.invalid:4318")"
+if [ "$got" = "http://env-endpoint.invalid:4318" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - FACTORY_OTEL_ENDPOINT enables the emit with no otel block in config (got: $got)"; fi
+
+got="$(probe_emit "$CFG_OFF" "http://env-endpoint.invalid:4318")"
+if [ "$got" = "http://env-endpoint.invalid:4318" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - FACTORY_OTEL_ENDPOINT overrides an explicit otel.enabled=false (got: $got)"; fi
+
+got="$(probe_emit "$CFG_ON" "http://env-endpoint.invalid:4318")"
+if [ "$got" = "http://env-endpoint.invalid:4318" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - FACTORY_OTEL_ENDPOINT wins over otel.endpoint from config (got: $got)"; fi
+
+got="$(probe_emit "$CFG_ON" "")"
+if [ "$got" = "http://config-endpoint.invalid:4318" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - config otel.endpoint still used when the env override is absent (got: $got)"; fi
+
+# An exported-but-empty variable is the shape CI produces when the repo variable
+# is unset (`OTEL: ${{ vars.FACTORY_OTEL_ENDPOINT }}`). It must read as "off",
+# not as "emit to the empty endpoint".
+got="$(FACTORY_OTEL_ENDPOINT="" probe_emit "$CFG_OFF" "")"
+if [ "$got" = "<none>" ]; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); echo "FAIL - an empty FACTORY_OTEL_ENDPOINT must not enable the emit (got: $got)"; fi
+
+# The override must not buy back the latency the opt-in design removed: an
+# unreachable endpoint via env still cannot delay or change a gate decision.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+EVENT="$(evt "$R" Bash '{"command":"git commit --no-verify -m \"feat: x\""}')"
+export FACTORY_OTEL_ENDPOINT="http://127.0.0.1:1"
+assert_exit_fast 2 "FACTORY_OTEL_ENDPOINT + unreachable collector: deny still returns exit 2 promptly" 3000
+unset FACTORY_OTEL_ENDPOINT
+
 echo "# enforcement toggles + pause (issues #29, #30)"
 # --- session-local pause: every hard gate steps aside when the marker exists.
 SCRIPT="$S/guard-commit.sh"

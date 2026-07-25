@@ -8,7 +8,9 @@
 #   2. create/confirm repo + protect main  7. Projects v2 board + fields
 #   3. one GitHub App per agent role       8. Dockerized self-hosted runner
 #   4. secrets + repo variables               (label: icculus, egress-allowlisted)
-#   5. labels, milestones, Epic 1 backlog  9. dispatch the first factory-run
+#   5. labels, milestones, Epic 1 backlog  8b. observability stack on that host
+#                                             (OTEL collector + Langfuse)
+#                                          9. dispatch the first factory-run
 #
 # Env knobs (all optional unless noted):
 #   ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN   the Claude credential CI runs
@@ -23,6 +25,8 @@
 #   FUNDING_GITHUB FUNDING_BUYMEACOFFEE FUNDING_KOFI FUNDING_OPENCOLLECTIVE
 #   FACTORY_APPS_SKIP=true   skip GitHub App creation (PAT/GITHUB_TOKEN fallback)
 #   FACTORY_RUNNER_SKIP=true skip self-hosted runner registration
+#   FACTORY_OTEL_SKIP=true   skip the observability stack (collector + Langfuse)
+#                          on the runner host; stations then emit no telemetry
 #   FACTORY_APP_PORT       localhost port for the app-manifest flow (default 8927)
 #
 # Output contract: progress goes to stderr; stdout prints ONLY the final
@@ -679,7 +683,7 @@ SQUID
       docker rm -f dsf-runner-icculus >/dev/null 2>&1 || true
       docker run -d --restart unless-stopped --name dsf-runner-icculus --network factory-net \
         -e http_proxy=http://factory-proxy:3128 -e https_proxy=http://factory-proxy:3128 \
-        -e no_proxy=localhost,127.0.0.1,factory-proxy \
+        -e no_proxy=localhost,127.0.0.1,factory-proxy,factory-collector \
         -e NODE_USE_ENV_PROXY=1 \
         ghcr.io/actions/actions-runner:latest \
         /bin/bash -c "[ -f .runner ] || ./config.sh --url 'https://github.com/$REPO' --token '$rtoken' --name icculus --labels icculus --unattended --replace; exec ./run.sh" >&2
@@ -708,6 +712,53 @@ if [ "$RUNNER_OK" = true ]; then
   gh variable set FACTORY_RUNNER --repo "$REPO" --body "icculus" >&2
 else
   gh variable set FACTORY_RUNNER --repo "$REPO" --body "ubuntu-latest" >&2
+fi
+
+# --- 8b. observability stack (icculus): OTEL collector + self-hosted Langfuse -
+# Only on the runner host, and only when the runner is actually up: the endpoint
+# published below (factory-collector) is a factory-net DNS name that resolves
+# nowhere else. Pointing a hosted runner at it would make every station pay
+# export retries for telemetry that can never arrive.
+#
+# FACTORY_OTEL_ENDPOINT is the single switch claude-session.yml reads. It is set
+# ONLY on a proven-healthy stack and DELETED otherwise, so the failure mode is
+# "no telemetry", never "telemetry silently dropped into a dead collector".
+OTEL_OK=false
+if [ "${FACTORY_OTEL_SKIP:-false}" = "true" ]; then
+  warn "FACTORY_OTEL_SKIP=true — skipping the observability stack"
+elif [ "$RUNNER_OK" != true ]; then
+  log "no self-hosted runner — skipping the observability stack (it is icculus-local)"
+elif [ ! -x scripts/observability-up.sh ]; then
+  warn "scripts/observability-up.sh missing or not executable — skipping the observability stack"
+else
+  log "standing up the observability stack (otel collector + langfuse)"
+  if bash scripts/observability-up.sh >/dev/null; then
+    OTEL_OK=true
+    log "observability stack is up — langfuse UI on 127.0.0.1:3000 (tunnel to reach it)"
+  else
+    warn "the observability stack did not come up — sessions will run without telemetry"
+    ensure_issue "Observability stack failed to start on the runner host" "P2" \
+"bootstrap.sh could not bring up docker-compose.observability.yml on icculus, so FACTORY_OTEL_ENDPOINT is unset and stations emit no OTEL/Langfuse telemetry. Re-run 'scripts/observability-up.sh' on the runner host and read its output (docker compose -f docker-compose.observability.yml logs)."
+  fi
+fi
+
+if [ "$OTEL_OK" = true ]; then
+  gh variable set FACTORY_OTEL_ENDPOINT --repo "$REPO" --body "http://factory-collector:4318" >&2
+  # A runner container created before the collector existed carries a no_proxy
+  # without it, so every OTLP POST goes to the egress-allowlist proxy, which
+  # denies it: telemetry configured, enabled, and thrown away. The container's
+  # env is fixed at creation, so the only fix is to recreate it.
+  if docker inspect dsf-runner-icculus --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+       grep -q '^no_proxy=' &&
+     ! docker inspect dsf-runner-icculus --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+       grep -q '^no_proxy=.*factory-collector'; then
+    warn "the running runner container predates the collector — its no_proxy would send OTLP through the egress proxy"
+    warn "recreate it to fix: docker rm -f dsf-runner-icculus && bash bootstrap.sh"
+  fi
+else
+  # Leave no stale pointer behind: a previously-set endpoint would keep every
+  # station exporting into a collector that is no longer there.
+  gh variable delete FACTORY_OTEL_ENDPOINT --repo "$REPO" >/dev/null 2>&1 || true
 fi
 
 # --- 9. first dispatch -------------------------------------------------------

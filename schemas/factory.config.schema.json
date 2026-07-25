@@ -62,7 +62,7 @@
     },
     "otel": {
       "type": "object",
-      "description": "optional, opt-in push-based OTEL metrics (collector-only, metrics-only MVP). Off by default: hooks never fork or touch the network unless enabled is exactly true.",
+      "description": "optional, opt-in push-based OTEL metrics. Off by default: hooks never fork or touch the network unless enabled is exactly true. The FACTORY_OTEL_ENDPOINT environment variable overrides both keys below (it is how CI opts in without writing to this hook-managed trust root).",
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean", "default": false, "description": "turn on the emit calls in the hooks; no-op when false/absent" },
