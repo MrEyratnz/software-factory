@@ -31,8 +31,12 @@ That is the floor, not the ceiling.
 - **An OTEL collector is the only component the runner can reach.** It sits on
   both `factory-net` (the egress-filtered runner network created by
   `bootstrap.sh` §8) and `factory-obs`. Langfuse, postgres, clickhouse, redis
-  and minio live on `factory-obs` alone. The runner therefore has a write-only
-  intake and no route to the store holding every previous session's traces.
+  and minio live on `factory-obs` alone, so the runner has no route to the store
+  holding every previous session's traces. The collector's own surfaces on
+  `factory-net` — OTLP intake on `:4318`, Prometheus scrape on `:8889` — are
+  unauthenticated and the scrape endpoint is readable; it serves aggregate
+  counters, no secrets and no trace content. The boundary is "cannot reach the
+  trace store", not "write-only".
 - **Content stays redacted.** `OTEL_LOG_USER_PROMPTS`,
   `OTEL_LOG_ASSISTANT_RESPONSES`, `OTEL_LOG_TOOL_DETAILS`,
   `OTEL_LOG_TOOL_CONTENT` and `OTEL_LOG_RAW_API_BODIES` are left off, and a

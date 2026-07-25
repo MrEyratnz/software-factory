@@ -38,12 +38,21 @@ COLLECTOR="otel-collector-langfuse.yaml"
 UPSCRIPT="scripts/observability-up.sh"
 SESSION_WF=".github/workflows/claude-session.yml"
 
+# The YAML-shape assertions need PyYAML. Follow the same contract
+# scaffold.contract.test.sh already sets for its workflow parse: when the module
+# is absent, DEFER to CI (which has it) rather than failing a developer's suite
+# over a missing optional dependency. A local false-red is still a red suite,
+# and this file is in the boundaries stage every commit has to clear.
+if python3 -c "import yaml" 2>/dev/null; then HAVE_YAML=true; else HAVE_YAML=false; fi
+SKIPPED=0
+
 # py <label> <script>  — run a python assertion; exit 0 means the invariant held,
 # and anything it prints on failure is appended to the label.
 py() {
-  local label="$1" src="$2" out
-  out="$(python3 -c "$src" 2>&1)"
-  if [ $? -eq 0 ]; then ok "$label"; else bad "$label${out:+ — $out}"; fi
+  local label="$1" src="$2" out rc
+  if [ "$HAVE_YAML" != true ]; then SKIPPED=$((SKIPPED+1)); return 0; fi
+  out="$(python3 -c "$src" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then ok "$label"; else bad "$label${out:+ — $out}"; fi
 }
 
 # --- files exist -------------------------------------------------------------
@@ -243,6 +252,114 @@ grep -q 'api/public/otel' "$UPSCRIPT" \
   && ok "$UPSCRIPT verifies against the OTLP endpoint the collector actually posts to" \
   || bad "$UPSCRIPT does not exercise the Langfuse OTLP endpoint"
 
+# --- observability-up.sh: the proof must be ACTED ON, not merely computed -----
+# The static greps above prove the check exists. They cannot prove it changes
+# anything, and that is exactly the gap the adversarial review found: the 401
+# branch warned and the script still exited 0, so bootstrap.sh — which gates on
+# nothing but that exit code — published FACTORY_OTEL_ENDPOINT for a pipeline
+# that silently drops every trace. Shape assertions could not see it. So drive
+# the real script under a PATH of fakes and assert on its EXIT CODE.
+OBSTMP="$(mktemp -d)"
+trap 'rm -rf "$OBSTMP"' EXIT
+mkdir -p "$OBSTMP/work/scripts" "$OBSTMP/bin"
+cp "$UPSCRIPT" "$OBSTMP/work/scripts/"
+cp "$COMPOSE" "$OBSTMP/work/"
+
+cat > "$OBSTMP/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+# Every docker call succeeds; only the compose/network calls are reached.
+exit 0
+FAKE
+cat > "$OBSTMP/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+# Two endpoints, steered per-case by the harness.
+case "$*" in
+  *"/api/public/health"*) exit "${FAKE_HEALTH_RC:-0}" ;;
+  *"/v1/traces"*)         printf '%s' "${FAKE_OTLP_CODE:-200}"; exit "${FAKE_OTLP_RC:-0}" ;;
+esac
+exit 0
+FAKE
+chmod +x "$OBSTMP/bin/docker" "$OBSTMP/bin/curl"
+
+# run_up <label> <expected-rc> — fresh workspace each time so credential
+# generation is exercised, not the reuse path.
+run_up() {
+  local label="$1" want="$2" rc
+  rm -rf "$OBSTMP/work/factory-ops"
+  ( cd "$OBSTMP/work" && PATH="$OBSTMP/bin:$PATH" FACTORY_OBS_WAIT_TRIES=2 \
+      bash scripts/observability-up.sh >/dev/null 2>&1 )
+  rc=$?
+  if [ "$rc" = "$want" ]; then ok "$label"; else bad "$label (expected exit $want, got $rc)"; fi
+}
+
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=200 run_up "up.sh: healthy + accepted credentials → exit 0" 0
+# The blocking defect, pinned: a rejected key must FAIL the script, because the
+# only thing standing between it and a wired-up dead pipeline is this exit code.
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=401 run_up "up.sh: langfuse rejects the credentials → non-zero exit" 1
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=403 run_up "up.sh: forbidden credentials → non-zero exit" 1
+# Unverifiable is not the same as fine: "proven healthy" cannot be claimed for a
+# stack whose OTLP endpoint never answered.
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=000 FAKE_OTLP_RC=7 run_up "up.sh: OTLP endpoint unreachable → non-zero exit" 1
+FAKE_HEALTH_RC=1 run_up "up.sh: langfuse never becomes healthy → non-zero exit" 1
+# A 400 on the deliberately-empty payload still proves the credentials were read.
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=400 run_up "up.sh: 400 on the empty probe payload is still a passing credential proof" 0
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=207 run_up "up.sh: 2xx is a passing credential proof" 0
+# "Not 401" is not the same as "working". A moved OTLP path or a wedged backend
+# drops traces exactly as silently as a bad key does.
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=404 run_up "up.sh: 404 (OTLP path moved) → non-zero exit, not 'live'" 1
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=502 run_up "up.sh: 5xx (backend wedged) → non-zero exit, not 'live'" 1
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=302 run_up "up.sh: an unexpected status is unproven, not success" 1
+
+# --- bootstrap: a runner that cannot reach the collector must not be advertised
+# The container's env is immutable, so this cannot be repaired in place — but a
+# path known to be broken must not be published as a working one. Driven by
+# extracting the real function and running it against a docker fake.
+mkdir -p "$OBSTMP/rbin"
+cat > "$OBSTMP/rbin/docker" <<'FAKE'
+#!/usr/bin/env bash
+case "${FAKE_RUNNER:-absent}" in
+  absent)  exit 1 ;;
+  noproxy) printf 'PATH=/usr/bin\nRUNNER_NAME=icculus\n' ;;
+  stale)   printf 'PATH=/usr/bin\nno_proxy=localhost,127.0.0.1,factory-proxy\n' ;;
+  good)    printf 'PATH=/usr/bin\nno_proxy=localhost,127.0.0.1,factory-proxy,factory-collector\n' ;;
+esac
+exit 0
+FAKE
+chmod +x "$OBSTMP/rbin/docker"
+
+awk '/^runner_reaches_collector\(\) \{/{p=1} p{print} p&&/^}/{exit}' bootstrap.sh > "$OBSTMP/rrc.sh"
+if [ -s "$OBSTMP/rrc.sh" ]; then
+  ok "bootstrap.sh exposes runner_reaches_collector as a testable function"
+  check_rrc() {
+    local label="$1" mode="$2" want="$3" rc
+    ( export PATH="$OBSTMP/rbin:$PATH" FAKE_RUNNER="$mode"
+      . "$OBSTMP/rrc.sh"; runner_reaches_collector ) >/dev/null 2>&1
+    rc=$?
+    if [ "$rc" = "$want" ]; then ok "$label"; else bad "$label (expected rc $want, got $rc)"; fi
+  }
+  check_rrc "runner_reaches_collector: no runner container → reachable (nothing to break)" absent  0
+  check_rrc "runner_reaches_collector: runner without proxy config → reachable"            noproxy 0
+  check_rrc "runner_reaches_collector: runner predating the collector → NOT reachable"     stale   1
+  check_rrc "runner_reaches_collector: runner with the collector in no_proxy → reachable"  good    0
+else
+  bad "bootstrap.sh has no runner_reaches_collector function to drive"
+fi
+
+# …and the endpoint variable must be gated on it, not merely warned about.
+if grep -q '! runner_reaches_collector' bootstrap.sh && grep -q 'OTEL_OK=false' bootstrap.sh; then
+  ok "bootstrap.sh withholds FACTORY_OTEL_ENDPOINT when the runner cannot reach the collector"
+else
+  bad "bootstrap.sh does not gate FACTORY_OTEL_ENDPOINT on runner reachability"
+fi
+
+# FACTORY_OBS_WAIT=0 skips the health wait AND the credential proof, so a caller
+# that used it would be back to publishing an endpoint it never verified.
+if grep -q 'FACTORY_OBS_WAIT=0\|FACTORY_OBS_WAIT="0"' bootstrap.sh; then
+  bad "bootstrap.sh runs observability-up.sh with the verification skipped"
+else
+  ok "bootstrap.sh never skips the stack verification"
+fi
+
 # --- bootstrap wiring --------------------------------------------------------
 # The runner runs behind an egress allowlist proxy. Without the collector in
 # no_proxy, every OTLP POST goes to squid, which denies it — telemetry that is
@@ -284,8 +401,15 @@ if [ -f "$SESSION_WF" ]; then
 
   # Prompts, responses, tool inputs and raw bodies stay redacted: sessions read
   # untrusted issue text and hold minted App tokens.
-  for leak in OTEL_LOG_USER_PROMPTS OTEL_LOG_ASSISTANT_RESPONSES OTEL_LOG_TOOL_CONTENT OTEL_LOG_RAW_API_BODIES; do
-    if grep -q "$leak *[:=] *[\"']\?1" "$SESSION_WF"; then
+  # All FIVE content flags, not four: OTEL_LOG_TOOL_DETAILS ships tool-call
+  # arguments, which for this factory means file paths, commands, and whatever
+  # a station read out of an untrusted issue body. Leaving it out of the loop
+  # while the PR, the ADR and the workflow comment all claimed it was covered
+  # is how a gate passes green over the hole it was written to close. Any
+  # truthy spelling counts — `true` and `yes` enable these just as `1` does.
+  for leak in OTEL_LOG_USER_PROMPTS OTEL_LOG_ASSISTANT_RESPONSES OTEL_LOG_TOOL_DETAILS \
+              OTEL_LOG_TOOL_CONTENT OTEL_LOG_RAW_API_BODIES; do
+    if grep -Eq "$leak *[:=] *[\"']?(1|true|yes|on)" "$SESSION_WF"; then
       bad "$SESSION_WF turns on $leak — session content would be shipped to Langfuse"
     else
       ok "$SESSION_WF leaves $leak off (content stays redacted)"
@@ -295,5 +419,10 @@ else
   bad "$SESSION_WF is missing"
 fi
 
-printf '\nobservability contract: %d passed, %d failed\n' "$PASS" "$FAIL"
+if [ "$HAVE_YAML" != true ]; then
+  printf '\nNOTE: python3 has no PyYAML — %d compose/collector shape assertions deferred to CI.\n' "$SKIPPED"
+  printf '      pip install pyyaml to run them locally.\n'
+fi
+printf '\nobservability contract: %d passed, %d failed%s\n' "$PASS" "$FAIL" \
+  "$([ "$SKIPPED" -gt 0 ] && printf ', %d deferred' "$SKIPPED")"
 [ "$FAIL" -eq 0 ]

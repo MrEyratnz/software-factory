@@ -742,19 +742,31 @@ else
   fi
 fi
 
+# runner_reaches_collector — can the RUNNING runner container actually deliver
+# OTLP to the collector? A container created before the collector existed
+# carries a no_proxy without it, so every POST goes to the egress-allowlist
+# proxy, which denies it. Container env is immutable, so this cannot be
+# repaired in place — but it can be DETECTED, and a detected-broken path must
+# not be advertised as a working one.
+#
+# Returns 0 (reachable) when there is no such container, or it has no proxy
+# configuration at all; non-zero only for the specific broken shape.
+runner_reaches_collector() {
+  local env_out
+  env_out="$(docker inspect dsf-runner-icculus --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)" || return 0
+  printf '%s\n' "$env_out" | grep -q '^no_proxy=' || return 0
+  printf '%s\n' "$env_out" | grep -q '^no_proxy=.*factory-collector'
+}
+
+if [ "$OTEL_OK" = true ] && ! runner_reaches_collector; then
+  warn "the running runner container predates the collector — its no_proxy would send OTLP through the egress proxy"
+  warn "leaving FACTORY_OTEL_ENDPOINT unset: the stack is healthy but this runner cannot reach it"
+  warn "recreate the runner to fix: docker rm -f dsf-runner-icculus && bash bootstrap.sh"
+  OTEL_OK=false
+fi
+
 if [ "$OTEL_OK" = true ]; then
   gh variable set FACTORY_OTEL_ENDPOINT --repo "$REPO" --body "http://factory-collector:4318" >&2
-  # A runner container created before the collector existed carries a no_proxy
-  # without it, so every OTLP POST goes to the egress-allowlist proxy, which
-  # denies it: telemetry configured, enabled, and thrown away. The container's
-  # env is fixed at creation, so the only fix is to recreate it.
-  if docker inspect dsf-runner-icculus --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
-       grep -q '^no_proxy=' &&
-     ! docker inspect dsf-runner-icculus --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
-       grep -q '^no_proxy=.*factory-collector'; then
-    warn "the running runner container predates the collector — its no_proxy would send OTLP through the egress proxy"
-    warn "recreate it to fix: docker rm -f dsf-runner-icculus && bash bootstrap.sh"
-  fi
 else
   # Leave no stale pointer behind: a previously-set endpoint would keep every
   # station exporting into a collector that is no longer there.

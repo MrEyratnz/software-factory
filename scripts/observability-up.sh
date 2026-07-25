@@ -9,8 +9,15 @@
 # empty and the collector would look healthy. If you truly want fresh
 # credentials, delete the env file and the langfuse_* volumes together.
 #
-# Usage:  scripts/observability-up.sh            # up + wait for health
-#         FACTORY_OBS_WAIT=0 scripts/…           # up, don't block on health
+# Usage:  scripts/observability-up.sh            # up + prove the stack works
+#         FACTORY_OBS_WAIT=0 scripts/…           # up only — proves NOTHING, so
+#                                                # it exits non-zero; never use
+#                                                # it from bootstrap.sh
+#         FACTORY_OBS_WAIT_TRIES=n scripts/…     # health attempts, 5s apart
+#
+# Exit code is the contract: 0 means "langfuse is healthy AND accepted the
+# collector's credentials", and nothing weaker. bootstrap.sh publishes the
+# FACTORY_OTEL_ENDPOINT repo variable on that basis alone.
 #
 # Progress goes to stderr; stdout prints only the endpoint the runner dials.
 set -euo pipefail
@@ -99,14 +106,23 @@ docker network inspect factory-net >/dev/null 2>&1 || {
 log "starting the observability stack (collector + langfuse)"
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d >&2
 
-# --- health ------------------------------------------------------------------
+# --- health + proof ----------------------------------------------------------
 # Langfuse runs its clickhouse + postgres migrations on first boot; a couple of
 # minutes cold is normal, and the collector's queue holds anything emitted
 # meanwhile. Only report success on a real 200 from the health endpoint.
+#
+# THE EXIT CODE IS THE CONTRACT. bootstrap.sh (§8b) gates the
+# FACTORY_OTEL_ENDPOINT repo variable on nothing but this script's exit status,
+# so every way of failing to prove the stack — never healthy, credentials
+# rejected, endpoint unreachable — has to reach `exit 1`. A branch that only
+# warns publishes the endpoint anyway and wires every station to a pipeline that
+# silently drops its traces: the precise inversion this design exists to
+# prevent. Pinned by the exit-code drive in tests/observability.contract.test.sh.
+PROVEN=false
 if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
   log "waiting for langfuse to answer on 127.0.0.1:3000 (first boot runs migrations)"
   healthy=false
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "${FACTORY_OBS_WAIT_TRIES:-60}"); do
     if curl -fsS --noproxy '*' --max-time 5 http://127.0.0.1:3000/api/public/health >/dev/null 2>&1; then
       healthy=true
       break
@@ -124,9 +140,11 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
     # level, and the UI simply stays empty. So prove the credential pair against
     # the same OTLP endpoint the collector posts to, before declaring success.
     #
-    # Only 401/403 is a verdict here: any other status (including a 400 for the
-    # deliberately-empty payload below) means Langfuse read the credentials and
-    # got as far as parsing the body, which is all this check is asking.
+    # Proof is 2xx (accepted) or 400 (read the credentials, rejected the
+    # deliberately-empty payload) — and NOTHING else. Treating every non-401 as
+    # success is the same mistake as not checking at all: a 404 means the OTLP
+    # path moved out from under the collector's exporter, and a 5xx means the
+    # backend is wedged. Both drop traces exactly as silently as a bad key.
     auth="$(sed -n 's/^LANGFUSE_OTLP_AUTHORIZATION=//p' "$ENV_FILE" | head -1)"
     # `|| code=000` on the ASSIGNMENT, not inside the substitution: a curl that
     # cannot connect writes its own "000" from -w AND exits non-zero, so an
@@ -137,23 +155,46 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
       -H "Authorization: $auth" -H 'Content-Type: application/json' \
       -d '{"resourceSpans":[]}' 2>/dev/null)" || code=000
     case "$code" in
+      2??|400)
+        log "langfuse accepted the collector's credentials (HTTP $code) — the trace path is live"
+        PROVEN=true
+        ;;
       401|403)
-        warn "langfuse REJECTED the collector's credentials (HTTP $code) — traces will be dropped silently"
+        warn "langfuse REJECTED the collector's credentials (HTTP $code) — traces would be dropped silently"
         warn "the project keys in $ENV_FILE do not match the project langfuse initialised."
         warn "that happens when the env file was regenerated against existing langfuse_* volumes."
         warn "fix: docker compose -f $COMPOSE_FILE down -v, delete $ENV_FILE, and re-run this script"
         ;;
+      404)
+        warn "langfuse has no OTLP endpoint at /api/public/otel/v1/traces (HTTP 404)"
+        warn "the collector's exporter posts exactly there — check the langfuse image version in $COMPOSE_FILE"
+        ;;
+      5??)
+        warn "langfuse returned HTTP $code from its OTLP endpoint — the backend is not serving ingestion"
+        warn "check 'docker compose -f $COMPOSE_FILE logs langfuse-web langfuse-worker clickhouse'"
+        ;;
       000)
-        warn "could not reach the langfuse OTLP endpoint to verify credentials — check by hand before trusting the UI"
+        warn "could not reach the langfuse OTLP endpoint — the credentials are UNVERIFIED"
+        warn "unverified is not the same as working: refusing to report a stack we could not prove"
         ;;
       *)
-        log "langfuse accepted the collector's credentials (HTTP $code) — the trace path is live"
+        warn "unexpected HTTP $code from the langfuse OTLP endpoint — treating the trace path as unproven"
         ;;
     esac
   else
-    warn "langfuse did not become healthy in 5 minutes — 'docker compose -f $COMPOSE_FILE logs langfuse-web'"
+    warn "langfuse did not become healthy — 'docker compose -f $COMPOSE_FILE logs langfuse-web'"
     warn "the collector is still up and queuing; re-run this script once langfuse recovers"
   fi
+else
+  # An explicit "don't wait" means nothing was proven. The stack may be fine —
+  # this script just cannot say so, and saying so is its entire job here.
+  warn "FACTORY_OBS_WAIT=0 — skipped the health wait and the credential proof; the stack is UNVERIFIED"
+fi
+
+if [ "$PROVEN" != true ]; then
+  warn "the observability stack is NOT proven — not reporting an endpoint"
+  warn "sessions will run without telemetry until this script exits 0"
+  exit 1
 fi
 
 log "collector: OTLP/HTTP on 127.0.0.1:4318 (host) and $RUNNER_ENDPOINT (factory-net)"

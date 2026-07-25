@@ -163,10 +163,18 @@ jobs:
           # fixed strings from this repo's own workflows today, but they are
           # `inputs.*` on a reusable workflow, and the first caller to thread a
           # less-trusted value through one would inherit the gap.
-          wf="${GITHUB_WORKFLOW//[ ,=]/_}"
-          st="${SESSION_STATION//[ ,=]/_}"
-          md="${SESSION_MODEL//[ ,=]/_}"
-          ef="${SESSION_EFFORT//[ ,=]/_}"
+          #
+          # NEWLINES ARE IN THE CLASS FOR A DIFFERENT REASON, and it is the
+          # serious one: these values are echoed into $GITHUB_ENV, which is
+          # line-oriented. An embedded newline stops being a corrupt attribute
+          # and becomes an injected environment variable in the next step — the
+          # one holding the minted App token and the Claude credential. Stripping
+          # only the delimiters would close the cosmetic half of the hole.
+          strip=$'\n\r ,='
+          wf="${GITHUB_WORKFLOW//[$strip]/_}"
+          st="${SESSION_STATION//[$strip]/_}"
+          md="${SESSION_MODEL//[$strip]/_}"
+          ef="${SESSION_EFFORT//[$strip]/_}"
           {
             # The factory's OWN gate metrics (factory_gate_*, factory_commits_*)
             # ride the same collector. Env, not .factory/config.json: that file

@@ -73,11 +73,13 @@ dropped when the firewall step is applied). No interactive surface, no
 long-lived host state, no Docker socket exposed to agent code.
 
 The observability stack on that same host (ADR 0004) keeps that boundary: the
-OTEL collector is the only container the runner's network can reach — a
-write-only telemetry intake — while Langfuse and its datastores sit on a
-separate network, so a prompt-injected session cannot read or rewrite the
-traces of every session before it. Session content (prompts, responses, tool
-inputs, raw API bodies) is never captured;
+OTEL collector is the only container the runner's network can reach, while
+Langfuse and its datastores sit on a separate network, so a prompt-injected
+session cannot read or rewrite the traces of every session before it. The
+collector's own OTLP intake and Prometheus scrape endpoint are unauthenticated
+on that network and the scrape endpoint is readable — aggregate counters only,
+no secrets, no trace content. Session content (prompts, responses, tool details,
+tool inputs, raw API bodies) is never captured;
 `tests/observability.contract.test.sh` fails if that changes.
 
 ## Supply chain & scanning

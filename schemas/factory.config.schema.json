@@ -65,7 +65,7 @@
       "description": "optional, opt-in push-based OTEL metrics. Off by default: hooks never fork or touch the network unless enabled is exactly true. The FACTORY_OTEL_ENDPOINT environment variable overrides both keys below (it is how CI opts in without writing to this hook-managed trust root).",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": false, "description": "turn on the emit calls in the hooks; no-op when false/absent" },
+        "enabled": { "type": "boolean", "default": false, "description": "turn on the emit calls in the hooks; no-op when false/absent UNLESS the FACTORY_OTEL_ENDPOINT environment variable is set, which overrides even an explicit false" },
         "endpoint": { "type": "string", "default": "http://localhost:4318", "description": "OTLP/HTTP collector base URL; hooks POST to <endpoint>/v1/metrics" },
         "exporter": { "type": "string", "enum": ["otlphttp"], "default": "otlphttp", "description": "only OTLP/HTTP JSON is supported (zero-dep, hand-built payloads)" }
       }

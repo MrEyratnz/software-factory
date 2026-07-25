@@ -18,7 +18,10 @@
 #
 # Two networks, and the split is the security boundary:
 #   * factory-net (external, created by bootstrap.sh) carries the AI-driven
-#     runner. Only the collector is on it — a write-only OTLP intake.
+#     runner. Only the collector is on it: an OTLP intake on :4318 plus its
+#     Prometheus scrape endpoint on :8889. Note that the scrape endpoint IS
+#     readable from that network — it serves aggregate factory counters, no
+#     secrets and no trace content — so this is an intake, not a write-only one.
 #   * factory-obs carries Langfuse and its datastores. A prompt-injected session
 #     inside the runner has no route to postgres, clickhouse, redis or minio,
 #     which between them hold every trace the factory has ever recorded.

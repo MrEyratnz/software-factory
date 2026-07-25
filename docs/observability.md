@@ -23,9 +23,15 @@ an OpenTelemetry collector on that same host, fronting a self-hosted
 
 Two networks, and the split is the point. `factory-net` carries the AI-driven
 runner and is egress-filtered by the squid allowlist (bootstrap.sh §8). Only the
-collector sits on it — a write-only intake. Langfuse and its datastores live on
-`factory-obs`, which the runner has no route to, so a prompt-injected session
-cannot read or rewrite the traces of every session before it.
+collector sits on it. Langfuse and its datastores live on `factory-obs`, which
+the runner has no route to, so a prompt-injected session cannot read or rewrite
+the traces of every session before it.
+
+What a session on `factory-net` *can* do is post OTLP to `:4318` and read the
+collector's Prometheus endpoint on `:8889` — neither is authenticated. The
+scrape endpoint serves aggregate factory counters, no secrets and no trace
+content, so this is a boundary against reading the trace store, not a claim
+that the collector is write-only. Tightening it is tracked as tech-debt.
 
 ## Stand it up
 
@@ -59,14 +65,20 @@ reads. If the stack is down, the variable is deleted rather than left stale:
 the failure mode is "no telemetry", never "telemetry posted into a collector
 that isn't there".
 
-Skip the whole thing with `FACTORY_OTEL_SKIP=true bootstrap.sh`.
+Skip the whole thing with `FACTORY_OTEL_SKIP=true bash bootstrap.sh`.
+
+The script's **exit code is the contract**: `0` means Langfuse is healthy *and*
+accepted the collector's credentials, and nothing weaker. `bootstrap.sh` gates
+the repo variable on that alone, so every unproven outcome — never healthy,
+credentials rejected, endpoint unreachable — exits non-zero and leaves the
+variable unset.
 
 ## Look at it
 
 Nothing is published beyond loopback. Tunnel in:
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 icculus
+ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -L 8889:127.0.0.1:8889 icculus
 ```
 
 * **Langfuse UI** — <http://127.0.0.1:3000>. Sign in with the
@@ -75,7 +87,8 @@ ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 icculus
   model, effort, workflow and run id (`OTEL_RESOURCE_ATTRIBUTES`), so "which
   station burns the most tokens" and "where did the conductor stall" are one
   filter each.
-* **Metrics** — `curl 127.0.0.1:8889/metrics`. Both families land here: Claude
+* **Metrics** — `curl 127.0.0.1:8889/metrics` (forwarded by the tunnel above).
+  Both families land here: Claude
   Code's `claude_code.*` (cost, tokens, lines of code, active time) and the
   factory's own `factory_*` gate counters from `hooks/lib/common.sh`.
 * **Logs** — `docker compose -f docker-compose.observability.yml logs otel-collector`.
