@@ -109,6 +109,14 @@ JSON is hand-built and POSTed with node's built-in `http`/`https`).
 docker compose --profile otel -f docker-compose.otel.yml up -d   # local collector, logs to stdout
 ```
 
+…or ambiently, without committing anything — `FACTORY_OTEL_ENDPOINT` overrides
+both keys above, and is how CI opts in without writing to `.factory/config.json`
+(a hook-managed trust root):
+
+```
+FACTORY_OTEL_ENDPOINT=http://localhost:4318 claude
+```
+
 **What's emitted** (all `sum` counters unless noted `gauge`):
 
 | Metric | Emitted by | Attributes |
@@ -121,16 +129,32 @@ docker compose --profile otel -f docker-compose.otel.yml up -d   # local collect
 | `factory_roadmap_percent_complete` (gauge) | `loop-guard` | — |
 | `factory_techdebt_missing_total` (gauge) | `debt-reconcile` | — |
 
-**Off by default, and safe when on.** With `otel.enabled` unset/false (the
-default), every gating hook returns before forking anything network-facing —
-no measurable latency, no network touch. When enabled, the emit runs fully
-backgrounded and detached from the hook (`otel-emit.mjs &` + `disown`), with a
-~250ms client-side timeout that swallows every failure (DNS, connection
-refused, timeout) and always exits 0 — a dead or missing collector is
-invisible to the commit/release path and can never change a hook's decision.
-Collector-only, metrics-only MVP: no traces/spans, no Prometheus/Grafana, no
-ledger-scraping sidecar, no per-agent token accounting (candidates for a later
-phase).
+**Off by default, and safe when on.** With `FACTORY_OTEL_ENDPOINT` unset and
+`otel.enabled` unset/false (the default), every gating hook returns before
+forking anything network-facing — no measurable latency, no network touch. When
+enabled, the emit runs fully backgrounded and detached from the hook
+(`otel-emit.mjs &` + `disown`), with a ~250ms client-side timeout that swallows
+every failure (DNS, connection refused, timeout) and always exits 0 — a dead or
+missing collector is invisible to the commit/release path and can never change a
+hook's decision.
+
+### The full stack on the runner host
+
+The collector above is metrics-only and backend-free, which is what you want
+locally. On `icculus` — the host carrying the self-hosted runner — the factory
+runs a real one: an OTEL collector fronting a **self-hosted Langfuse**, so every
+station session shows up as a trace with its model, effort, token counts, cost
+and tool decisions, alongside the `factory_*` gate counters on a Prometheus
+endpoint.
+
+```
+scripts/observability-up.sh     # what bootstrap.sh §8b runs for you
+```
+
+Langfuse and its datastores sit on a network the AI-driven runner cannot reach;
+nothing is published beyond loopback; prompts, responses and tool inputs stay
+redacted. See **[docs/observability.md](docs/observability.md)** for the
+topology, the tunnel, and the operating notes.
 
 ## Develop
 

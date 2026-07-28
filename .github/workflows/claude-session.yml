@@ -134,6 +134,71 @@ jobs:
             exit 1
           fi
 
+      # Session telemetry → the icculus collector → Langfuse. Gated twice, and
+      # both gates matter: the endpoint is a factory-net DNS name that only the
+      # self-hosted runner can resolve, and bootstrap.sh sets the variable only
+      # against a collector it proved healthy. A hosted runner (or a host with
+      # no stack) therefore exports nothing rather than paying retry timeouts on
+      # every API call for telemetry that can never arrive.
+      #
+      # What is deliberately NOT set: OTEL_LOG_USER_PROMPTS,
+      # OTEL_LOG_ASSISTANT_RESPONSES, OTEL_LOG_TOOL_DETAILS,
+      # OTEL_LOG_TOOL_CONTENT, OTEL_LOG_RAW_API_BODIES. Stations read untrusted
+      # issue/PR text and hold minted App tokens; the default redaction ships
+      # shape (models, tokens, cost, duration, tool names, decisions) without
+      # shipping content. Turning any of them on is a security decision, not a
+      # verbosity one — see tests/observability.contract.test.sh.
+      - name: point session telemetry at the factory collector
+        if: inputs.runner == 'icculus' && vars.FACTORY_OTEL_ENDPOINT != ''
+        env:
+          OTEL_ENDPOINT: ${{ vars.FACTORY_OTEL_ENDPOINT }}
+          SESSION_STATION: ${{ inputs.station }}
+          SESSION_MODEL: ${{ inputs.model }}
+          SESSION_EFFORT: ${{ inputs.effort }}
+        run: |
+          # OTEL_RESOURCE_ATTRIBUTES is comma/equals delimited, so ANY value
+          # carrying one of those splits a single attribute into two and
+          # corrupts every attribute after it. Sanitize all of them, not just
+          # the obviously free-text workflow name: station/model/effort are
+          # fixed strings from this repo's own workflows today, but they are
+          # `inputs.*` on a reusable workflow, and the first caller to thread a
+          # less-trusted value through one would inherit the gap.
+          #
+          # NEWLINES ARE IN THE CLASS FOR A DIFFERENT REASON, and it is the
+          # serious one: these values are echoed into $GITHUB_ENV, which is
+          # line-oriented. An embedded newline stops being a corrupt attribute
+          # and becomes an injected environment variable in the next step — the
+          # one holding the minted App token and the Claude credential. Stripping
+          # only the delimiters would close the cosmetic half of the hole.
+          strip=$'\n\r ,='
+          wf="${GITHUB_WORKFLOW//[$strip]/_}"
+          st="${SESSION_STATION//[$strip]/_}"
+          md="${SESSION_MODEL//[$strip]/_}"
+          ef="${SESSION_EFFORT//[$strip]/_}"
+          {
+            # The factory's OWN gate metrics (factory_gate_*, factory_commits_*)
+            # ride the same collector. Env, not .factory/config.json: that file
+            # is a hook-managed trust root and editing it here would dirty the
+            # tree the green receipt is bound to.
+            echo "FACTORY_OTEL_ENDPOINT=$OTEL_ENDPOINT"
+            echo "CLAUDE_CODE_ENABLE_TELEMETRY=1"
+            echo "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1"
+            echo "OTEL_TRACES_EXPORTER=otlp"
+            echo "OTEL_METRICS_EXPORTER=otlp"
+            echo "OTEL_LOGS_EXPORTER=otlp"
+            # http/protobuf, not the gRPC default: the collector exposes only
+            # :4318, the same port the hooks' otel_emit already posts to.
+            echo "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"
+            echo "OTEL_EXPORTER_OTLP_ENDPOINT=$OTEL_ENDPOINT"
+            echo "OTEL_SERVICE_NAME=dark-software-factory"
+            echo "OTEL_RESOURCE_ATTRIBUTES=factory.station=$st,factory.model=$md,factory.effort=$ef,factory.repo=$GITHUB_REPOSITORY,factory.run_id=$GITHUB_RUN_ID,factory.workflow=$wf"
+            # A station can finish inside one export interval; flush often
+            # enough that a short run is not invisible.
+            echo "OTEL_METRIC_EXPORT_INTERVAL=10000"
+            echo "OTEL_LOGS_EXPORT_INTERVAL=5000"
+          } >> "$GITHUB_ENV"
+          echo "telemetry → $OTEL_ENDPOINT (station=$SESSION_STATION)"
+
       - name: run station session
         shell: bash   # pipefail: without it `tee` masks the CLI's exit status
         env:

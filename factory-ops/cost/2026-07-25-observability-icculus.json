@@ -1,0 +1,16 @@
+{
+  "date": "2026-07-25",
+  "station": "implementation",
+  "agent": "interactive-session",
+  "model": "opus",
+  "effort": "high",
+  "ultracode": false,
+  "outcome": "green",
+  "work": "observability on icculus: OTEL collector + self-hosted Langfuse, bootstrap wiring, session telemetry, contract tests, ADR 0004",
+  "tokens_in": null,
+  "tokens_out": null,
+  "duration_ms": null,
+  "cost_usd": null,
+  "notes": "Token/cost fields are null by necessity: an interactive session has no result JSON to read them from (claude-session.yml's 'record cost summary' step is what fills these for workflow stations). This entry is the routing/outcome record only. Once FACTORY_OTEL_ENDPOINT is live on icculus, claude_code.cost.usage and claude_code.token.usage make this file redundant for workflow stations.",
+  "routing_check": "ROUTING.md puts implementation at sonnet/high; this ran at opus/high because it spans bootstrap, workflow, hook and security-boundary changes at once — closer to the 'gnarly implementation epic' row. Ultracode off (no fan-out needed)."
+}

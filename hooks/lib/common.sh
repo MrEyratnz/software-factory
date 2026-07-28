@@ -491,21 +491,34 @@ staged_files() { ( cd "${1:-$PROJECT_DIR}" 2>/dev/null && git diff --cached --na
 
 # --- otel (optional, opt-in, push-based metrics) ----------------------------
 # otel_emit <name> <type:sum|gauge> <value> [attrsJson] — fire-and-forget push
-# of ONE metric datapoint to an OTEL collector. OFF BY DEFAULT: the very first
-# thing this does is check otel.enabled, and it returns immediately (no fork,
-# no network) unless that is exactly "true" — so a repo that never sets it
-# pays no cost beyond the one config read every hook already does for its own
+# of ONE metric datapoint to an OTEL collector. OFF BY DEFAULT: with neither
+# FACTORY_OTEL_ENDPOINT in the environment nor otel.enabled in the config, this
+# returns immediately (no fork, no network) — so a repo that never opts in pays
+# no cost beyond the one config read every hook already does for its own
 # settings. When enabled, the actual POST happens in otel-emit.mjs, run fully
 # backgrounded and disowned with its own hard client-side timeout, so this
 # call can never add latency to — or change the exit code of — the gate that
 # invoked it. Callers must invoke this BEFORE their allow/deny so the emit is
 # never skipped by an early exit, and must never let its (irrelevant) return
 # value influence $?.
+#
+# Two ways in, and the environment wins:
+#   * FACTORY_OTEL_ENDPOINT — set by whoever runs the session (the self-hosted
+#     runner exports it from the FACTORY_OTEL_ENDPOINT repo variable). CI has no
+#     other way to opt in: .factory/config.json is a hook-managed trust root, so
+#     a workflow step that edited it to turn telemetry on would dirty the tree
+#     and trip the very gates it is trying to instrument. Being an override, it
+#     also beats an explicit otel.enabled=false — the operator running the
+#     process is the one who decided.
+#   * otel.enabled / otel.endpoint — the committed, per-repo opt-in.
 otel_emit() {
-  [ "$(config_get otel.enabled false)" = "true" ] || return 0
+  local endpoint="${FACTORY_OTEL_ENDPOINT:-}"
+  if [ -z "$endpoint" ]; then
+    [ "$(config_get otel.enabled false)" = "true" ] || return 0
+    endpoint="$(config_get otel.endpoint 'http://localhost:4318')"
+  fi
   command -v node >/dev/null 2>&1 || return 0
   local name="$1" type="$2" value="$3" attrs="${4:-{}}"
-  local endpoint; endpoint="$(config_get otel.endpoint 'http://localhost:4318')"
   ( OTEL_ENDPOINT="$endpoint" node "$PLUGIN_ROOT/hooks/lib/otel-emit.mjs" "$name" "$type" "$value" "$attrs" >/dev/null 2>&1 & disown ) 2>/dev/null
   return 0
 }

@@ -1,0 +1,80 @@
+# Collector config for the icculus observability stack
+# (docker-compose.observability.yml). Three signals, three destinations —
+# because Langfuse ingests exactly one of them:
+#
+#   traces  → Langfuse (OTLP/HTTP; the only signal its OTel endpoint accepts)
+#   metrics → a Prometheus scrape endpoint on :8889 (the factory_* hook counters
+#             and Claude Code's claude_code.* cost/token meters)
+#   logs    → stdout (`docker compose logs otel-collector`)
+#
+# Kept deliberately separate from otel-collector-config.yaml, which stays the
+# zero-backend local-dev collector documented in the README. A single config
+# with a Langfuse exporter wired in would fill dev logs with export retries
+# against a Langfuse that is not running.
+receivers:
+  otlp:
+    protocols:
+      http:
+        # Same port the hooks' otel_emit and Claude Code both POST to.
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bounded before batching: a runner that suddenly emits a session's worth of
+  # events must not OOM the collector and take the intake down with it.
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  # Every signal is tagged with the host it came from, so a second emitter
+  # (a laptop, a hosted runner) is distinguishable from the icculus runner.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: icculus
+        action: upsert
+
+exporters:
+  otlphttp/langfuse:
+    # http://langfuse-web:3000/api/public/otel — an in-network hop on
+    # factory-obs, so the Basic credentials never cross a host boundary.
+    endpoint: ${env:LANGFUSE_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:LANGFUSE_OTLP_AUTHORIZATION}
+      x-langfuse-ingestion-version: "4"
+    # Langfuse restarts (upgrades, migrations) must not lose the traces a
+    # station emitted while it was down.
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 10m
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/langfuse]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]

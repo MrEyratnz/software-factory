@@ -1,0 +1,220 @@
+# The factory's observability stack, as it runs on `icculus` — the host that
+# also carries the self-hosted GitHub Actions runner.
+#
+#   claude session (inside dsf-runner-icculus, on factory-net)
+#        │  OTLP/HTTP  →  http://factory-collector:4318
+#        ▼
+#   otel-collector  ──── traces ───→  langfuse-web  (/api/public/otel)
+#        │                                │
+#        ├─ metrics →  prometheus :8889   └─ postgres · clickhouse · redis · minio
+#        └─ logs    →  debug (stdout)          (factory-obs only — see below)
+#
+# Bring it up with `scripts/observability-up.sh`, never `docker compose up` by
+# hand: every credential below is a REQUIRED variable with no inline default, so
+# compose refuses to start without the generated env file. That is deliberate.
+# Upstream's compose ships `${SALT:-mysalt}` / `${POSTGRES_PASSWORD:-postgres}`,
+# which starts a stack that looks configured while running on published secrets
+# and never says a word about it.
+#
+# Two networks, and the split is the security boundary:
+#   * factory-net (external, created by bootstrap.sh) carries the AI-driven
+#     runner. Only the collector is on it: an OTLP intake on :4318 plus its
+#     Prometheus scrape endpoint on :8889. Note that the scrape endpoint IS
+#     readable from that network — it serves aggregate factory counters, no
+#     secrets and no trace content — so this is an intake, not a write-only one.
+#   * factory-obs carries Langfuse and its datastores. A prompt-injected session
+#     inside the runner has no route to postgres, clickhouse, redis or minio,
+#     which between them hold every trace the factory has ever recorded.
+#
+# Nothing here is published beyond loopback. Reach the UI over an SSH tunnel:
+#   ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -L 8889:127.0.0.1:8889 icculus
+name: factory-observability
+
+networks:
+  # Created and firewalled by bootstrap.sh (§8). Declared external so this file
+  # can never quietly recreate it with different (unfiltered) settings.
+  factory-net:
+    external: true
+  factory-obs:
+    driver: bridge
+
+volumes:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:
+
+services:
+  # --- the intake ------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0
+    container_name: factory-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-langfuse.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      # Consumed by the config's `${env:...}` references. Basic auth over an
+      # in-network hop; the keys never leave factory-obs.
+      LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:-http://langfuse-web:3000/api/public/otel}
+      LANGFUSE_OTLP_AUTHORIZATION: ${LANGFUSE_OTLP_AUTHORIZATION:?set in observability.env}
+    ports:
+      # OTLP/HTTP for host-side emitters (the hooks' otel_emit, pointed at
+      # http://localhost:4318). Runner traffic arrives over factory-net instead
+      # and never touches a published port.
+      - "127.0.0.1:4318:4318"
+      # Prometheus scrape endpoint for the factory_* hook metrics.
+      - "127.0.0.1:8889:8889"
+    networks:
+      factory-net:
+        aliases: [factory-collector]
+      factory-obs:
+    depends_on:
+      langfuse-web:
+        condition: service_started
+
+  # --- langfuse --------------------------------------------------------------
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3.224.1
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [factory-obs]
+    environment: &langfuse-env
+      NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set in observability.env}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set in observability.env}@postgres:5432/postgres
+      SALT: ${SALT:?set in observability.env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set in observability.env}
+      # Self-hosted Langfuse posts usage telemetry to langfuse.com by default.
+      # The factory's traces carry station prompts; it opts out.
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?set in observability.env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set in observability.env}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_AUTH:?set in observability.env}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set in observability.env}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set in observability.env}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      # Presigned media URLs are resolved by the BROWSER, so this is the
+      # loopback address you tunnel to — not the in-network one above.
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_MEDIA_URL:-http://localhost:9090}
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set in observability.env}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set in observability.env}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      # Headless init: the org, project and API keys are generated once by
+      # observability-up.sh and handed to Langfuse here, so the collector can be
+      # wired without a human ever clicking through the UI.
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-dark-software-factory}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Dark Software Factory}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-factory}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-factory}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:?set in observability.env}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?set in observability.env}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-factory@localhost}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-factory}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?set in observability.env}
+
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3.224.1
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    networks: [factory-obs]
+    environment: *langfuse-env
+
+  # --- datastores (factory-obs only, no host ports) ---------------------------
+  postgres:
+    image: docker.io/postgres:17.10
+    restart: unless-stopped
+    networks: [factory-obs]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in observability.env}
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:25.12.11
+    restart: unless-stopped
+    user: "101:101"
+    networks: [factory-obs]
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?set in observability.env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set in observability.env}
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  redis:
+    image: docker.io/redis:7.4.9-alpine
+    restart: unless-stopped
+    networks: [factory-obs]
+    command: >
+      --requirepass ${REDIS_AUTH:?set in observability.env}
+      --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  minio:
+    image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    networks: [factory-obs]
+    entrypoint: sh
+    # Create the bucket Langfuse expects before the server takes traffic.
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in observability.env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in observability.env}
+    ports:
+      # Only so the browser can follow presigned media URLs from the UI tunnel.
+      - "127.0.0.1:9090:9000"
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
