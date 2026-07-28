@@ -31,7 +31,8 @@ What a session on `factory-net` *can* do is post OTLP to `:4318` and read the
 collector's Prometheus endpoint on `:8889` — neither is authenticated. The
 scrape endpoint serves aggregate factory counters, no secrets and no trace
 content, so this is a boundary against reading the trace store, not a claim
-that the collector is write-only. Tightening it is tracked as tech-debt.
+that the collector is write-only. Tightening it is tracked as tech-debt in #330
+and #347.
 
 ## Stand it up
 
@@ -91,7 +92,9 @@ ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -L 8889:127.0.0.1:8889 iccu
   Both families land here: Claude
   Code's `claude_code.*` (cost, tokens, lines of code, active time) and the
   factory's own `factory_*` gate counters from `hooks/lib/common.sh`.
-* **Logs** — `docker compose -f docker-compose.observability.yml logs otel-collector`.
+* **Logs** — `docker compose --env-file factory-ops/state/.bootstrap-runner/observability.env -f docker-compose.observability.yml logs otel-collector`.
+  The `--env-file` is not optional: compose v2 interpolates the whole config for
+  every subcommand, so a bare `-f … logs` aborts on the first required variable.
 
 ## What is deliberately not collected
 
@@ -158,4 +161,4 @@ running.
 * **`factory-obs` is a normal bridge network**, so the Langfuse containers can
   still reach the internet even though they have no reason to. Tightening that
   (an `internal: true` network, or DOCKER-USER rules like the ones §8 applies to
-  `factory-net`) is tracked as tech-debt.
+  `factory-net`) is tracked as tech-debt in #330.

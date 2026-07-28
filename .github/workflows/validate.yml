@@ -53,6 +53,15 @@ jobs:
       # than surface a day later in a nightly QA bug (#105).
       - name: bootstrap contract (hermetic — the 15 audited bootstrap defects)
         run: bash tests/bootstrap.contract.test.sh
+      # Same rule as the bootstrap contract above, for the same reason. This one
+      # pins a SECURITY boundary: the factory-net/factory-obs split that keeps an
+      # AI-driven session away from the trace store, loopback-only publishing,
+      # credentials with no inline defaults, and the OTEL_LOG_* content flags
+      # staying off. Registered only in run-suite.sh, those invariants would be
+      # checked exclusively by the nightly — so a PR breaking any of them would
+      # pass every required check and surface the next morning (ADR 0004).
+      - name: observability contract (network split, credentials, redaction)
+        run: bash tests/observability.contract.test.sh
       - name: hermetic hook contract tests (synthetic stdin, throwaway repos, gh shim)
         run: |
           git config --global user.email ci@example.com

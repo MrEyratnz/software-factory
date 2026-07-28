@@ -27,7 +27,7 @@
 #     which between them hold every trace the factory has ever recorded.
 #
 # Nothing here is published beyond loopback. Reach the UI over an SSH tunnel:
-#   ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 icculus
+#   ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -L 8889:127.0.0.1:8889 icculus
 name: factory-observability
 
 networks:

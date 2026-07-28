@@ -732,7 +732,11 @@ elif [ ! -x scripts/observability-up.sh ]; then
   warn "scripts/observability-up.sh missing or not executable — skipping the observability stack"
 else
   log "standing up the observability stack (otel collector + langfuse)"
-  if bash scripts/observability-up.sh >/dev/null; then
+  # Capture the endpoint the script PRINTS rather than re-hardcoding it here:
+  # it owns the collector's factory-net name, and two copies of that literal
+  # drift the moment the alias or port changes — publishing a stale endpoint
+  # while the health check still passes.
+  if OTEL_ENDPOINT_OUT="$(bash scripts/observability-up.sh)"; then
     OTEL_OK=true
     log "observability stack is up — langfuse UI on 127.0.0.1:3000 (tunnel to reach it)"
   else
@@ -765,8 +769,16 @@ if [ "$OTEL_OK" = true ] && ! runner_reaches_collector; then
   OTEL_OK=false
 fi
 
+if [ "$OTEL_OK" = true ] && [ -z "${OTEL_ENDPOINT_OUT:-}" ]; then
+  # An exit-0 run that printed nothing means the stdout contract broke. Do not
+  # guess an endpoint to fill the gap — that is how a stale literal gets
+  # published on behalf of a script that never vouched for it.
+  warn "observability-up.sh exited 0 but printed no endpoint — leaving FACTORY_OTEL_ENDPOINT unset"
+  OTEL_OK=false
+fi
+
 if [ "$OTEL_OK" = true ]; then
-  gh variable set FACTORY_OTEL_ENDPOINT --repo "$REPO" --body "http://factory-collector:4318" >&2
+  gh variable set FACTORY_OTEL_ENDPOINT --repo "$REPO" --body "$OTEL_ENDPOINT_OUT" >&2
 else
   # Leave no stale pointer behind: a previously-set endpoint would keep every
   # station exporting into a collector that is no longer there.

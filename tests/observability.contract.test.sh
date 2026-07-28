@@ -251,6 +251,14 @@ grep -q '401' "$UPSCRIPT" \
 grep -q 'api/public/otel' "$UPSCRIPT" \
   && ok "$UPSCRIPT verifies against the OTLP endpoint the collector actually posts to" \
   || bad "$UPSCRIPT does not exercise the Langfuse OTLP endpoint"
+# …and in the collector's wire format. Langfuse accepts OTLP/JSON and protobuf
+# both, so a JSON probe would pass against a backend that rejects the protobuf
+# the exporter actually sends — vouching for a path it never touched.
+if grep -q 'application/x-protobuf' "$UPSCRIPT"; then
+  ok "$UPSCRIPT probes in the same encoding the collector exports (protobuf)"
+else
+  bad "$UPSCRIPT probes in an encoding the collector does not use — it would vouch for an untested path"
+fi
 
 # --- observability-up.sh: the proof must be ACTED ON, not merely computed -----
 # The static greps above prove the check exists. They cannot prove it changes

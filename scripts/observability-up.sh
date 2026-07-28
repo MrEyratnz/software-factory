@@ -104,7 +104,13 @@ docker network inspect factory-net >/dev/null 2>&1 || {
 
 # --- up ----------------------------------------------------------------------
 log "starting the observability stack (collector + langfuse)"
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d >&2
+# Every compose invocation needs --env-file, not just `up`. Compose v2
+# interpolates the whole config for ANY subcommand, so a bare
+# `docker compose -f … logs` aborts on the first `${VAR:?}` — which means the
+# recovery commands printed below have to carry it too, or they fail at exactly
+# the moment an operator reaches for them.
+COMPOSE="docker compose --env-file $ENV_FILE -f $COMPOSE_FILE"
+$COMPOSE up -d >&2
 
 # --- health + proof ----------------------------------------------------------
 # Langfuse runs its clickhouse + postgres migrations on first boot; a couple of
@@ -150,10 +156,21 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
     # cannot connect writes its own "000" from -w AND exits non-zero, so an
     # `|| echo 000` inside would concatenate two codes into a string that
     # matches no case branch and reports a connection failure as success.
+    # Protobuf, matching the collector's otlphttp exporter — NOT the OTLP/JSON
+    # that is easier to write by hand. A JSON probe proves Basic auth and
+    # nothing else: Langfuse accepts both encodings, so a backend that rejected
+    # protobuf would still answer the probe 200 while dropping every real
+    # export. Probing a different wire format than the thing you are vouching
+    # for is how a check passes for a pipeline that does not work.
+    #
+    # An EMPTY body is a valid, zero-span ExportTraceServiceRequest (every
+    # protobuf field is optional), so this needs no encoder and no dependency —
+    # it exercises auth, path, encoding and backend liveness in one request.
     code="$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 10 \
       -X POST http://127.0.0.1:3000/api/public/otel/v1/traces \
-      -H "Authorization: $auth" -H 'Content-Type: application/json' \
-      -d '{"resourceSpans":[]}' 2>/dev/null)" || code=000
+      -H "Authorization: $auth" -H 'Content-Type: application/x-protobuf' \
+      -H 'x-langfuse-ingestion-version: 4' \
+      --data-binary '' 2>/dev/null)" || code=000
     case "$code" in
       2??|400)
         log "langfuse accepted the collector's credentials (HTTP $code) — the trace path is live"
@@ -163,7 +180,7 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
         warn "langfuse REJECTED the collector's credentials (HTTP $code) — traces would be dropped silently"
         warn "the project keys in $ENV_FILE do not match the project langfuse initialised."
         warn "that happens when the env file was regenerated against existing langfuse_* volumes."
-        warn "fix: docker compose -f $COMPOSE_FILE down -v, delete $ENV_FILE, and re-run this script"
+        warn "fix: $COMPOSE down -v, delete $ENV_FILE, and re-run this script"
         ;;
       404)
         warn "langfuse has no OTLP endpoint at /api/public/otel/v1/traces (HTTP 404)"
@@ -171,7 +188,7 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
         ;;
       5??)
         warn "langfuse returned HTTP $code from its OTLP endpoint — the backend is not serving ingestion"
-        warn "check 'docker compose -f $COMPOSE_FILE logs langfuse-web langfuse-worker clickhouse'"
+        warn "check '$COMPOSE logs langfuse-web langfuse-worker clickhouse'"
         ;;
       000)
         warn "could not reach the langfuse OTLP endpoint — the credentials are UNVERIFIED"
@@ -182,7 +199,7 @@ if [ "${FACTORY_OBS_WAIT:-1}" = "1" ]; then
         ;;
     esac
   else
-    warn "langfuse did not become healthy — 'docker compose -f $COMPOSE_FILE logs langfuse-web'"
+    warn "langfuse did not become healthy — '$COMPOSE logs langfuse-web'"
     warn "the collector is still up and queuing; re-run this script once langfuse recovers"
   fi
 else
