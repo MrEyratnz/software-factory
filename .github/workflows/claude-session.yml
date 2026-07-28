@@ -196,6 +196,18 @@ jobs:
             # enough that a short run is not invisible.
             echo "OTEL_METRIC_EXPORT_INTERVAL=10000"
             echo "OTEL_LOGS_EXPORT_INTERVAL=5000"
+            # Redaction, stated rather than inherited. These are already the
+            # CLI's defaults, but a default is a property of the pinned version,
+            # and CLAUDE_CODE_VERSION moves. The claim this stack makes — no
+            # session content reaches the trace store — must not quietly become
+            # false because an upstream default flipped in a version bump.
+            # Setting them to 0 explicitly makes it our guarantee, not the
+            # CLI's, and the contract test asserts these exact lines.
+            echo "OTEL_LOG_USER_PROMPTS=0"
+            echo "OTEL_LOG_ASSISTANT_RESPONSES=0"
+            echo "OTEL_LOG_TOOL_DETAILS=0"
+            echo "OTEL_LOG_TOOL_CONTENT=0"
+            echo "OTEL_LOG_RAW_API_BODIES=0"
           } >> "$GITHUB_ENV"
           echo "telemetry → $OTEL_ENDPOINT (station=$SESSION_STATION)"
 

@@ -326,8 +326,13 @@ FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=403 run_up "up.sh: forbidden credentials → non
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=000 FAKE_OTLP_RC=7 run_up "up.sh: OTLP endpoint unreachable → non-zero exit" 1
 FAKE_HEALTH_RC=1 run_up "up.sh: langfuse never becomes healthy → non-zero exit" 1
 # A 400 on the deliberately-empty payload still proves the credentials were read.
-FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=400 run_up "up.sh: 400 on the empty probe payload is still a passing credential proof" 0
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=207 run_up "up.sh: 2xx is a passing credential proof" 0
+# 400 is NOT proof. The probe body is a valid empty OTLP request, so a healthy
+# Langfuse answers 2xx — and a backend that validates payload before credentials
+# answers 400 for a WRONG KEY. Accepting it would prove the stack on the
+# strength of a rejection. Ambiguous reads as unproven; failing closed costs a
+# re-run, failing open costs every trace.
+FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=400 run_up "up.sh: 400 is ambiguous, so unproven — never a credential proof" 1
 # "Not 401" is not the same as "working". A moved OTLP path or a wedged backend
 # drops traces exactly as silently as a bad key does.
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=404 run_up "up.sh: 404 (OTLP path moved) → non-zero exit, not 'live'" 1
@@ -394,6 +399,18 @@ grep -q 'no_proxy=.*factory-collector' bootstrap.sh \
 grep -q 'FACTORY_OTEL_SKIP' bootstrap.sh \
   && ok "bootstrap has a FACTORY_OTEL_SKIP escape hatch" \
   || bad "bootstrap has no FACTORY_OTEL_SKIP knob"
+
+# Skipping the stack is not evidence about the stack. If the delete branch is
+# reachable without having ATTEMPTED, then `FACTORY_OTEL_SKIP=true bootstrap.sh`
+# — or any re-run from a machine that is not the runner host — tears telemetry
+# down for a stack that is up and healthy, because the operator asked to skip a
+# step. Deletion must be gated on having actually tried and failed.
+grep -q 'OTEL_ATTEMPTED' bootstrap.sh \
+  && ok "bootstrap distinguishes 'skipped' from 'attempted and unproven'" \
+  || bad "bootstrap cannot tell a skipped run from a failed one — a skip would unpublish a healthy endpoint"
+grep -q 'elif \[ "\$OTEL_ATTEMPTED" = true \]; then' bootstrap.sh \
+  && ok "bootstrap deletes FACTORY_OTEL_ENDPOINT only after a real attempt" \
+  || bad "bootstrap's variable-delete branch is not gated on OTEL_ATTEMPTED"
 grep -q 'FACTORY_OTEL_ENDPOINT' bootstrap.sh \
   && ok "bootstrap publishes FACTORY_OTEL_ENDPOINT for the workflows" \
   || bad "bootstrap never sets the FACTORY_OTEL_ENDPOINT repo variable"
@@ -459,8 +476,14 @@ if [ -f "$SESSION_WF" ]; then
               OTEL_LOG_TOOL_CONTENT OTEL_LOG_RAW_API_BODIES; do
     if grep -Eq "$leak *[:=] *[\"']?(1|true|yes|on)" "$SESSION_WF"; then
       bad "$SESSION_WF turns on $leak — session content would be shipped to Langfuse"
+    # Absent is not good enough. Relying on the CLI's default makes the
+    # redaction claim a property of the pinned CLAUDE_CODE_VERSION, which moves;
+    # an upstream default flip would silently start shipping session content
+    # into the trace store with this suite green. Require the explicit 0.
+    elif grep -Eq "$leak=0" "$SESSION_WF"; then
+      ok "$SESSION_WF pins $leak=0 explicitly (not inherited from a CLI default)"
     else
-      ok "$SESSION_WF leaves $leak off (content stays redacted)"
+      bad "$SESSION_WF leaves $leak to the CLI default — the redaction claim must be stated, not inherited"
     fi
   done
 else
