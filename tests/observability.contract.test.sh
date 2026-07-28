@@ -352,6 +352,41 @@ FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=404 run_up "up.sh: 404 (OTLP path moved) → non
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=502 run_up "up.sh: 5xx (backend wedged) → non-zero exit, not 'live'" 1
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=302 run_up "up.sh: an unexpected status is unproven, not success" 1
 
+# A generator that exits 0 with EMPTY output is the failure the blank-secret
+# guard exists for, and it is invisible to a non-empty check on any value that
+# carries a literal prefix: `pk-lf-$(rand_hex 16)` is "pk-lf-" and passes,
+# `Basic $(b64 …)` is "Basic " and passes. Those are the three credentials that
+# gate authentication. Shim openssl to succeed while printing nothing and
+# require the script to refuse to write the file.
+mkdir -p "$OBSTMP/badbin"
+cat > "$OBSTMP/badbin/openssl" <<'FAKE'
+#!/usr/bin/env bash
+# `rand` still works; only base64 returns empty. This is the DISCRIMINATING
+# case: every bare $(rand_hex N) value is fine, so the sibling checks all pass,
+# and the only blank value is the one hiding behind a literal prefix
+# (otlp_auth="Basic $(b64 …)"). A guard that inspects the composed string sees
+# "Basic " — non-empty — and waves through a Langfuse auth header with no
+# credentials in it. Shimming the whole binary to fail would pass for the wrong
+# reason: a sibling would catch it and the gap would stay invisible.
+case "$1" in
+  base64) exit 0 ;;
+  rand)   shift; exec /usr/bin/openssl rand "$@" ;;
+  *)      exec /usr/bin/openssl "$@" ;;
+esac
+FAKE
+chmod +x "$OBSTMP/badbin/openssl"
+rm -rf "$OBSTMP/work/factory-ops"
+( cd "$OBSTMP/work" && PATH="$OBSTMP/badbin:$OBSTMP/bin:$PATH" FACTORY_OBS_WAIT_TRIES=1 \
+    bash scripts/observability-up.sh >/dev/null 2>&1 )
+rc=$?
+if [ "$rc" = 0 ]; then
+  bad "up.sh: a generator returning empty output produced a config instead of failing"
+elif [ -f "$OBSTMP/work/factory-ops/state/.bootstrap-runner/observability.env" ]; then
+  bad "up.sh: wrote an env file despite blank credentials (the guard misses prefixed values)"
+else
+  ok "up.sh: blank credential generation fails before any env file is written"
+fi
+
 # --- bootstrap: a runner that cannot reach the collector must not be advertised
 # The container's env is immutable, so this cannot be repaired in place — but a
 # path known to be broken must not be published as a working one. Driven by

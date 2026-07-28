@@ -65,8 +65,12 @@ else
   # `set -e`, so a broken openssl would write `SALT=` and `ENCRYPTION_KEY=` as
   # empty strings — and the stack would come up, pass the health check, and run
   # on blank secrets while looking perfectly healthy.
-  pk="pk-lf-$(rand_hex 16)"
-  sk="sk-lf-$(rand_hex 16)"
+  # Validate the RAW generator output, never the composed string. `pk-lf-$(…)`
+  # is "pk-lf-" and `Basic $(…)` is "Basic " when the generator returns nothing
+  # — both non-empty, so a check on the composed value waves through exactly the
+  # three credentials that gate authentication. Compose only after checking.
+  pk_raw="$(rand_hex 16)"
+  sk_raw="$(rand_hex 16)"
   pg_pw="$(rand_hex 24)"
   ch_pw="$(rand_hex 24)"
   redis_pw="$(rand_hex 24)"
@@ -75,10 +79,14 @@ else
   enc_key="$(rand_hex 32)"
   nextauth="$(rand_hex 24)"
   user_pw="$(rand_hex 16)"
-  otlp_auth="Basic $(b64 "$pk:$sk")"
-  for _v in pk sk pg_pw ch_pw redis_pw minio_pw salt enc_key nextauth user_pw otlp_auth; do
+  for _v in pk_raw sk_raw pg_pw ch_pw redis_pw minio_pw salt enc_key nextauth user_pw; do
     [ -n "${!_v}" ] || die "credential generation produced an empty $_v — refusing to write blank secrets"
   done
+  pk="pk-lf-$pk_raw"
+  sk="sk-lf-$sk_raw"
+  auth_raw="$(b64 "$pk:$sk")"
+  [ -n "$auth_raw" ] || die "base64 encoding produced empty output — refusing to write a credential-free auth header"
+  otlp_auth="Basic $auth_raw"
   # umask before the first write: the file must never exist, even for an
   # instant, with world-readable permissions.
   ( umask 077
