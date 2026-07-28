@@ -177,19 +177,35 @@ for s in svcs:
         if t in str(svcs[s].get("command","")): fail("%s.command still carries %r" % (s,t))
 '
 
-py "the Langfuse init email is a shape Langfuse will accept" "$PRELUDE"'
+# Langfuse validates this with a schema requiring a dotted domain. A bare host
+# like factory@localhost is rejected and langfuse-web crash-loops on first boot
+# saying only "Invalid environment variables" — a dead stack from a default
+# nobody would think to question.
+#
+# BOTH sources are checked, and the generated one is the one that matters.
+# observability-up.sh writes LANGFUSE_INIT_USER_EMAIL into the env file and
+# invokes compose with --env-file, so the compose `:-` default NEVER fires on
+# the real path. A test reading only the compose default guards dead code:
+# reverting the heredoc line to factory@localhost left this suite fully green
+# while bricking the stack. That was the first version of this assertion.
+py "the Langfuse init email compose default has a dotted domain (direct-compose path)" "$PRELUDE"'
 import re
 env = svcs["langfuse-web"].get("environment", {}) or {}
 raw = str(env.get("LANGFUSE_INIT_USER_EMAIL", ""))
-# Take the compose default, e.g. ${VAR:-factory@factory.invalid}
 default = raw.split(":-", 1)[1].rstrip("}") if ":-" in raw else raw
-# Langfuse validates this with a schema requiring a dotted domain. A bare host
-# like factory@localhost is rejected, and langfuse-web then crash-loops on
-# first boot saying only "Invalid environment variables" — a dead stack from a
-# default nobody would think to question.
 if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}", default):
-    fail("LANGFUSE_INIT_USER_EMAIL default %r has no dotted domain — langfuse-web will refuse to start" % default)
+    fail("compose default %r has no dotted domain — langfuse-web will refuse to start" % default)
 '
+
+# The authoritative value: what the generated env file actually hands compose.
+email_line="$(sed -n 's/^LANGFUSE_INIT_USER_EMAIL=//p' "$UPSCRIPT" | head -1)"
+if [ -z "$email_line" ]; then
+  bad "$UPSCRIPT does not write LANGFUSE_INIT_USER_EMAIL — cannot verify the value langfuse-web receives"
+elif printf '%s' "$email_line" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[A-Za-z]{2,}$'; then
+  ok "$UPSCRIPT writes an init email langfuse-web will accept ($email_line)"
+else
+  bad "$UPSCRIPT writes LANGFUSE_INIT_USER_EMAIL=$email_line — no dotted domain, langfuse-web will crash-loop on first boot"
+fi
 
 py "Langfuse phone-home telemetry is off" "$PRELUDE"'
 for s in ("langfuse-web","langfuse-worker"):
