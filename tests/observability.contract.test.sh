@@ -291,13 +291,29 @@ chmod +x "$OBSTMP/bin/docker" "$OBSTMP/bin/curl"
 
 # run_up <label> <expected-rc> — fresh workspace each time so credential
 # generation is exercised, not the reuse path.
+#
+# Asserts the STDOUT CONTRACT as well as the exit code, because bootstrap.sh
+# consumes what this script prints: `OTEL_ENDPOINT_OUT="$(observability-up.sh)"`
+# becomes the published FACTORY_OTEL_ENDPOINT. Exit code alone would let a
+# reordered printf, or a log/warn leaking to stdout instead of stderr, publish
+# garbage — or nothing — while every assertion still passed. The contract is
+# exactly "prints the endpoint if and only if it exits 0", so it is derived from
+# the expected rc rather than passed in, and there is no way to assert one
+# without the other.
 run_up() {
-  local label="$1" want="$2" rc
+  local label="$1" want="$2" rc out want_out=""
+  [ "$want" = 0 ] && want_out="http://factory-collector:4318"
   rm -rf "$OBSTMP/work/factory-ops"
-  ( cd "$OBSTMP/work" && PATH="$OBSTMP/bin:$PATH" FACTORY_OBS_WAIT_TRIES=2 \
-      bash scripts/observability-up.sh >/dev/null 2>&1 )
+  out="$( cd "$OBSTMP/work" && PATH="$OBSTMP/bin:$PATH" FACTORY_OBS_WAIT_TRIES=2 \
+      bash scripts/observability-up.sh 2>/dev/null )"
   rc=$?
-  if [ "$rc" = "$want" ]; then ok "$label"; else bad "$label (expected exit $want, got $rc)"; fi
+  if [ "$rc" != "$want" ]; then
+    bad "$label (expected exit $want, got $rc)"
+  elif [ "$out" != "$want_out" ]; then
+    bad "$label — exit $rc correct but stdout was '$out', expected '$want_out'"
+  else
+    ok "$label"
+  fi
 }
 
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=200 run_up "up.sh: healthy + accepted credentials → exit 0" 0
@@ -381,6 +397,30 @@ grep -q 'FACTORY_OTEL_SKIP' bootstrap.sh \
 grep -q 'FACTORY_OTEL_ENDPOINT' bootstrap.sh \
   && ok "bootstrap publishes FACTORY_OTEL_ENDPOINT for the workflows" \
   || bad "bootstrap never sets the FACTORY_OTEL_ENDPOINT repo variable"
+
+# The endpoint bootstrap publishes must be the one the script PRINTED. A second
+# copy of the literal drifts the moment the collector's alias or port changes,
+# and the health check would keep passing while stations dialled a stale name.
+grep -q 'OTEL_ENDPOINT_OUT="\$(bash scripts/observability-up.sh)"' bootstrap.sh \
+  && ok "bootstrap consumes the endpoint observability-up.sh prints" \
+  || bad "bootstrap does not capture the script's stdout endpoint"
+grep -q 'body "\$OTEL_ENDPOINT_OUT"' bootstrap.sh \
+  && ok "bootstrap publishes the captured endpoint, not a re-hardcoded literal" \
+  || bad "bootstrap publishes a hardcoded endpoint literal instead of the captured one"
+grep -q '\-z "\${OTEL_ENDPOINT_OUT:-}"' bootstrap.sh \
+  && ok "bootstrap withholds the variable when the script printed nothing" \
+  || bad "bootstrap has no guard for an exit-0 run that printed no endpoint"
+
+# Every compose command bootstrap hands an operator has to be runnable. The
+# recovery hints inside the auto-filed ISSUE are the easiest place to miss,
+# because nothing executes them — an operator does, once, while the stack is
+# already broken. Compose v2 interpolates the whole config for any subcommand,
+# so a bare `-f … logs` aborts on the first ${VAR:?}.
+if grep -n 'docker compose' bootstrap.sh | grep -v -- '--env-file' | grep -q 'observability'; then
+  bad "bootstrap prints a docker compose command for the observability stack without --env-file (it would abort)"
+else
+  ok "every observability compose command bootstrap prints carries --env-file"
+fi
 
 # --- workflow wiring ---------------------------------------------------------
 if [ -f "$SESSION_WF" ]; then

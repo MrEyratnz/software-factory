@@ -742,7 +742,7 @@ else
   else
     warn "the observability stack did not come up — sessions will run without telemetry"
     ensure_issue "Observability stack failed to start on the runner host" "P2" \
-"bootstrap.sh could not bring up docker-compose.observability.yml on icculus, so FACTORY_OTEL_ENDPOINT is unset and stations emit no OTEL/Langfuse telemetry. Re-run 'scripts/observability-up.sh' on the runner host and read its output (docker compose -f docker-compose.observability.yml logs)."
+"bootstrap.sh could not bring up docker-compose.observability.yml on icculus, so FACTORY_OTEL_ENDPOINT is unset and stations emit no OTEL/Langfuse telemetry. Re-run 'scripts/observability-up.sh' on the runner host and read its output. To read the container logs directly, the --env-file is required — compose interpolates the whole config for every subcommand, so a bare -f aborts: docker compose --env-file factory-ops/state/.bootstrap-runner/observability.env -f docker-compose.observability.yml logs"
   fi
 fi
 
