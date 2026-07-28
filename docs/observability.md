@@ -140,6 +140,40 @@ two configs are kept separate on purpose — a single config carrying the Langfu
 exporter would fill local logs with export retries against a Langfuse that isn't
 running.
 
+## What has actually been verified
+
+This stack was stood up cold against a real docker daemon and exercised, so
+the following are observations rather than claims. Re-verify on `icculus`
+itself; what is listed as unverified genuinely is.
+
+**Verified end to end**
+
+* `scripts/observability-up.sh` from an empty state: credentials generated,
+  seven containers up, Langfuse healthy, protobuf credential probe answered
+  `HTTP 200`, script exited 0 printing only `http://factory-collector:4318`.
+* **Metrics path** — a datapoint emitted by this repo's own
+  `hooks/lib/otel-emit.mjs` reached the Prometheus endpoint intact, carrying
+  the `deployment_environment="icculus"` attribute the collector's `resource`
+  processor adds:
+  `factory_gate_commit_total{result="allow",service_name="dark-software-factory",…} 1`
+* **Trace path** — an OTLP span posted to the collector was ingested by
+  Langfuse and returned by `GET /api/public/traces` under the same id. Traces
+  land; they are not merely accepted into a queue.
+* **The network boundary** — `factory-net` contains only `factory-collector`;
+  `factory-collector:4318` is reachable from it; postgres, clickhouse, redis,
+  minio and langfuse-web are all unreachable from it. The mechanism is
+  per-network DNS (`NXDOMAIN` on `factory-net`, resolves on `factory-obs`),
+  and the reachable collector is the positive control that rules out a
+  general network failure.
+
+**Not verified — needs the real host**
+
+* The join with the live `dsf-runner-icculus` container, and whether its
+  `no_proxy` actually keeps OTLP out of the egress-allowlist proxy.
+* The DOCKER-USER firewall rules `bootstrap.sh` §8 applies to `factory-net`.
+* Host port publishing over the NAT path (the verification daemon ran with
+  `--iptables=false`, so publishing leaned on the userland proxy).
+
 ## Operating notes
 
 * **Credentials are write-once.** Re-running `observability-up.sh` reuses
