@@ -177,6 +177,20 @@ for s in svcs:
         if t in str(svcs[s].get("command","")): fail("%s.command still carries %r" % (s,t))
 '
 
+py "the Langfuse init email is a shape Langfuse will accept" "$PRELUDE"'
+import re
+env = svcs["langfuse-web"].get("environment", {}) or {}
+raw = str(env.get("LANGFUSE_INIT_USER_EMAIL", ""))
+# Take the compose default, e.g. ${VAR:-factory@factory.invalid}
+default = raw.split(":-", 1)[1].rstrip("}") if ":-" in raw else raw
+# Langfuse validates this with a schema requiring a dotted domain. A bare host
+# like factory@localhost is rejected, and langfuse-web then crash-loops on
+# first boot saying only "Invalid environment variables" — a dead stack from a
+# default nobody would think to question.
+if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}", default):
+    fail("LANGFUSE_INIT_USER_EMAIL default %r has no dotted domain — langfuse-web will refuse to start" % default)
+'
+
 py "Langfuse phone-home telemetry is off" "$PRELUDE"'
 for s in ("langfuse-web","langfuse-worker"):
     env = svcs[s].get("environment", {}) or {}
@@ -325,7 +339,6 @@ FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=403 run_up "up.sh: forbidden credentials → non
 # stack whose OTLP endpoint never answered.
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=000 FAKE_OTLP_RC=7 run_up "up.sh: OTLP endpoint unreachable → non-zero exit" 1
 FAKE_HEALTH_RC=1 run_up "up.sh: langfuse never becomes healthy → non-zero exit" 1
-# A 400 on the deliberately-empty payload still proves the credentials were read.
 FAKE_HEALTH_RC=0 FAKE_OTLP_CODE=207 run_up "up.sh: 2xx is a passing credential proof" 0
 # 400 is NOT proof. The probe body is a valid empty OTLP request, so a healthy
 # Langfuse answers 2xx — and a backend that validates payload before credentials

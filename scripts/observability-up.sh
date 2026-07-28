@@ -95,13 +95,18 @@ MINIO_ROOT_PASSWORD=$minio_pw
 SALT=$salt
 ENCRYPTION_KEY=$enc_key
 NEXTAUTH_SECRET=$nextauth
+# A real address SHAPE is mandatory: Langfuse validates this with a schema that
+# requires a dotted domain, and rejects `factory@localhost` — which crash-loops
+# langfuse-web on first boot with nothing but "Invalid environment variables".
+# `.invalid` is the RFC 2606 reserved TLD, so this is well-formed and guaranteed
+# never to resolve or reach anyone. Found by running the stack, not reading it.
 LANGFUSE_INIT_ORG_ID=dark-software-factory
 LANGFUSE_INIT_ORG_NAME=Dark Software Factory
 LANGFUSE_INIT_PROJECT_ID=factory
 LANGFUSE_INIT_PROJECT_NAME=factory
 LANGFUSE_INIT_PROJECT_PUBLIC_KEY=$pk
 LANGFUSE_INIT_PROJECT_SECRET_KEY=$sk
-LANGFUSE_INIT_USER_EMAIL=factory@localhost
+LANGFUSE_INIT_USER_EMAIL=factory@factory.invalid
 LANGFUSE_INIT_USER_NAME=factory
 LANGFUSE_INIT_USER_PASSWORD=$user_pw
 LANGFUSE_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel
