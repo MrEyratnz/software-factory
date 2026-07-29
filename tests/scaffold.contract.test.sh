@@ -255,6 +255,86 @@ sys.exit(0)
   fi
 fi
 
+# --- ceiling vs. actual credential alignment (#100) --------------------------
+# The check above proves the App-token path can do at least as much as the
+# ceiling requires (no 403s). It says nothing about the other direction: a
+# `permissions:` block bounds ONLY the GITHUB_TOKEN fallback, so once a role
+# App exists the credential every station actually runs on can hold MORE than
+# its ceiling — silently breaking claims like "review is read-only" or
+# "triage never holds contents write" that docs/security/README.md states as
+# the security boundary. tests/static/security-ceiling-check.py cross-
+# references three sources that must independently agree: the doc's ceiling
+# table, the job's actual `permissions:`/`environment:` in
+# .github/workflows/*.yml, and bootstrap.sh's role_perms() App scope — and
+# fails on drift in EITHER direction (under- or over-privilege), plus an
+# inbound station's `environment:` pointing at an undocumented role.
+SECURITY_CEILING_CHECK="tests/static/security-ceiling-check.py"
+if [ ! -f "$SECURITY_CEILING_CHECK" ]; then
+  bad "$SECURITY_CEILING_CHECK missing — the ceiling-vs-actual-credential check (#100) is not wired"
+elif python3 -c "import yaml" 2>/dev/null; then
+  if python3 "$SECURITY_CEILING_CHECK" . >/dev/null 2>&1; then
+    ok "declared permissions: blocks, environment: role mapping, and bootstrap.sh App scopes all match docs/security/README.md's ceiling table"
+  else
+    bad "ceiling-vs-actual-credential drift: $(python3 "$SECURITY_CEILING_CHECK" . 2>&1 | tr '\n' ' ')"
+  fi
+
+  # Regression proof: each direction of drift must actually FIRE against a
+  # mutated fixture copy, not just stay silent on an already-clean tree. Work
+  # on throwaway copies of only the three inputs the check reads.
+  CEILING_FIXTURE="$(mktemp -d)"
+  mkdir -p "$CEILING_FIXTURE/docs/security" "$CEILING_FIXTURE/.github/workflows"
+  cp docs/security/README.md "$CEILING_FIXTURE/docs/security/README.md"
+  cp bootstrap.sh "$CEILING_FIXTURE/bootstrap.sh"
+  cp .github/workflows/*.yml "$CEILING_FIXTURE/.github/workflows/"
+
+  if python3 "$SECURITY_CEILING_CHECK" "$CEILING_FIXTURE" >/dev/null 2>&1; then
+    ok "ceiling-check fixture baseline (uncorrupted copy) is clean"
+  else
+    bad "ceiling-check fixture baseline is not clean — the regression cases below prove nothing"
+  fi
+
+  # 1. Over-privilege: the triage App scope grows contents:write, beyond the
+  # doc's contents:read ceiling for that (inbound) role.
+  cp "$CEILING_FIXTURE/bootstrap.sh" "$CEILING_FIXTURE/bootstrap.sh.orig"
+  sed -i 's/triage)       printf '"'"'{"issues":"write","contents":"read"}'"'"'/triage)       printf '"'"'{"issues":"write","contents":"write"}'"'"'/' \
+    "$CEILING_FIXTURE/bootstrap.sh"
+  CASE_OUT="$(python3 "$SECURITY_CEILING_CHECK" "$CEILING_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q 'not bound by the declared ceiling'; then
+    ok "ceiling-check catches an over-privileged App scope (regression fixture: triage App scope gains contents:write)"
+  else
+    bad "ceiling-check MISSED an App scope exceeding its documented ceiling — over-privilege gap (#100)"
+  fi
+  cp "$CEILING_FIXTURE/bootstrap.sh.orig" "$CEILING_FIXTURE/bootstrap.sh"
+
+  # 2. Doc drift: the security doc stops documenting a permission the review
+  # job's actual `permissions:` block still grants (checks:read).
+  cp "$CEILING_FIXTURE/docs/security/README.md" "$CEILING_FIXTURE/docs/security/README.md.orig"
+  sed -i 's/, `checks: read` |/ |/' "$CEILING_FIXTURE/docs/security/README.md"
+  CASE_OUT="$(python3 "$SECURITY_CEILING_CHECK" "$CEILING_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q 'does not document'; then
+    ok "ceiling-check catches the security doc drifting from the job's actual permissions (regression fixture: review row drops checks:read)"
+  else
+    bad "ceiling-check MISSED the security doc's ceiling table drifting from the actual permissions: block"
+  fi
+  cp "$CEILING_FIXTURE/docs/security/README.md.orig" "$CEILING_FIXTURE/docs/security/README.md"
+
+  # 3. Environment mismatch: an inbound station's job silently targets a
+  # different role than the one docs/security/README.md documents for it.
+  cp "$CEILING_FIXTURE/.github/workflows/on-issue.yml" "$CEILING_FIXTURE/.github/workflows/on-issue.yml.orig"
+  sed -i 's/environment: triage/environment: qa/' "$CEILING_FIXTURE/.github/workflows/on-issue.yml"
+  CASE_OUT="$(python3 "$SECURITY_CEILING_CHECK" "$CEILING_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q "no claude-session.yml caller targets environment 'triage'"; then
+    ok "ceiling-check catches an inbound station's environment drifting from its documented role (regression fixture: on-issue.yml -> qa)"
+  else
+    bad "ceiling-check MISSED an inbound station's environment pointing at the wrong role"
+  fi
+  cp "$CEILING_FIXTURE/.github/workflows/on-issue.yml.orig" "$CEILING_FIXTURE/.github/workflows/on-issue.yml"
+
+  rm -rf "$CEILING_FIXTURE"
+else
+  ok "pyyaml unavailable locally — ceiling-vs-credential check deferred to CI"
+fi
+
 # --- reusable-workflow permission semantics (#97) ----------------------------
 # GitHub's rule: the CALLER's job-level `permissions` is the ceiling, and
 # anything the called workflow declares can only downgrade it — never raise it.
