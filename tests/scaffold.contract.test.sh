@@ -106,6 +106,13 @@ fi
 # only place with access to the session's actual git workspace (whatever local
 # commits/branches it left behind, pushed or not) is a step appended after
 # "run station session" in the job that did the checkout.
+# The gate's real logic lives in .github/scripts/require-deliverable.sh (a
+# CONFIRMED-high PR #421 review finding: a first version that inlined
+# `git rev-list --all --not "$base"` directly in the workflow step asserted
+# the right SHAPE — checkpoint.json/exit 1/::error:: tokens — while being
+# BEHAVIORALLY a no-op on any active repo, and this shape-only check did not
+# catch it. This check now only confirms the workflow WIRES the snapshot +
+# script correctly; the fixture test below proves the script's BEHAVIOR.
 if [ -f "$SESSION_WF" ] && python3 -c "import yaml" 2>/dev/null; then
   if WF="$SESSION_WF" python3 -c '
 import os, sys, yaml
@@ -116,33 +123,77 @@ try:
     session_idx = next(i for i, n in enumerate(names) if n == "run station session")
 except StopIteration:
     sys.exit(2)
+snapshot = [
+    (i, s) for i, s in enumerate(steps)
+    if i < session_idx
+    and "factory-run" in str(s.get("if", ""))
+    and "rev-list" in str(s.get("run", ""))
+    and "refs-before" in str(s.get("run", ""))
+]
 gate = [
     (i, s) for i, s in enumerate(steps)
     if i > session_idx
-    and "checkpoint.json" in str(s.get("run", ""))
-    and "exit 1" in str(s.get("run", ""))
-    and "::error::" in str(s.get("run", ""))
+    and "factory-run" in str(s.get("if", ""))
+    and "require-deliverable.sh" in str(s.get("run", ""))
+    and "refs-before" in str(s.get("run", ""))
 ]
-if not gate:
-    sys.exit(1)
-i, s = gate[0]
-cond = str(s.get("if", ""))
-run = str(s.get("run", ""))
-scoped = "factory-run" in cond
-compares_commits = "rev-list" in run or "rev-parse" in run or "git log" in run
-sys.exit(0 if scoped and compares_commits else 1)
+sys.exit(0 if snapshot and gate else 1)
   '; then
-    ok "$SESSION_WF gates factory-run on a real deliverable after the session step"
+    ok "$SESSION_WF snapshots refs before the session and gates factory-run against them after"
   else
     st=$?
     if [ "$st" = "2" ]; then
-      bad "$SESSION_WF: could not locate the \"run station session\" step to anchor the gate after"
+      bad "$SESSION_WF: could not locate the \"run station session\" step to anchor the gate around"
     else
-      bad "$SESSION_WF never verifies factory-run left a commit/checkpoint update behind — a no-op session reports success"
+      bad "$SESSION_WF does not wire a pre-session ref snapshot into a post-session require-deliverable.sh gate"
     fi
   fi
 else
-  ok "pyyaml unavailable locally — factory-run deliverable-gate check deferred to CI"
+  ok "pyyaml unavailable locally — factory-run deliverable-gate wiring check deferred to CI"
+fi
+
+# Behavioral proof, not shape: build a throwaway git repo that already holds
+# unrelated branch history (simulating the fetch-depth:0 checkout's other
+# open PRs/bot branches — the exact condition that made the SHA-based
+# version of this gate a no-op), snapshot it, then prove the gate (a) FAILS
+# when no new commit lands and (b) PASSES once a real commit lands.
+GATE_SCRIPT=".github/scripts/require-deliverable.sh"
+if [ -f "$GATE_SCRIPT" ]; then
+  GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
+  GATE_FIXTURE="$(mktemp -d)"
+  (
+    cd "$GATE_FIXTURE" || exit 1
+    git init -q -b main
+    git config user.email t@example.com
+    git config user.name t
+    echo one > f.txt && git add f.txt && git commit -q -m "chore: seed"
+    # Unrelated history already present at job start (other bots' PRs, qa
+    # nightlies) — must NOT count as this session's own work.
+    git branch other-bot-pr
+    git checkout -q other-bot-pr
+    echo unrelated > g.txt && git add g.txt && git commit -q -m "chore: unrelated bot commit"
+    git checkout -q main
+  ) >/dev/null 2>&1
+
+  refs_before="$(mktemp)"
+  ( cd "$GATE_FIXTURE" && git rev-list --all | sort -u > "$refs_before" )
+
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED a session that made zero new commits (only pre-existing unrelated branch history present) — this is the exact PR #421 review finding"
+  else
+    ok "deliverable gate correctly FAILS a session that landed no new commit, even with unrelated branches already in the workspace"
+  fi
+
+  ( cd "$GATE_FIXTURE" && mkdir -p factory-ops/state && echo '{}' > factory-ops/state/checkpoint.json && git add factory-ops/state/checkpoint.json && git commit -q -m "chore(checkpoint): reconcile" ) >/dev/null 2>&1
+
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    ok "deliverable gate correctly PASSES once a real commit (touching checkpoint.json) lands"
+  else
+    bad "deliverable gate FAILED a session that landed a real commit — false negative would red-flag every legitimate factory-run"
+  fi
+  rm -rf "$GATE_FIXTURE" "$refs_before"
+else
+  bad "$GATE_SCRIPT missing — factory-run deliverable gate has no testable implementation"
 fi
 
 # --- the cron heartbeat must be able to actually WAKE the factory ------------
