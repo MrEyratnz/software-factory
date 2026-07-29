@@ -141,13 +141,14 @@ jobs:
       # no stack) therefore exports nothing rather than paying retry timeouts on
       # every API call for telemetry that can never arrive.
       #
-      # What is deliberately NOT set: OTEL_LOG_USER_PROMPTS,
+      # Content capture is pinned OFF explicitly below — OTEL_LOG_USER_PROMPTS,
       # OTEL_LOG_ASSISTANT_RESPONSES, OTEL_LOG_TOOL_DETAILS,
-      # OTEL_LOG_TOOL_CONTENT, OTEL_LOG_RAW_API_BODIES. Stations read untrusted
-      # issue/PR text and hold minted App tokens; the default redaction ships
-      # shape (models, tokens, cost, duration, tool names, decisions) without
-      # shipping content. Turning any of them on is a security decision, not a
-      # verbosity one — see tests/observability.contract.test.sh.
+      # OTEL_LOG_TOOL_CONTENT, OTEL_LOG_RAW_API_BODIES all set to 0, rather than
+      # left to the CLI's defaults. Stations read untrusted issue/PR text and
+      # hold minted App tokens; what ships is shape (models, tokens, cost,
+      # duration, tool names, decisions), never content. Turning any of them on
+      # is a security decision, not a verbosity one — see
+      # tests/observability.contract.test.sh, which requires the literal `=0`.
       - name: point session telemetry at the factory collector
         if: inputs.runner == 'icculus' && vars.FACTORY_OTEL_ENDPOINT != ''
         env:
@@ -196,6 +197,18 @@ jobs:
             # enough that a short run is not invisible.
             echo "OTEL_METRIC_EXPORT_INTERVAL=10000"
             echo "OTEL_LOGS_EXPORT_INTERVAL=5000"
+            # Redaction, stated rather than inherited. These are already the
+            # CLI's defaults, but a default is a property of the pinned version,
+            # and CLAUDE_CODE_VERSION moves. The claim this stack makes — no
+            # session content reaches the trace store — must not quietly become
+            # false because an upstream default flipped in a version bump.
+            # Setting them to 0 explicitly makes it our guarantee, not the
+            # CLI's, and the contract test asserts these exact lines.
+            echo "OTEL_LOG_USER_PROMPTS=0"
+            echo "OTEL_LOG_ASSISTANT_RESPONSES=0"
+            echo "OTEL_LOG_TOOL_DETAILS=0"
+            echo "OTEL_LOG_TOOL_CONTENT=0"
+            echo "OTEL_LOG_RAW_API_BODIES=0"
           } >> "$GITHUB_ENV"
           echo "telemetry → $OTEL_ENDPOINT (station=$SESSION_STATION)"
 

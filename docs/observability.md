@@ -62,11 +62,29 @@ runner. It:
 
 `bootstrap.sh` then sets the **`FACTORY_OTEL_ENDPOINT` repo variable**, and only
 on a stack it proved healthy. That variable is the single switch every station
-reads. If the stack is down, the variable is deleted rather than left stale:
-the failure mode is "no telemetry", never "telemetry posted into a collector
-that isn't there".
+reads.
 
-Skip the whole thing with `FACTORY_OTEL_SKIP=true bash bootstrap.sh`.
+**When the variable is deleted, and when it isn't.** Deletion happens only when
+bootstrap *attempted* the stand-up and could not prove the stack — never healthy,
+credentials rejected, endpoint unreachable. Then the failure mode is "no
+telemetry" rather than "telemetry posted into a collector that isn't there".
+
+A run that never attempted — `FACTORY_OTEL_SKIP=true`, or a re-run from a machine
+that is not the runner host — **leaves the variable exactly as it is**. Skipping a
+step is not evidence about the stack, and treating it as evidence would let a
+bootstrap re-run from your laptop tear down telemetry for a stack that is up and
+healthy on icculus.
+
+The consequence to know: if you take the stack down for maintenance and then
+re-run with `FACTORY_OTEL_SKIP=true`, the pointer persists and stations keep
+exporting into a collector that is gone. Skipping is not a disable switch. To
+turn telemetry off deliberately:
+
+```bash
+gh variable delete FACTORY_OTEL_ENDPOINT --repo <owner>/<repo>
+```
+
+Skip the stand-up step itself with `FACTORY_OTEL_SKIP=true bash bootstrap.sh`.
 
 The script's **exit code is the contract**: `0` means Langfuse is healthy *and*
 accepted the collector's credentials, and nothing weaker. `bootstrap.sh` gates
@@ -139,6 +157,40 @@ That one logs received metrics to its own stdout and talks to no backend. The
 two configs are kept separate on purpose — a single config carrying the Langfuse
 exporter would fill local logs with export retries against a Langfuse that isn't
 running.
+
+## What has actually been verified
+
+This stack was stood up cold against a real docker daemon and exercised, so
+the following are observations rather than claims. Re-verify on `icculus`
+itself; what is listed as unverified genuinely is.
+
+**Verified end to end**
+
+* `scripts/observability-up.sh` from an empty state: credentials generated,
+  seven containers up, Langfuse healthy, protobuf credential probe answered
+  `HTTP 200`, script exited 0 printing only `http://factory-collector:4318`.
+* **Metrics path** — a datapoint emitted by this repo's own
+  `hooks/lib/otel-emit.mjs` reached the Prometheus endpoint intact, carrying
+  the `deployment_environment="icculus"` attribute the collector's `resource`
+  processor adds:
+  `factory_gate_commit_total{result="allow",service_name="dark-software-factory",…} 1`
+* **Trace path** — an OTLP span posted to the collector was ingested by
+  Langfuse and returned by `GET /api/public/traces` under the same id. Traces
+  land; they are not merely accepted into a queue.
+* **The network boundary** — `factory-net` contains only `factory-collector`;
+  `factory-collector:4318` is reachable from it; postgres, clickhouse, redis,
+  minio and langfuse-web are all unreachable from it. The mechanism is
+  per-network DNS (`NXDOMAIN` on `factory-net`, resolves on `factory-obs`),
+  and the reachable collector is the positive control that rules out a
+  general network failure.
+
+**Not verified — needs the real host**
+
+* The join with the live `dsf-runner-icculus` container, and whether its
+  `no_proxy` actually keeps OTLP out of the egress-allowlist proxy.
+* The DOCKER-USER firewall rules `bootstrap.sh` §8 applies to `factory-net`.
+* Host port publishing over the NAT path (the verification daemon ran with
+  `--iptables=false`, so publishing leaned on the userland proxy).
 
 ## Operating notes
 

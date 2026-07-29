@@ -723,14 +723,21 @@ fi
 # FACTORY_OTEL_ENDPOINT is the single switch claude-session.yml reads. It is set
 # ONLY on a proven-healthy stack and DELETED otherwise, so the failure mode is
 # "no telemetry", never "telemetry silently dropped into a dead collector".
+# OTEL_ATTEMPTED separates "we tried and could not prove the stack" from "we
+# never looked". Only the first may delete FACTORY_OTEL_ENDPOINT: a re-run with
+# FACTORY_OTEL_SKIP=true, or on a host with no runner, would otherwise tear down
+# telemetry for a stack that is up and healthy — the operator asked to skip a
+# step, not to turn observability off everywhere.
 OTEL_OK=false
+OTEL_ATTEMPTED=false
 if [ "${FACTORY_OTEL_SKIP:-false}" = "true" ]; then
-  warn "FACTORY_OTEL_SKIP=true — skipping the observability stack"
+  warn "FACTORY_OTEL_SKIP=true — skipping the observability stack (leaving FACTORY_OTEL_ENDPOINT as-is)"
 elif [ "$RUNNER_OK" != true ]; then
   log "no self-hosted runner — skipping the observability stack (it is icculus-local)"
 elif [ ! -x scripts/observability-up.sh ]; then
   warn "scripts/observability-up.sh missing or not executable — skipping the observability stack"
 else
+  OTEL_ATTEMPTED=true
   log "standing up the observability stack (otel collector + langfuse)"
   # Capture the endpoint the script PRINTS rather than re-hardcoding it here:
   # it owns the collector's factory-net name, and two copies of that literal
@@ -779,10 +786,17 @@ fi
 
 if [ "$OTEL_OK" = true ]; then
   gh variable set FACTORY_OTEL_ENDPOINT --repo "$REPO" --body "$OTEL_ENDPOINT_OUT" >&2
-else
+elif [ "$OTEL_ATTEMPTED" = true ]; then
   # Leave no stale pointer behind: a previously-set endpoint would keep every
   # station exporting into a collector that is no longer there.
+  #
+  # Gated on having ATTEMPTED. A skipped run proves nothing about the stack, so
+  # deleting here would let `FACTORY_OTEL_SKIP=true bash bootstrap.sh` — or any
+  # re-run from a machine that is not the runner host — silently switch
+  # telemetry off for a stack that is up and healthy.
   gh variable delete FACTORY_OTEL_ENDPOINT --repo "$REPO" >/dev/null 2>&1 || true
+else
+  log "observability step skipped — leaving any existing FACTORY_OTEL_ENDPOINT untouched"
 fi
 
 # --- 9. first dispatch -------------------------------------------------------
