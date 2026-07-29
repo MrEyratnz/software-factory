@@ -88,6 +88,63 @@ else
   bad "$SESSION_WF missing"
 fi
 
+# --- factory-run must not be able to report success on nothing ---------------
+# Observed live (GH Actions run 30490944976, 2026-07-29): a factory-run session
+# oriented, hit a couple of Bash permission_denials on raw plumbing commands,
+# then emitted a status dashboard as its final answer and stopped — no commit,
+# no PR, no checkpoint update. `claude -p`'s own is_error guard (above) does not
+# catch this: the CLI considers a clean end_turn a success, so the job went
+# green while factory-ops/state/checkpoint.json sat stale for days. This is a
+# DIFFERENT failure surface than #228/#251/#252 (those fixed where the mandate
+# lives and how the /factory-run skill counts its own iterations) — this is the
+# outer CI conductor never checking whether factory-run's specific mandate (a
+# commit, ideally with checkpoint.json touched) actually happened.
+#
+# The check must live INSIDE claude-session.yml's session job, scoped to the
+# factory-run station, not as a follow-up job in factory-run.yml: a job that
+# calls a reusable workflow via `uses:` cannot hold any other steps, so the
+# only place with access to the session's actual git workspace (whatever local
+# commits/branches it left behind, pushed or not) is a step appended after
+# "run station session" in the job that did the checkout.
+if [ -f "$SESSION_WF" ] && python3 -c "import yaml" 2>/dev/null; then
+  if WF="$SESSION_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+names = [s.get("name", "") for s in steps]
+try:
+    session_idx = next(i for i, n in enumerate(names) if n == "run station session")
+except StopIteration:
+    sys.exit(2)
+gate = [
+    (i, s) for i, s in enumerate(steps)
+    if i > session_idx
+    and "checkpoint.json" in str(s.get("run", ""))
+    and "exit 1" in str(s.get("run", ""))
+    and "::error::" in str(s.get("run", ""))
+]
+if not gate:
+    sys.exit(1)
+i, s = gate[0]
+cond = str(s.get("if", ""))
+run = str(s.get("run", ""))
+scoped = "factory-run" in cond
+compares_commits = "rev-list" in run or "rev-parse" in run or "git log" in run
+sys.exit(0 if scoped and compares_commits else 1)
+  '; then
+    ok "$SESSION_WF gates factory-run on a real deliverable after the session step"
+  else
+    st=$?
+    if [ "$st" = "2" ]; then
+      bad "$SESSION_WF: could not locate the \"run station session\" step to anchor the gate after"
+    else
+      bad "$SESSION_WF never verifies factory-run left a commit/checkpoint update behind — a no-op session reports success"
+    fi
+  fi
+else
+  ok "pyyaml unavailable locally — factory-run deliverable-gate check deferred to CI"
+fi
+
 # --- the cron heartbeat must be able to actually WAKE the factory ------------
 # cron-prod's only job is to POST a repository_dispatch (event_type
 # factory-resume) that starts factory-run. Two GitHub facts make the bare

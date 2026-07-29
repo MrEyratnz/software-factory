@@ -258,6 +258,41 @@ jobs:
             console.log("station completed: " + (o.num_turns ?? "?") + " turns");
           ' "$f"
 
+      # factory-run's own mandate (see factory-run.yml's prompt) is a commit and
+      # a PR — "producing only a status report is a FAILURE". The is_error guard
+      # above cannot see that failure mode: `claude -p` ends cleanly (end_turn)
+      # even when the session did nothing but orient and stop, so the job goes
+      # green while the loop never advances (observed live: GH Actions run
+      # 30490944976 — oriented, hit a couple of Bash permission_denials on raw
+      # plumbing commands, then answered with a status dashboard and quit; no
+      # commit, no PR, no checkpoint update, four days stale). This check has to
+      # live HERE, not as a follow-up job in factory-run.yml: a job that calls a
+      # reusable workflow via `uses:` cannot hold any other steps, so this is the
+      # only place with access to the actual git workspace the session leaves
+      # behind — whatever local commits/branches it made, pushed or not, on top
+      # of the SHA this job started at (`github.sha` here is the same context
+      # value the caller had, since a `uses:`-called workflow runs inside the
+      # caller's own run). Scoped to the factory-run station only: other
+      # stations (review/triage/nightly-eval) can legitimately end a run with no
+      # commit at all.
+      - name: fail when factory-run reports success without a real deliverable
+        if: inputs.station == 'factory-run'
+        run: |
+          base="${{ github.sha }}"
+          # --all, not just HEAD: the session may have `git checkout`-ed back to
+          # the starting branch after pushing a feature branch elsewhere, which
+          # would otherwise hide a real commit behind an unchanged HEAD.
+          new_commits="$(git rev-list --all --not "$base")"
+          if [ -z "$new_commits" ]; then
+            echo "::error::factory-run session reported success but left no new commit anywhere in the workspace since it started at $base — no PR, no checkpoint update, nothing landed. Producing only a status report is a FAILURE per the conductor's mandate."
+            exit 1
+          fi
+          if git log --all --not "$base" --name-only --pretty=format: | grep -qx 'factory-ops/state/checkpoint.json'; then
+            echo "checkpoint.json changed in a new commit — real deliverable confirmed."
+          else
+            echo "$(printf '%s\n' "$new_commits" | wc -l) new commit(s) landed since dispatch — real deliverable confirmed."
+          fi
+
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns
       # these into factory-ops/cost/ records and the retro trend.
