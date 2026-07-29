@@ -1,10 +1,10 @@
 {
   "version": 1,
   "station": "idle",
-  "sprint": 1,
-  "sprint_ends_at": "2026-07-25T02:42:24Z",
+  "sprint": 2,
+  "sprint_ends_at": "2026-07-29T20:00:00Z",
   "branch": null,
-  "issues": [175, 97, 98, 100, 101, 120, 132, 115, 159],
+  "issues": [362, 311, 318, 100, 101, 132, 342, 361],
   "next_action": "factory-run",
-  "notes": "sprint 1 active — plan at factory-ops/sprints/1/plan.md; run /factory-run on the picked issues in plan order (start #175). Checkpoint reconciled by hand to clear the cold-start trap (the planner wrote the plan but not the checkpoint); the durable end-of-turn write-back fix is #206 and the no-op/false-green guard is #228."
+  "notes": "Sprint 1's ceremony had gone silent 3+ days past sprint_ends_at with zero state delta (filed as P0 incident #360; root cause: weekly usage-limit outage + no standup wiring, see #360/#361 for the mechanism). A prior session already wrote the overdue retro/review and a sprint-2 plan as PR #362, and rebased the #120 security fix as PR #311, but both stalled on CHANGES_REQUESTED / a review-check 429. This session: (1) fixed PR #362's 4 CONFIRMED-blocking review findings (#363 #115/#228 human-blocked dependency, #364 #159 already-delivered-not-stretch, #365 over-scope cut to a 5-item committed core, #366 PRODUCT.md rank misrepresentation) and pushed d27fc02; (2) rebased PR #311 onto current main, verified full suite green (358/358), pushed f887727 to re-trigger its review. Both PRs are now awaiting fresh CI/review. Sprint-2's committed core once #362 merges is #100/#101/#120(→#311)/#342/#361, with #132/#229/#328 as explicit overflow and #115/#228 BLOCKED-on-human (needs an org-admin to grant the coder GitHub App actions:read — not autonomously closeable). PR #318 (#132, checkpoint/review-debt) still carries its original CHANGES_REQUESTED unaddressed — not touched this session, next in line after #362/#311 land. next_action: check #362 and #311 CI/review results; merge if green; if #362 merged, continue sprint-2 committed core (#100, #101, #342, #361 in that order); then address #318's CHANGES_REQUESTED. Durable end-of-turn checkpoint write-back is still stopgap (#206 tracks the real fix); the no-op/false-green guard is #228 (itself BLOCKED-on-human via #115)."
 }
