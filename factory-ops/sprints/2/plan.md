@@ -40,11 +40,62 @@ goal is threefold, in this order:
    and every wake they stay unfixed is a wake sprint 2's own standup/review/
    retro could silently fail to fire — exactly what just happened.
 3. **Close out the loop-integrity items the product owner ranked next**
-   (#228 verify-then-guard, #229, #328, #159 stretch) — real bugs discovered
-   *while operating* the above two clusters, ranked by the product owner
-   immediately after the security/process floor.
+   (#228 verify-then-guard, #229, #328) — real bugs discovered *while
+   operating* the above two clusters, ranked by the product owner
+   immediately after the security/process floor. #159 is **not** re-picked
+   as new work this sprint — see "#159 status" below.
 
-11 items total, same size band as sprint 1 (8-12 target).
+This plan tracks 11 issues total, but they split into four buckets by what
+they actually cost this sprint's capacity — see "Picked issues" below for
+the split. Sprint 1's demonstrated real throughput was 3-of-9 picked items
+(~33%) in a window that ran long; this plan's **committed,
+closeable-this-sprint core is 5 items**, not 11 (finding #365).
+
+### #115 → #228 dependency: blocked on a human action
+
+#115's done-condition requires granting `actions:read` to the coder's
+GitHub App — an org/account-admin action performed on the GitHub App
+installation itself. No autonomous agent in this factory holds org-admin
+credentials, so **no autonomous implementer can perform this grant**. #228
+is scoped in this plan as `depends on #115`, so both are marked
+**BLOCKED-on-human**:
+
+- **Owner of the blocking action:** a human with org-admin rights on the
+  GitHub App installation must grant the App the `actions:read` permission.
+  This plan names the role/action required, not a specific person, per
+  `GOVERNANCE.md`'s decision-owner model.
+- **#115 and #228 do NOT count against this sprint's autonomous-implementer
+  capacity** while the grant is outstanding. They stay picked and tracked
+  (so they aren't lost, and the next planner wake checks whether the grant
+  has landed) but are excluded from both the committed core and the
+  overflow-carried-to-sprint-3 list — they simply wait on the human action.
+- This is the same shape of stall that stopped #115 progressing in sprint 1
+  (tracked as tech-debt in #363) — the fix here is naming the blocker
+  explicitly instead of silently re-picking work the implementer
+  structurally cannot close.
+
+### #159 status: substantially delivered, not a sprint-2 pick
+
+The product owner's sprint-2 snapshot (`docs/PRODUCT.md`, "Sprint 2 backlog
+snapshot", 2026-07-28) ranks #159 as core item 10, "M2 stretch, unstarted."
+Checking current `main` at planning time shows that characterization is
+stale: commit `3fb17dc` ("test(epic-1): full-depth static validation layer
+for plugin configs (#375)", already merged to `main`) extended
+`tests/scaffold.contract.test.sh` and added `tests/static/plugin-schema-
+check.mjs`, implementing the manifest + frontmatter schema checks,
+`${CLAUDE_PLUGIN_ROOT}` portability, referenced-files-exist, and JSON
+validity checks that #159 and `docs/ROADMAP.md`'s M2 first bullet call for,
+with four regression fixtures proving each check category actually fires —
+wired into `tests/run-suite.sh`'s boundaries stage, gating every commit.
+The commit's own trailer reads `Refs: #159`.
+
+**Disposition: #159 is not picked as new work this sprint.** Instead:
+re-verify the merged checks against #159's acceptance criteria and close
+#159 with a comment linking commit `3fb17dc`, rather than carrying it
+forward as unstarted stretch work for a second sprint running. This also
+means M2's first `docs/ROADMAP.md` bullet has real, verifiable substance
+behind it now — the Release Gate is not stuck at 0% two sprints running
+(finding #364).
 
 ## Off-plan work: explicit rule for this sprint
 
@@ -61,6 +112,21 @@ wake ahead of a picked item that is ready for a turn.**
 
 ## Picked issues
 
+Restructured this sprint (per review finding #365) into an explicit
+**committed core** sized to sprint 1's demonstrated real throughput
+(3-of-9 items, ~33%, on the single serialized self-hosted runner — see
+#177), an explicit **overflow** list carried into sprint 3 if not reached,
+and the **blocked-on-human** / **already-delivered** items that don't count
+against capacity either way. Ownership and done-conditions are unchanged
+from the original picks; only the grouping and the capacity claim changed.
+
+### Committed core (5 items — this sprint's closeable-capacity target)
+
+Priority order: security floor first, then the two process-fix items that
+caused sprint 1's own ceremony to go silent — chosen to round out the core
+precisely because they're cheap, mechanical, and don't compete with the
+security cluster's turns.
+
 | # | Title (abridged) | Priority | Owner | Done-condition (machine-checkable) |
 |---|---|---|---|---|
 | #100 | Permission ceilings don't bind the credentials actually used | P0 | **implementer (security-steward focus)** | PR merges changing the affected workflow files so declared `permissions:` blocks match the actual token used per job, with a test/lint step (or documented manual verification in the PR body) enumerating every job's effective token and granted scopes. Full suite green (`bash tests/run-suite.sh`). Issue #100 closes via merge; #101/#120/#132 re-verified against the fix. |
@@ -68,15 +134,34 @@ wake ahead of a picked item that is ready for a turn.**
 | #120 | `secrets: inherit` exposes full-scope `FACTORY_PAT` to inbound stations (PR #311 stalled) | P0 | **implementer (security-steward focus)**, unsticking PR #311 | PR #311 (rebased onto current `main`, review re-triggered per the disposition below) or a fresh replacement merges removing `secrets: inherit` from every inbound-triggered workflow, with a CI check asserting none remains. Full suite green. Issue #120 closes via merge. |
 | #342 | Stations exit RED on a usage limit, violating `.claude/CLAUDE.md`'s mandatory protocol | P0 (elevated by planner) | **implementer** | PR merges changing station failure handling so that hitting the Anthropic usage limit writes `factory-ops/state/checkpoint.json` per the documented protocol and exits 0 instead of RED, verified by a test/fixture simulating a 429/usage-limit response and asserting a checkpoint is written and the process exit code is 0. Full suite green. Issue #342 closes via merge. |
 | #361 | `factory-run.yml` has no standup step; step-1 parked-work can preempt the sprint-boundary check indefinitely | P1 (elevated by planner) | **implementer** | PR merges to `.github/workflows/factory-run.yml` (and/or the invoked prompt) adding (a) a standup-digest step that runs every wake during an active sprint and (b) a hard precondition so the sprint-boundary/ceremony check is evaluated even when step-1 finds parked work, verified by a dry-run/test showing a wake with parked work still reaches the boundary check. Full suite green. Issue #361 closes via merge. |
+
+### Overflow (picked, capacity-driven deferral — carried into sprint 3 if not reached)
+
+| # | Title (abridged) | Priority | Owner | Done-condition (machine-checkable) |
+|---|---|---|---|---|
 | #132 | Review job grants `issues:write` + `secrets:inherit` over attacker-controlled diff (PR #318 stalled) | P1 (shares #100's root cause) | **implementer (security-steward focus)**, unsticking PR #318 | PR #318 (rebased onto current `main`, CHANGES_REQUESTED findings addressed, #322/#323 false-closure claims corrected in the body) or a fresh replacement merges dropping `issues:write`/`secrets: inherit` from the review job's `permissions:`. Full suite green. Issue #132 closes via merge. |
-| #115 | coder App lacks `actions:read`; factory-run's own CI-check calls 403, also blocks verifying #228 | P1 | **implementer** | App-manifest/config change (or PR) grants the coder App `actions:read`, verified by a real `gh run`/CI-status call succeeding from the coder station in a real or replayed run (link the run in the PR/issue). Issue #115 closes via merge or linked verification comment. |
-| #228 | Build-loop no-op-guard: two merged fixes exist (#230, #303) but live evidence suggests it may not be fully resolved | P0 (loop integrity) | **implementer**, depends on #115 | (a) A live `factory-run` dispatch is triggered post-#115 and its run log/checkpoint is cited (run URL + commit SHA, or explicit no-op confirmation) in the issue; AND (b) a fresh, minimal no-op detection guard merges (new PR, **not** a revival of PR #250) with a failing-then-passing test asserting a no-progress wake is detected and never silently reported as success. Full suite green. Issue #228 closes via merge of (b), citing (a). |
 | #229 | `guard-bash-writes` misdiagnoses read-only trust-root inspection as writes | P1 | **implementer** | PR merges fixing the hook so read-only commands (`cat`, `grep`, `ls`, etc.) against `.factory/state/**`, `.factory/review/**`, `.factory/config.json` are no longer denied, verified by a failing-then-passing test. Full suite green. Issue #229 closes via merge. |
 | #328 | `debt-reconcile` Stop hook only sees 30 of 221 open tech-debt issues | P1 (gate integrity) | **implementer** | PR merges raising/paginating the `gh issue list` limit used by `debt-reconcile` beyond the default 30, verified by a test asserting reconciliation sees >30 open `tech-debt` issues against a >30-issue fixture. Full suite green. Issue #328 closes via merge. |
-| #159 | Epic 1.1: static validation layer in the commit gate | P1 (M2, v1.0.0 gate) | **implementer** | **Stretch — only if capacity remains after items above are merged-green.** PR merges adding manifest + frontmatter schema checks for every command/agent/skill/hook config to the commit gate, with new tests failing red before and green after. Full suite green. Issue #159 closes via merge. If not started, first item planned for sprint 3. |
 
-11 concrete work items (#100, #101, #120, #342, #361, #132, #115, #228, #229,
-#328, #159) — within the 8–12 target range.
+If the committed core finishes early and real capacity remains, pull from
+this list in the order listed before picking anything not on this plan.
+
+### Blocked-on-human (tracked, does not count against capacity either way)
+
+| # | Title (abridged) | Priority | Owner | Done-condition (machine-checkable) |
+|---|---|---|---|---|
+| #115 | coder App lacks `actions:read`; factory-run's own CI-check calls 403, also blocks verifying #228 | P1 | **BLOCKED-on-human** — a human with org-admin rights on the GitHub App installation must grant `actions:read`; no autonomous implementer can perform this (see "#115 → #228 dependency" above) | Once granted: App-manifest/config change (or PR) grants the coder App `actions:read`, verified by a real `gh run`/CI-status call succeeding from the coder station in a real or replayed run (link the run in the PR/issue). Issue #115 closes via merge or linked verification comment. |
+| #228 | Build-loop no-op-guard: two merged fixes exist (#230, #303) but live evidence suggests it may not be fully resolved | P0 (loop integrity) | **BLOCKED-on-human** — depends on #115's grant landing first; implementer once unblocked | (a) A live `factory-run` dispatch is triggered post-#115 and its run log/checkpoint is cited (run URL + commit SHA, or explicit no-op confirmation) in the issue; AND (b) a fresh, minimal no-op detection guard merges (new PR, **not** a revival of PR #250) with a failing-then-passing test asserting a no-progress wake is detected and never silently reported as success. Full suite green. Issue #228 closes via merge of (b), citing (a). |
+
+### Already delivered (not picked as new work — re-verify and close)
+
+| # | Title (abridged) | Priority | Disposition |
+|---|---|---|---|
+| #159 | Epic 1.1: static validation layer in the commit gate | P1 (M2, v1.0.0 gate) | Substance already merged to `main` via commit `3fb17dc` (#375) — see "#159 status" above. Re-verify against the issue's acceptance criteria and close; not re-picked as stretch work. |
+
+11 issues tracked total: 5 committed core + 3 overflow + 2 blocked-on-human
++ 1 already-delivered. Only the 5-item committed core counts toward this
+sprint's closeable-capacity claim.
 
 ## Carryover PR disposition
 
@@ -134,9 +219,21 @@ sprint 2 to decide who unsticks them and how. Decisions:
 
 ## Deliberately not picked (left in backlog, ranked for sprint 3+)
 
-- **#231, #206** — related loop-health items the product owner flagged
-  (cron-prod dispatch inversion; durable checkpoint write-back replacing
-  #230's stopgap) but did not rank inside the sprint-2 core 10. Bundle
+- **#231, #206** — related loop-health items (cron-prod dispatch-condition
+  inversion; durable checkpoint write-back replacing #230's stopgap). The
+  product owner's ranked core in `docs/PRODUCT.md` actually places these at
+  **core 8 and 9** — ranked *higher* than #159 (core 10, and per "#159
+  status" above, already substantially delivered). This plan deliberately
+  defers #231/#206 anyway, overriding the product owner's raw rank order,
+  for two stated reasons rather than because the product owner left them
+  unranked: (1) the product owner's own note says #231/#206 are the "same
+  loop-health cluster as #206/#228" and "should land in one change" —
+  bundling them means they can't be split piecemeal into a
+  capacity-constrained sprint without contradicting that note; and (2) this
+  sprint's committed core is already capacity-constrained to 5 items (see
+  "Picked issues" above), and #231/#206 rank below every committed-core item
+  and below #132/#229/#328 in the overflow list once the security/process
+  floor and loop-integrity fixes are prioritized first. Bundle #231/#206
   together as one sprint-3 item per the product owner's own note that they
   should land in one change.
 - **#177** — single self-hosted runner serializes the factory
