@@ -439,6 +439,97 @@ for f in agents/*.md; do
   fi
 done
 
+# --- static validation layer (Epic 1 layer 1, full depth) --------------------
+# The agents loop above is the seed; tests/static/plugin-schema-check.mjs is
+# the full-depth extension the spec calls for: manifest + frontmatter schema
+# for every command/agent/skill/hook config, ${CLAUDE_PLUGIN_ROOT} path
+# portability, referenced-files-exist, and JSON validity — for every file the
+# plugin actually ships, not just agents/*.md.
+STATIC_CHECK="tests/static/plugin-schema-check.mjs"
+if [ -f "$STATIC_CHECK" ]; then
+  STATIC_OUT="$(node "$STATIC_CHECK" . 2>&1)"
+  if [ $? -eq 0 ]; then
+    ok "plugin static validation (frontmatter/manifest schema, \${CLAUDE_PLUGIN_ROOT} portability, referenced-files-exist, JSON validity) is clean"
+  else
+    bad "plugin static validation found violations: $(printf '%s' "$STATIC_OUT" | grep -v '^(node:' | grep -v 'trace-warnings' | tr '\n' ' ')"
+  fi
+
+  # Regression proof: each of the four check categories must actually FIRE on
+  # a genuine violation, not just stay silent on an already-clean tree. Work
+  # on a throwaway copy of just the plugin-shipped dirs (small, no
+  # node_modules) so corrupting it never touches the real tree.
+  STATIC_FIXTURE="$(mktemp -d)"
+  for d in commands agents skills hooks .claude-plugin schemas templates connector; do
+    [ -d "$d" ] && cp -r "$d" "$STATIC_FIXTURE/$d"
+  done
+  [ -f .mcp.json ] && cp .mcp.json "$STATIC_FIXTURE/.mcp.json"
+
+  if node "$STATIC_CHECK" "$STATIC_FIXTURE" >/dev/null 2>&1; then
+    ok "static-validation fixture baseline (uncorrupted copy) is clean"
+  else
+    bad "static-validation fixture baseline is not clean — the regression cases below prove nothing"
+  fi
+
+  # Each regression case captures node's output into a variable FIRST and
+  # greps the variable — not `node ... | grep -q`, which under `pipefail` can
+  # report a false MISS: grep -q exits the instant it matches, closing the
+  # pipe, and node can catch SIGPIPE trying to write more, so pipefail sees a
+  # nonzero from node and reports pipeline failure even though grep matched.
+
+  # 1. JSON validity: truncate hooks.json into invalid JSON.
+  cp "$STATIC_FIXTURE/hooks/hooks.json" "$STATIC_FIXTURE/hooks/hooks.json.orig"
+  printf '{ "hooks": ' > "$STATIC_FIXTURE/hooks/hooks.json"
+  CASE_OUT="$(node "$STATIC_CHECK" "$STATIC_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q 'invalid JSON'; then
+    ok "static check catches malformed JSON (regression fixture: truncated hooks.json)"
+  else
+    bad "static check MISSED malformed hooks/hooks.json — JSON-validity gap"
+  fi
+  cp "$STATIC_FIXTURE/hooks/hooks.json.orig" "$STATIC_FIXTURE/hooks/hooks.json"
+
+  # 2. manifest + frontmatter schema: strip a command's required description.
+  cp "$STATIC_FIXTURE/commands/adr.md" "$STATIC_FIXTURE/commands/adr.md.orig"
+  sed -i '/^description:/d' "$STATIC_FIXTURE/commands/adr.md"
+  CASE_OUT="$(node "$STATIC_CHECK" "$STATIC_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q 'commands/adr.md.*description'; then
+    ok "static check catches a command missing required frontmatter (regression fixture: adr.md sans description)"
+  else
+    bad "static check MISSED a command with no description frontmatter — schema gap"
+  fi
+  cp "$STATIC_FIXTURE/commands/adr.md.orig" "$STATIC_FIXTURE/commands/adr.md"
+
+  # 3. ${CLAUDE_PLUGIN_ROOT} portability: hardcode a hook command to an
+  # absolute path instead.
+  cp "$STATIC_FIXTURE/hooks/hooks.json" "$STATIC_FIXTURE/hooks/hooks.json.orig"
+  node -e '
+    const fs = require("fs");
+    const f = process.argv[1];
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    j.hooks.SessionStart[0].hooks[0].command = "/home/runner/evil/bootstrap.sh";
+    fs.writeFileSync(f, JSON.stringify(j, null, 2));
+  ' "$STATIC_FIXTURE/hooks/hooks.json"
+  CASE_OUT="$(node "$STATIC_CHECK" "$STATIC_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q 'absolute path'; then
+    ok "static check catches a hardcoded absolute path instead of \${CLAUDE_PLUGIN_ROOT} (regression fixture)"
+  else
+    bad "static check MISSED a hook command hardcoded to an absolute path — portability gap"
+  fi
+  cp "$STATIC_FIXTURE/hooks/hooks.json.orig" "$STATIC_FIXTURE/hooks/hooks.json"
+
+  # 4. referenced-files-exist: delete a script a hook command points at.
+  rm -f "$STATIC_FIXTURE/hooks/scripts/bootstrap.sh"
+  CASE_OUT="$(node "$STATIC_CHECK" "$STATIC_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q 'does not exist'; then
+    ok "static check catches a hook referencing a script that does not exist (regression fixture)"
+  else
+    bad "static check MISSED a hook referencing a missing script — referenced-file gap"
+  fi
+
+  rm -rf "$STATIC_FIXTURE"
+else
+  bad "$STATIC_CHECK missing — layer-1 static validation (manifest/frontmatter schema, path portability, referenced-files-exist, JSON validity) not wired"
+fi
+
 # --- docs + governance scaffolding -------------------------------------------
 for f in .claude/CLAUDE.md GOVERNANCE.md MAINTAINERS.md .github/FUNDING.yml \
          docs/VISION.md docs/ARCHITECTURE.md docs/ROADMAP.md docs/PRODUCT.md \

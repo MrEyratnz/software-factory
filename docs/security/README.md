@@ -72,6 +72,16 @@ API, package registries only — via an allowlisting proxy, with direct egress
 dropped when the firewall step is applied). No interactive surface, no
 long-lived host state, no Docker socket exposed to agent code.
 
+The observability stack on that same host (ADR 0004) keeps that boundary: the
+OTEL collector is the only container the runner's network can reach, while
+Langfuse and its datastores sit on a separate network, so a prompt-injected
+session cannot read or rewrite the traces of every session before it. The
+collector's own OTLP intake and Prometheus scrape endpoint are unauthenticated
+on that network and the scrape endpoint is readable — aggregate counters only,
+no secrets, no trace content. Session content (prompts, responses, tool details,
+tool inputs, raw API bodies) is never captured;
+`tests/observability.contract.test.sh` fails if that changes.
+
 ## Supply chain & scanning
 
 CodeQL, Dependabot (grouped weekly — `.github/dependabot.yml`), secret
@@ -88,3 +98,4 @@ toggles idempotently.
 | Signed commits from app identities | commit signature verification required by protection | open |
 | Egress firewall depends on sudo at bootstrap; without it the allowlist is proxy-only | enforced drop of non-proxy egress | open — bootstrap warns and files an issue when skipped |
 | Callers pass `secrets: inherit`, so a session job can see every repository secret (including `FACTORY_PAT`), not just its own role key | explicit per-station `secrets:` mapping | open — the session step exports only the credentials it needs, so the model never sees the rest, but the job could |
+| The observability stack's `factory-obs` network is a normal bridge, so Langfuse and its datastores keep outbound internet access they have no use for | internal network, or DOCKER-USER drop rules like the ones applied to `factory-net` | open (#330) — the runner-facing boundary IS enforced (only the collector is on `factory-net`; postgres/clickhouse/redis/minio are not), and Langfuse's own phone-home telemetry is off |
