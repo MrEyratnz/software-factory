@@ -48,9 +48,34 @@ receipt/commit contract enforces them forever.
 
 ## Release Gate for v1.0.0 (decidable, no judgment calls)
 
-All of, verified by the release manager in one script: zero open `bug` or
-`tech-debt` issues at any priority; zero unresolved `.factory/review` findings
-(debt-reconcile clean); v1.0.0 roadmap items 100% merged-green; coverage and
-eval thresholds green on `main` for 3 consecutive nightly runs; feature freeze
-per `docs/PRODUCT.md`. Then `/ship` on the release branch — never from red,
+This section is the **single authoritative definition** of the gate
+(`GOVERNANCE.md` pins it here; `docs/ROADMAP.md` M4 and `docs/PRODUCT.md`
+reference it rather than restating it). Scope and rationale: ADR 0005
+(`docs/adr/0005-m4-tech-debt-gate-scope.md`).
+
+All of, verified by the release captain in one script whose issue counts come
+from **fully-paginated queries** (never a bare `gh issue list`, whose 30-item
+default page is the counting bug tracked as #419/#420 — both must be fixed
+before any automation trusts this gate):
+
+- zero open `bug` issues — literal, unwaived (a bug is fixed, never
+  deferred, even under freeze);
+- zero open `tech-debt` issues labeled `P0` or `P1`;
+- zero open `tech-debt` issues labeled `security`, at any `P0`–`P3` level
+  (security outranks priority — `docs/PRODUCT.md` ranking rule 1);
+- zero open `tech-debt` issues lacking a valid `P0`–`P3` label
+  (**fail-closed**: an untriaged issue blocks the gate until it carries one
+  of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
+  count as triage; if more than one `P0`–`P3` label is present, the most
+  severe governs);
+- zero unresolved `.factory/review` findings (debt-reconcile clean);
+- v1.0.0 roadmap items 100% merged-green;
+- coverage and eval thresholds green on `main` for 3 consecutive nightly
+  runs;
+- feature freeze per `docs/PRODUCT.md`.
+
+Non-security `P2`/`P3` tech-debt does not block v1.0.0; it is routed to the
+named ROADMAP M5 (v1.1.0) item "P2/P3 tech-debt burndown (non-security)" —
+distinct from M3's security-hardening pass, which is security-scoped and
+v1.0.0-scoped. Then `/ship` on the release branch — never from red,
 release-proof minted on the built artifact.

@@ -59,14 +59,24 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 ## M4 — v1.0.0 (milestone v1.0.0)
 
-- [ ] Release Gate script green: zero open `bug`/`tech-debt`, zero unresolved
-  review findings, v1.0.0 roadmap 100% merged-green, coverage + eval
-  thresholds green on `main` for 3 consecutive nightly runs
+- [ ] Release Gate script green per the authoritative definition in
+  `docs/specs/epic-1/spec.md` (ADR 0005): zero open `bug` (unwaived); zero
+  open `tech-debt` labeled `P0`/`P1`; zero `security`-labeled tech-debt at
+  any P-level; zero tech-debt lacking a valid `P0`–`P3` label (fail-closed
+  on untriaged; legacy `priority:*`/high/medium/low labels don't count);
+  zero unresolved review findings; v1.0.0 roadmap 100% merged-green;
+  coverage + eval thresholds green on `main` for 3 consecutive nightly runs.
+  Prereq: pagination counting bug #419/#420 fixed first; the script counts
+  via fully-paginated queries only
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 
 ## M5 — Post-1.0 (milestone v1.1.0)
 
+- [ ] P2/P3 tech-debt burndown (non-security): work down the open non-security
+  `P2`/`P3` `tech-debt` deferred past the v1.0.0 gate (ADR 0005) — the named
+  deferral home, distinct from M3's security-hardening pass (which is
+  security-scoped and v1.0.0-scoped)
 - [ ] Feature-freeze overflow: `idea`/`research`/retro issues routed here by
   the product owner once the v1.0.0 gate is within one sprint of holding
 - [ ] OTEL traces/spans for the lights-out loop (beyond the shipped metrics-only MVP)

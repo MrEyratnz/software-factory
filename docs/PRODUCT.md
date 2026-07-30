@@ -250,8 +250,10 @@ gaps). None block the loop today. **Milestone-scope decision:** these map to
 ROADMAP M3's "Security hardening pass" bullet as one batch, not 30
 individually-sequenced sprint-1 items — bundle them into that M3 work item
 when it's picked up rather than re-ranking each one every sprint. Left
-unmilestoned for now; M4's Release Gate ("zero open bug/tech-debt") already
-guarantees they get swept before ship.
+unmilestoned for now. (Correction under ADR 0005: the v1.0.0 gate no longer
+sweeps non-security P2 before ship — of this batch, only `security`-labeled
+items block v1.0.0; the non-security remainder that M3's pass doesn't consume
+rolls to ROADMAP M5's "P2/P3 tech-debt burndown (non-security)" item.)
 
 ### P3 — doc/spec cross-reference drift on an unmerged PR (15 issues)
 
@@ -327,19 +329,21 @@ v1.1.0 — it should not be pursued as written. Holding a 200+ open-issue
 factory to a literal zero is not rigor, it is a gate that can only ever be
 satisfied by either mass-closing issues without fixing them or by the
 counting bug above quietly making it look satisfied. Both outcomes are
-worse than a scoped, honest gate. **M4's tech-debt criterion is redefined,
-effective this decision, as:**
+worse than a scoped, honest gate.
 
-> Release Gate holds tech-debt to: **zero open `P0`/`P1` tech-debt, and
-> zero open tech-debt carrying the `security` label regardless of
-> `P0`–`P3`** (security outranks priority per this file's ranking rule 1).
-> `P2`/`P3` non-security tech-debt does not block v1.0.0; it is explicitly
-> routed to `v1.1.0` or bundled into a named hardening-pass work item,
-> mirroring the sprint-1 precedent. `bug` stays **literal zero, unwaived**
-> — bugs are small in volume (9 open today) and the charter already
-> requires a `bug` to be fixed, not deferred, even under freeze.
+**The redefined criterion is recorded in ADR 0005
+(`docs/adr/0005-m4-tech-debt-gate-scope.md`) and defined authoritatively —
+once — in `docs/specs/epic-1/spec.md` ("Release Gate for v1.0.0"), which
+`GOVERNANCE.md` pins the gate to. This file carries the product rationale
+only and deliberately does not restate the predicate.** In product terms:
+`bug` stays literal zero, unwaived; `P0`/`P1` tech-debt and `security`-labeled
+tech-debt at any P-level block v1.0.0 (security outranks priority per this
+file's ranking rule 1); the gate is **fail-closed on triage** — any tech-debt
+issue without a valid `P0`–`P3` label blocks until triaged, and legacy
+`priority:*`/`high`/`medium`/`low` labels don't count; non-security `P2`/`P3`
+defers to ROADMAP M5's named "P2/P3 tech-debt burndown (non-security)" item.
 
-This is conditioned on two prerequisites, both blocking:
+Two blocking prerequisites remain before the gate can be evaluated:
 
 1. **#419 and #420 (the counting bug) must be fixed and re-verified before
    this redefined gate is trusted by any automation.** A gate that counts
@@ -347,11 +351,11 @@ This is conditioned on two prerequisites, both blocking:
    precondition for the M4 "Release Gate script" work item even being
    buildable correctly.
 2. **The 188 tech-debt issues with no `P0`–`P3` label (147 with zero
-   priority signal at all) must be triaged before the `P2`/`P3` routing
-   above can be applied to them.** Until labeled, we cannot tell how many
-   of the 188 are actually `P0`/`P1`/security and hiding in the untriaged
-   pile — silently treating "unlabeled" as "P2/P3, deferrable" would be
-   exactly the kind of silent ambiguity this file's ranking rules forbid.
+   priority signal at all) must be triaged.** Under ADR 0005 this is
+   structural, not advisory: the gate fails closed on every untriaged issue,
+   so it *cannot* hold until the 188 reach zero — silently treating
+   "unlabeled" as "P2/P3, deferrable" is exactly the silent ambiguity this
+   file's ranking rules forbid, and the predicate now makes it impossible.
    This is sized as its own debt-burndown allocation (a dedicated triage
    pass, sprint-1-style: "N issues triaged, `P0`–`P3` applied to all with a
    one-line rationale"), not a one-line milestone move — it does not fit
