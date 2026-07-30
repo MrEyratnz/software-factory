@@ -144,6 +144,13 @@ if not (snapshot and gate):
 # gate silently or hard-fails on a missing snapshot file (#489).
 if str(snapshot[0][1].get("if")) != str(gate[0][1].get("if")):
     sys.exit(3)
+# The station literal in those conditions must be the station factory-run
+# actually dispatches (#558): a rename on either side would silently
+# disable the gate forever while both if: strings still match each other.
+fr = yaml.safe_load(open(".github/workflows/factory-run.yml"))
+dispatched = str(fr["jobs"]["session"]["with"]["station"])
+if f"'{dispatched}'" not in str(gate[0][1].get("if", "")):
+    sys.exit(4)
 sys.exit(0)
   '; then
     ok "$SESSION_WF snapshots refs before the session and gates factory-run against them after"
@@ -153,6 +160,8 @@ sys.exit(0)
       bad "$SESSION_WF: could not locate the \"run station session\" step to anchor the gate around"
     elif [ "$st" = "3" ]; then
       bad "$SESSION_WF: snapshot and gate steps have drifted apart — their if: conditions differ (#489)"
+    elif [ "$st" = "4" ]; then
+      bad "$SESSION_WF: the gate's station literal does not match the station factory-run.yml dispatches — the gate is silently disabled (#558)"
     else
       bad "$SESSION_WF does not wire a pre-session ref snapshot into a post-session require-deliverable.sh gate"
     fi
@@ -165,12 +174,15 @@ fi
 # remote that already holds unrelated branch history (simulating the
 # fetch-depth:0 checkout's other open PRs/bot branches — the exact condition
 # that made the SHA-based version of this gate a no-op), snapshot it, then
-# prove each of the gate's three layers fires: (a) FAILS on no new commit;
-# (b) FAILS on a local-only commit that never reached origin (#484);
-# (c) PASSES but WARNS on a pushed checkpoint-only bump — the mandated
-#     usage-limit park must never red (#485/#487);
-# (d) an empty (merge/--allow-empty) commit does not count as work (#515);
-# (e) PASSES silently-clean on pushed real work.
+# prove each of the gate's layers fires: (a) FAILS on no new commit;
+# (b) FAILS on a no-op session that DWIM-checkouts a pre-existing remote
+#     branch — pre-existing origin history must not read as work (#564);
+# (c) PASSES but WARNS on a LOCAL-only checkpoint commit — the CLAUDE.md
+#     usage-limit park mandates commit-without-push and must never red
+#     (#556), and the same holds after it is pushed (#485/#487);
+# (d) an empty (merge/--allow-empty) commit does not upgrade the park (#515);
+# (e) FAILS on real work stranded locally — committed but never pushed (#484);
+# (f) PASSES silently-clean once the real work reaches origin.
 GATE_SCRIPT=".github/scripts/require-deliverable.sh"
 if [ -f "$GATE_SCRIPT" ]; then
   GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
@@ -186,12 +198,15 @@ if [ -f "$GATE_SCRIPT" ]; then
     echo one > f.txt && git add f.txt && git commit -q -m "chore: seed"
     git push -q origin main
     # Unrelated history already present at job start (other bots' PRs, qa
-    # nightlies) — must NOT count as this session's own work.
+    # nightlies) — must NOT count as this session's own work. The local
+    # branch is deleted after pushing so it exists ONLY as
+    # refs/remotes/origin/other-bot-pr, ready for the DWIM-checkout case.
     git branch other-bot-pr
     git checkout -q other-bot-pr
     echo unrelated > g.txt && git add g.txt && git commit -q -m "chore: unrelated bot commit"
     git push -q origin other-bot-pr
     git checkout -q main
+    git branch -q -D other-bot-pr
   ) >/dev/null 2>&1
 
   # Setup sanity (#518): if the fixture didn't build, the "correctly FAILS"
@@ -203,7 +218,7 @@ if [ -f "$GATE_SCRIPT" ]; then
   fi
 
   refs_before="$(mktemp)"
-  ( cd "$GATE_FIXTURE" && git rev-list --branches HEAD | sort -u > "$refs_before" )
+  ( cd "$GATE_FIXTURE" && git rev-list --branches --remotes HEAD | sort -u > "$refs_before" )
 
   if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
     bad "deliverable gate PASSED a session that made zero new commits (only pre-existing unrelated branch history present) — this is the exact PR #421 review finding"
@@ -211,33 +226,42 @@ if [ -f "$GATE_SCRIPT" ]; then
     ok "deliverable gate correctly FAILS a session that landed no new commit, even with unrelated branches already in the workspace"
   fi
 
-  ( cd "$GATE_FIXTURE" && git checkout -q -b session-work && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" ) >/dev/null 2>&1
-
+  # DWIM checkout of a pre-existing remote branch creates a LOCAL head at a
+  # commit that already existed on origin — a no-op session doing this must
+  # still fail, not read pre-existing bot history as its own work (#564).
+  ( cd "$GATE_FIXTURE" && git checkout -q other-bot-pr && git checkout -q main ) >/dev/null 2>&1
   if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
-    bad "deliverable gate PASSED a local-only commit that never reached origin — a failed push still reads as success (#484)"
+    bad "deliverable gate PASSED a no-op session that only DWIM-checkouted a pre-existing remote branch — pre-existing origin history counted as work (#564)"
   else
-    ok "deliverable gate correctly FAILS a local-only commit whose push never happened (#484)"
+    ok "deliverable gate correctly FAILS a no-op session after a DWIM checkout of a pre-existing remote branch (#564)"
   fi
 
-  # Roll the work commit back and push ONLY a checkpoint bump instead.
+  # LOCAL-only checkpoint commit: the CLAUDE.md usage-limit park mandates
+  # commit-without-push — must warn, never red (#556).
   (
     cd "$GATE_FIXTURE" || exit 1
-    git checkout -q main
-    git branch -q -D session-work
     mkdir -p factory-ops/state && echo '{}' > factory-ops/state/checkpoint.json
     git add factory-ops/state/checkpoint.json
     git commit -q -m "chore(checkpoint): reconcile"
-    git push -q origin main
   ) >/dev/null 2>&1
-
   park_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
   park_rc=$?
   if [ "$park_rc" = "0" ] && printf '%s' "$park_out" | grep -q '^::warning::'; then
-    ok "deliverable gate PASSES a pushed checkpoint-only park with a ::warning:: — never red on a limit (#485/#487)"
+    ok "deliverable gate PASSES a LOCAL-only checkpoint park with a ::warning:: — the mandated no-push limit park never reds (#556)"
   elif [ "$park_rc" != "0" ]; then
-    bad "deliverable gate REDS the mandated checkpoint-only park — violates 'never red on a limit' (#487)"
+    bad "deliverable gate REDS the mandated local-only checkpoint park — violates 'never red on a limit' (#556)"
   else
     bad "deliverable gate passed a checkpoint-only park silently — the operator loses the no-roadmap-work signal (#485)"
+  fi
+
+  # The same park stays a warn-pass after the checkpoint is pushed (#485/#487).
+  ( cd "$GATE_FIXTURE" && git push -q origin main ) >/dev/null 2>&1
+  park_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  park_rc=$?
+  if [ "$park_rc" = "0" ] && printf '%s' "$park_out" | grep -q '^::warning::'; then
+    ok "deliverable gate PASSES a pushed checkpoint-only park with a ::warning:: (#485/#487)"
+  else
+    bad "deliverable gate mishandled a pushed checkpoint-only park (rc=$park_rc) (#485/#487)"
   fi
 
   # An empty commit (merge/--allow-empty shape) must not upgrade the park to
@@ -250,8 +274,15 @@ if [ -f "$GATE_SCRIPT" ]; then
     bad "deliverable gate misclassified an empty commit — phantom blank line counted as work (#515)"
   fi
 
-  ( cd "$GATE_FIXTURE" && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" && git push -q origin main ) >/dev/null 2>&1
+  # Real work committed but never pushed IS the stall — red (#484).
+  ( cd "$GATE_FIXTURE" && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED real work stranded locally — a failed push still reads as success (#484)"
+  else
+    ok "deliverable gate correctly FAILS real work that never reached origin (#484)"
+  fi
 
+  ( cd "$GATE_FIXTURE" && git push -q origin main ) >/dev/null 2>&1
   real_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
   if [ $? = 0 ] && ! printf '%s' "$real_out" | grep -q '^::warning::'; then
     ok "deliverable gate correctly PASSES pushed real work cleanly (roadmap commit + checkpoint both on origin)"

@@ -10,8 +10,13 @@
 #
 # Usage: require-deliverable.sh <refs-before-file>
 # Must run from the git workspace the session ran in, AFTER the session step.
-# <refs-before-file> is the output of `git rev-list --branches HEAD | sort -u`,
-# captured BEFORE the session ran (an earlier step in the same job).
+# <refs-before-file> is the output of
+# `git rev-list --branches --remotes HEAD | sort -u`, captured BEFORE the
+# session ran (an earlier step in the same job). Remotes are IN the
+# snapshot deliberately: anything already on origin at session start —
+# including a pre-existing bot branch the session later DWIM-checkouts, or
+# history a pull fast-forwards in — must never count as this session's own
+# work (#564); only commits that did not exist anywhere at snapshot time do.
 #
 # What counts as a real deliverable, enforced in three layers (each one is a
 # reviewed failure mode of an earlier, weaker version of this gate):
@@ -62,36 +67,48 @@ if [ -z "$session_commits" ]; then
   exit 1
 fi
 
+# Classify the session's OWN commits into roadmap work vs checkpoint-only
+# BEFORE any push check (#556): CLAUDE.md's usage-limit protocol mandates
+# "write checkpoint.json, commit chore:, exit 0" — with no push step — so a
+# LOCAL-only checkpoint park is the documented good-citizen behavior and
+# must never red. Only real work stranded unpushed is a stall.
+has_work() {
+  local c files
+  for c in $1; do
+    files="$(git diff-tree --no-commit-id --name-only -r "$c")"
+    # A merge or --allow-empty commit lists no files at all; without this
+    # guard the empty string reads as a phantom non-checkpoint line and
+    # counts as work (#515).
+    [ -z "$files" ] && continue
+    if printf '%s\n' "$files" | grep -qvxF "$CHECKPOINT_PATH"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! has_work "$session_commits"; then
+  echo "::warning::factory-run session committed only a checkpoint.json bump (pushed or not) — the mandated park (usage limit / roadmap complete / waiting on CI), not roadmap progress. Legitimate as a park; if this repeats across consecutive wakes with no roadmap work, the loop is stalled. Stop-reason-aware enforcement is tracked as #487."
+  exit 0
+fi
+
 remote_commits="$(git rev-list --remotes=origin 2>/dev/null | sort -u)"
 pushed="$(comm -12 <(printf '%s\n' "$session_commits") <(printf '%s\n' "$remote_commits"))"
 
-if [ -z "$pushed" ]; then
-  echo "::error::factory-run session committed locally but nothing reached origin — the push (or PR creation) failed, so the loop has not advanced. Check the session transcript for push/auth errors (the cited incident hit permission_denials on exactly this plumbing)."
+if [ -z "$pushed" ] || ! has_work "$pushed"; then
+  echo "::error::factory-run session produced roadmap work locally but none of it reached origin — the push (or PR creation) failed, so the loop has not advanced. Check the session transcript for push/auth errors (the cited incident hit permission_denials on exactly this plumbing)."
   exit 1
 fi
 
-work=0
 touched_checkpoint=0
 for c in $pushed; do
-  files="$(git diff-tree --no-commit-id --name-only -r "$c")"
-  # A merge or --allow-empty commit lists no files at all; without this
-  # guard the empty string reads as a phantom non-checkpoint line and
-  # counts as work (#515).
-  [ -z "$files" ] && continue
-  if printf '%s\n' "$files" | grep -qxF "$CHECKPOINT_PATH"; then
+  if git diff-tree --no-commit-id --name-only -r "$c" | grep -qxF "$CHECKPOINT_PATH"; then
     touched_checkpoint=1
-  fi
-  if printf '%s\n' "$files" | grep -qvxF "$CHECKPOINT_PATH"; then
-    work=1
+    break
   fi
 done
 
 count="$(printf '%s\n' "$pushed" | grep -c .)"
-if [ "$work" = "0" ]; then
-  echo "::warning::factory-run session pushed only a checkpoint.json bump — the mandated park (usage limit / roadmap complete / waiting on CI), not roadmap progress. Legitimate as a park; if this repeats across consecutive wakes with no roadmap work, the loop is stalled. Stop-reason-aware enforcement is tracked as #487."
-  exit 0
-fi
-
 if [ "$touched_checkpoint" = "1" ]; then
   echo "$count pushed commit(s) with roadmap work + checkpoint updated — real deliverable confirmed."
 else
