@@ -114,11 +114,13 @@ GitHub alone:
   planning/standup/review/retro artifacts under `factory-ops/sprints/`; the
   agent board (a standing judge panel) per `GOVERNANCE.md`; decision standards
   (ADR / RFC / spec-per-epic) per `docs/rfcs/README.md`.
-- Release gating: the v1.0.0 Release Gate predicate is defined **once**, in
-  `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0", scoped per
-  ADR 0005 (`docs/adr/0005-m4-tech-debt-gate-scope.md`); every other doc —
-  `docs/ROADMAP.md` M4, `docs/PRODUCT.md`, this file — points there and
-  restates nothing.
+- Release gating: the v1.0.0 Release Gate predicate is defined
+  authoritatively in `docs/specs/epic-1/spec.md` § "Release Gate for
+  v1.0.0", scoped per ADR 0005
+  (`docs/adr/0005-m4-tech-debt-gate-scope.md`). Any other doc that touches
+  it — `docs/ROADMAP.md` M4, `docs/PRODUCT.md`, `agents/product-owner.md`,
+  `.claude/CLAUDE.md`, this file, the ADR's own decision record — points
+  there; where a summary elsewhere drifts from the spec, the spec governs.
 
 ## Structural safety invariants
 

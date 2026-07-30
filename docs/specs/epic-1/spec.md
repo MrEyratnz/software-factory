@@ -74,7 +74,11 @@ before any automation trusts this gate):
   (**fail-closed**: an untriaged issue blocks the gate until it carries one
   of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
   count as triage; if more than one `P0`–`P3` label is present, the most
-  severe governs). The triage pass that clears this is tracked as #510;
+  severe governs). The triage pass that clears this is tracked as #510.
+  **Anti-laundering clause:** a `tech-debt` issue whose provenance is a
+  CONFIRMED-high adversarial-review finding counts as `P1` for this gate
+  regardless of the labels it currently carries, until the finding is
+  actually fixed — down-triaging such an issue does not unblock the gate;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
 - coverage ≥95% lines on `hooks/scripts/**` (layer 2 above) and the
@@ -82,8 +86,10 @@ before any automation trusts this gate):
   nightly runs. The eval threshold **values** are TBD — owner: qa, tracked
   as #511; this criterion is not evaluable until #511 closes;
 - feature freeze ON — machine-decidable marker: the `## Feature freeze`
-  section of `docs/PRODUCT.md` contains a line beginning exactly
-  `**Freeze state: ON**`.
+  section of `docs/PRODUCT.md` contains **exactly one** line beginning
+  `**Freeze state:`, and that line reads `**Freeze state: ON**`. A freeze
+  flip edits that single line in place — never appends a second state line —
+  so the test is over the current state, not a flip log.
 
 Non-security `P2`/`P3` tech-debt does not block v1.0.0; it is routed to the
 named ROADMAP M5 (v1.1.0) item "P2/P3 tech-debt burndown (non-security)" —

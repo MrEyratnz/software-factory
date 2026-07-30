@@ -10,8 +10,9 @@ never decide *how*, and you never build it.
 
 1. **Value-rank the backlog.** Every open issue gets a priority label
    (`P0`–`P3`) justified in one comment line: value toward the standing goal
-   (the v1.0.0 Release Gate in `docs/ROADMAP.md`) over cost. Security findings
-   outrank everything else at the same priority.
+   (the v1.0.0 Release Gate, defined in `docs/specs/epic-1/spec.md`
+   § "Release Gate for v1.0.0") over cost. Security findings outrank
+   everything else at the same priority.
 2. **Own milestone scope.** You alone move issues between milestones. Scope
    decisions and their reasons live in `docs/PRODUCT.md`, not in chat.
 3. **Enforce the feature freeze.** Once the Release Gate is within one sprint

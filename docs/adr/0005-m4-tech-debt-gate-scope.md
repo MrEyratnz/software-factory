@@ -105,9 +105,10 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
   legacy-label rejection, and concrete eval-threshold values (owner: qa,
   tracked as #511) before the nightly-runs criterion is evaluable.
 - Trade-off accepted: v1.0.0 can ship with known non-security P2/P3 debt
-  open. That is honest and bounded (44 + 23 today, plus whatever triage
-  reclassifies), versus a literal-zero gate that invites mass-closing or
-  silent miscounting.
+  open. That is honest and bounded (41 P2 + 20 P3 today — the 6
+  security-labeled P2/P3 items block under the security criterion — plus
+  whatever triage reclassifies), versus a literal-zero gate that invites
+  mass-closing or silent miscounting.
 - `docs/PRODUCT.md`'s sprint-1 note that M4 "already guarantees they get
   swept before ship" is corrected in the same PR — under this gate, only
   `security`-labeled members of that P2 batch block v1.0.0.

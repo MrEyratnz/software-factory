@@ -256,10 +256,11 @@ gaps). None block the loop today. **Milestone-scope decision:** these map to
 ROADMAP M3's "Security hardening pass" bullet as one batch, not 30
 individually-sequenced sprint-1 items — bundle them into that M3 work item
 when it's picked up rather than re-ranking each one every sprint. Left
-unmilestoned for now. (Correction under ADR 0005: the v1.0.0 gate no longer
-sweeps non-security P2 before ship — of this batch, only `security`-labeled
-items block v1.0.0; the non-security remainder that M3's pass doesn't consume
-rolls to ROADMAP M5's "P2/P3 tech-debt burndown (non-security)" item.)
+unmilestoned for now. (Correction under ADR 0005: which of this batch blocks
+v1.0.0 is decided solely by the Release Gate predicate in
+`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0"; the remainder that
+M3's pass doesn't consume and the gate doesn't block rolls to ROADMAP M5's
+"P2/P3 tech-debt burndown (non-security)" item.)
 
 ### P3 — doc/spec cross-reference drift on an unmerged PR (15 issues)
 
@@ -305,9 +306,12 @@ not `gh issue list`, which silently truncates)
   `P0`–`P3` label at all: 188** (of which 147 carry *no* priority signal of
   any kind — not even a legacy `priority:*`/`high`/`medium`/`low` label).
   Sprint-1's plan (`factory-ops/sprints/1/plan.md`) accounts for only 45 of
-  these (30 P2 bundled into ROADMAP M3's security-hardening pass, 15 P3
-  routed to v1.1.0) — the remaining ~228 tech-debt issues have never been
-  triaged or referenced in any plan.
+  the 273 open tech-debt issues (30 P2 bundled into ROADMAP M3's
+  security-hardening pass, 15 P3 routed to v1.1.0) — the remaining ~228
+  have never been referenced in any plan. Of the 273, it is the **188**
+  lacking any `P0`–`P3` label that constitute the gate-blocking triage
+  prerequisite tracked as #510; the two figures overlap but are not the
+  same set.
 - **10 tech-debt issues carry the `security` label** (2 `P0`, 2 `P1`, 3
   `P2`, 3 `P3`) — security does not correlate with severity label here, so
   it cannot be inferred from `P0`/`P1` alone.
