@@ -216,9 +216,14 @@ jobs:
       # can diff against the session's own starting point instead of the
       # dispatch SHA — see that step's comment for why the SHA comparison was
       # wrong (fetch-depth:0 already holds unrelated branch history).
+      # Local heads + HEAD only, not --all: the remote-tracking refs a
+      # fetch-depth:0 checkout (or a mid-session fetch of a concurrent bot
+      # push) brings in must never count as this session's own work — the
+      # gate compares local-head growth for "did the session commit" and the
+      # origin remote-ref set for "did it reach GitHub" separately.
       - name: snapshot commit refs before the session runs
         if: inputs.station == 'factory-run'
-        run: git rev-list --all | sort -u > "$RUNNER_TEMP/refs-before.txt"
+        run: git rev-list --branches HEAD | sort -u > "$RUNNER_TEMP/refs-before.txt"
 
       - name: run station session
         shell: bash   # pipefail: without it `tee` masks the CLI's exit status

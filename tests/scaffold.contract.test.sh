@@ -137,13 +137,22 @@ gate = [
     and "require-deliverable.sh" in str(s.get("run", ""))
     and "refs-before" in str(s.get("run", ""))
 ]
-sys.exit(0 if snapshot and gate else 1)
+if not (snapshot and gate):
+    sys.exit(1)
+# The two steps must be gated by the IDENTICAL condition: if they ever
+# drift (one fires without the other), every factory-run either loses the
+# gate silently or hard-fails on a missing snapshot file (#489).
+if str(snapshot[0][1].get("if")) != str(gate[0][1].get("if")):
+    sys.exit(3)
+sys.exit(0)
   '; then
     ok "$SESSION_WF snapshots refs before the session and gates factory-run against them after"
   else
     st=$?
     if [ "$st" = "2" ]; then
       bad "$SESSION_WF: could not locate the \"run station session\" step to anchor the gate around"
+    elif [ "$st" = "3" ]; then
+      bad "$SESSION_WF: snapshot and gate steps have drifted apart — their if: conditions differ (#489)"
     else
       bad "$SESSION_WF does not wire a pre-session ref snapshot into a post-session require-deliverable.sh gate"
     fi
@@ -152,31 +161,39 @@ else
   ok "pyyaml unavailable locally — factory-run deliverable-gate wiring check deferred to CI"
 fi
 
-# Behavioral proof, not shape: build a throwaway git repo that already holds
-# unrelated branch history (simulating the fetch-depth:0 checkout's other
-# open PRs/bot branches — the exact condition that made the SHA-based
-# version of this gate a no-op), snapshot it, then prove the gate (a) FAILS
-# when no new commit lands and (b) PASSES once a real commit lands.
+# Behavioral proof, not shape: build a throwaway git repo with a bare origin
+# remote that already holds unrelated branch history (simulating the
+# fetch-depth:0 checkout's other open PRs/bot branches — the exact condition
+# that made the SHA-based version of this gate a no-op), snapshot it, then
+# prove each of the gate's three layers fires: (a) FAILS on no new commit;
+# (b) FAILS on a local-only commit that never reached origin (#484);
+# (c) FAILS on a pushed checkpoint-only bump with no roadmap work (#485);
+# (d) PASSES on pushed real work.
 GATE_SCRIPT=".github/scripts/require-deliverable.sh"
 if [ -f "$GATE_SCRIPT" ]; then
   GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
+  GATE_ORIGIN="$(mktemp -d)"
   GATE_FIXTURE="$(mktemp -d)"
   (
+    git init -q --bare "$GATE_ORIGIN"
     cd "$GATE_FIXTURE" || exit 1
     git init -q -b main
     git config user.email t@example.com
     git config user.name t
+    git remote add origin "$GATE_ORIGIN"
     echo one > f.txt && git add f.txt && git commit -q -m "chore: seed"
+    git push -q origin main
     # Unrelated history already present at job start (other bots' PRs, qa
     # nightlies) — must NOT count as this session's own work.
     git branch other-bot-pr
     git checkout -q other-bot-pr
     echo unrelated > g.txt && git add g.txt && git commit -q -m "chore: unrelated bot commit"
+    git push -q origin other-bot-pr
     git checkout -q main
   ) >/dev/null 2>&1
 
   refs_before="$(mktemp)"
-  ( cd "$GATE_FIXTURE" && git rev-list --all | sort -u > "$refs_before" )
+  ( cd "$GATE_FIXTURE" && git rev-list --branches HEAD | sort -u > "$refs_before" )
 
   if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
     bad "deliverable gate PASSED a session that made zero new commits (only pre-existing unrelated branch history present) — this is the exact PR #421 review finding"
@@ -184,14 +201,39 @@ if [ -f "$GATE_SCRIPT" ]; then
     ok "deliverable gate correctly FAILS a session that landed no new commit, even with unrelated branches already in the workspace"
   fi
 
-  ( cd "$GATE_FIXTURE" && mkdir -p factory-ops/state && echo '{}' > factory-ops/state/checkpoint.json && git add factory-ops/state/checkpoint.json && git commit -q -m "chore(checkpoint): reconcile" ) >/dev/null 2>&1
+  ( cd "$GATE_FIXTURE" && git checkout -q -b session-work && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" ) >/dev/null 2>&1
 
   if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
-    ok "deliverable gate correctly PASSES once a real commit (touching checkpoint.json) lands"
+    bad "deliverable gate PASSED a local-only commit that never reached origin — a failed push still reads as success (#484)"
   else
-    bad "deliverable gate FAILED a session that landed a real commit — false negative would red-flag every legitimate factory-run"
+    ok "deliverable gate correctly FAILS a local-only commit whose push never happened (#484)"
   fi
-  rm -rf "$GATE_FIXTURE" "$refs_before"
+
+  # Roll the work commit back and push ONLY a checkpoint bump instead.
+  (
+    cd "$GATE_FIXTURE" || exit 1
+    git checkout -q main
+    git branch -q -D session-work
+    mkdir -p factory-ops/state && echo '{}' > factory-ops/state/checkpoint.json
+    git add factory-ops/state/checkpoint.json
+    git commit -q -m "chore(checkpoint): reconcile"
+    git push -q origin main
+  ) >/dev/null 2>&1
+
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED a pushed checkpoint-only bump — the mandatory bookkeeping commit read as roadmap work (#485)"
+  else
+    ok "deliverable gate correctly FAILS a pushed commit that touches only checkpoint.json (#485)"
+  fi
+
+  ( cd "$GATE_FIXTURE" && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" && git push -q origin main ) >/dev/null 2>&1
+
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    ok "deliverable gate correctly PASSES pushed real work (roadmap commit + checkpoint both on origin)"
+  else
+    bad "deliverable gate FAILED a session that pushed real work — false negative would red-flag every legitimate factory-run"
+  fi
+  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$refs_before"
 else
   bad "$GATE_SCRIPT missing — factory-run deliverable gate has no testable implementation"
 fi
