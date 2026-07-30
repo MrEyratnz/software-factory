@@ -167,8 +167,10 @@ fi
 # that made the SHA-based version of this gate a no-op), snapshot it, then
 # prove each of the gate's three layers fires: (a) FAILS on no new commit;
 # (b) FAILS on a local-only commit that never reached origin (#484);
-# (c) FAILS on a pushed checkpoint-only bump with no roadmap work (#485);
-# (d) PASSES on pushed real work.
+# (c) PASSES but WARNS on a pushed checkpoint-only bump — the mandated
+#     usage-limit park must never red (#485/#487);
+# (d) an empty (merge/--allow-empty) commit does not count as work (#515);
+# (e) PASSES silently-clean on pushed real work.
 GATE_SCRIPT=".github/scripts/require-deliverable.sh"
 if [ -f "$GATE_SCRIPT" ]; then
   GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
@@ -191,6 +193,14 @@ if [ -f "$GATE_SCRIPT" ]; then
     git push -q origin other-bot-pr
     git checkout -q main
   ) >/dev/null 2>&1
+
+  # Setup sanity (#518): if the fixture didn't build, the "correctly FAILS"
+  # assertions below would pass for the wrong reason.
+  if ( cd "$GATE_FIXTURE" && git rev-parse --verify -q origin/main >/dev/null && git rev-parse --verify -q origin/other-bot-pr >/dev/null ); then
+    ok "deliverable-gate fixture built (origin holds main + unrelated bot branch)"
+  else
+    bad "deliverable-gate fixture setup failed — the behavioral assertions below prove nothing"
+  fi
 
   refs_before="$(mktemp)"
   ( cd "$GATE_FIXTURE" && git rev-list --branches HEAD | sort -u > "$refs_before" )
@@ -220,18 +230,33 @@ if [ -f "$GATE_SCRIPT" ]; then
     git push -q origin main
   ) >/dev/null 2>&1
 
-  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
-    bad "deliverable gate PASSED a pushed checkpoint-only bump — the mandatory bookkeeping commit read as roadmap work (#485)"
+  park_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  park_rc=$?
+  if [ "$park_rc" = "0" ] && printf '%s' "$park_out" | grep -q '^::warning::'; then
+    ok "deliverable gate PASSES a pushed checkpoint-only park with a ::warning:: — never red on a limit (#485/#487)"
+  elif [ "$park_rc" != "0" ]; then
+    bad "deliverable gate REDS the mandated checkpoint-only park — violates 'never red on a limit' (#487)"
   else
-    ok "deliverable gate correctly FAILS a pushed commit that touches only checkpoint.json (#485)"
+    bad "deliverable gate passed a checkpoint-only park silently — the operator loses the no-roadmap-work signal (#485)"
+  fi
+
+  # An empty commit (merge/--allow-empty shape) must not upgrade the park to
+  # "real deliverable" (#515).
+  ( cd "$GATE_FIXTURE" && git commit -q --allow-empty -m "chore: empty" && git push -q origin main ) >/dev/null 2>&1
+  empty_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  if [ $? = 0 ] && printf '%s' "$empty_out" | grep -q '^::warning::'; then
+    ok "deliverable gate does not count an empty commit as roadmap work (#515)"
+  else
+    bad "deliverable gate misclassified an empty commit — phantom blank line counted as work (#515)"
   fi
 
   ( cd "$GATE_FIXTURE" && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" && git push -q origin main ) >/dev/null 2>&1
 
-  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
-    ok "deliverable gate correctly PASSES pushed real work (roadmap commit + checkpoint both on origin)"
+  real_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  if [ $? = 0 ] && ! printf '%s' "$real_out" | grep -q '^::warning::'; then
+    ok "deliverable gate correctly PASSES pushed real work cleanly (roadmap commit + checkpoint both on origin)"
   else
-    bad "deliverable gate FAILED a session that pushed real work — false negative would red-flag every legitimate factory-run"
+    bad "deliverable gate FAILED or warned on a session that pushed real work — false negative would red-flag every legitimate factory-run"
   fi
   rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$refs_before"
 else

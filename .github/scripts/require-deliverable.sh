@@ -36,9 +36,15 @@
 #
 #   3. The pushed work is more than the mandatory end-of-run checkpoint
 #      bump. The mandate's step 4 requires a `chore:` checkpoint commit on
-#      EVERY run, so "committed only checkpoint.json" is the incident
-#      behavior plus one commit — not roadmap progress — and must not be
-#      reported to the operator as "real deliverable confirmed" (#485).
+#      EVERY run, so "committed only checkpoint.json" is not roadmap
+#      progress and must not read as "real deliverable confirmed" (#485).
+#      This layer WARNS rather than fails: a pushed checkpoint-only commit
+#      is also exactly the mandated usage-limit / roadmap-complete park
+#      ("checkpoint, commit chore:, never red on a limit" — CLAUDE.md and
+#      the conductor prompt's own step 4), and the gate cannot distinguish
+#      a legitimate park from a lazy run without stop-reason detection
+#      (#487). Layers 1+2 still hard-fail the actual observed incident
+#      (no commit at all / nothing pushed).
 set -euo pipefail
 
 before="$1"
@@ -68,6 +74,10 @@ work=0
 touched_checkpoint=0
 for c in $pushed; do
   files="$(git diff-tree --no-commit-id --name-only -r "$c")"
+  # A merge or --allow-empty commit lists no files at all; without this
+  # guard the empty string reads as a phantom non-checkpoint line and
+  # counts as work (#515).
+  [ -z "$files" ] && continue
   if printf '%s\n' "$files" | grep -qxF "$CHECKPOINT_PATH"; then
     touched_checkpoint=1
   fi
@@ -76,12 +86,12 @@ for c in $pushed; do
   fi
 done
 
+count="$(printf '%s\n' "$pushed" | grep -c .)"
 if [ "$work" = "0" ]; then
-  echo "::error::factory-run session pushed only a checkpoint.json bump — the mandatory end-of-run bookkeeping, not roadmap work. The loop has not advanced. (If this run legitimately parked on a usage limit, that exemption is tracked as #487.)"
-  exit 1
+  echo "::warning::factory-run session pushed only a checkpoint.json bump — the mandated park (usage limit / roadmap complete / waiting on CI), not roadmap progress. Legitimate as a park; if this repeats across consecutive wakes with no roadmap work, the loop is stalled. Stop-reason-aware enforcement is tracked as #487."
+  exit 0
 fi
 
-count="$(printf '%s\n' "$pushed" | grep -c .)"
 if [ "$touched_checkpoint" = "1" ]; then
   echo "$count pushed commit(s) with roadmap work + checkpoint updated — real deliverable confirmed."
 else
