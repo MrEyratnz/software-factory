@@ -358,9 +358,10 @@ Two blocking prerequisites remain before the gate can be evaluated:
    buildable correctly.
 2. **The 188 tech-debt issues with no `P0`–`P3` label (147 with zero
    priority signal at all) must be triaged — tracked as #510 and as an
-   explicit ROADMAP M4 item.** Under ADR 0005 this is structural, not
-   advisory: the gate fails closed on every untriaged issue, so it *cannot*
-   hold until the 188 reach zero — silently treating "unlabeled" as "P2/P3,
+   explicit ROADMAP M4 item.** Under the spec's fail-closed criterion this
+   is structural, not advisory (see the spec section for the mechanics) —
+   the gate cannot hold until the 188 reach zero, because silently treating
+   "unlabeled" as "P2/P3,
    deferrable" is exactly the silent ambiguity this file's ranking rules
    forbid, and the predicate now makes it impossible. This is sized as its
    own debt-burndown allocation (a dedicated triage pass, sprint-1-style:

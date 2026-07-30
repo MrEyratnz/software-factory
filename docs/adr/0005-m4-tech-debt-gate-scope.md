@@ -37,31 +37,26 @@ We will hold v1.0.0 to a **scoped, fail-closed, decidable** tech-debt gate,
 defined **once** in `docs/specs/epic-1/spec.md` ("Release Gate for v1.0.0").
 `docs/ROADMAP.md` M4 mirrors it by reference; `docs/PRODUCT.md` carries the
 product rationale and points at the spec instead of restating a second
-predicate. The criterion:
+predicate. **The normative predicate is not restated here either** — by this
+ADR's own rule there is exactly one maintainable copy, in the spec section
+above; if any summary in this ADR and the spec ever diverge, the spec
+governs. What this ADR decides is the *scope change* the spec now expresses:
 
-1. **Zero open `bug` issues** — literal, unwaived (a bug is fixed, never
-   deferred, even under freeze).
-2. **Zero open `tech-debt` issues labeled `P0` or `P1`.**
-3. **Zero open `tech-debt` issues labeled `security`, at any `P0`–`P3`
-   level.** This cross-priority precedence is **this ADR's own decision**:
-   `docs/PRODUCT.md` ranking rule 1 is, as written, only an equal-priority
-   tie-breaker — this ADR deliberately extends it across priority levels for
-   release gating, because the ground truth shows `security` does not
-   correlate with P-level.
-4. **Zero open `tech-debt` issues lacking a valid `P0`–`P3` label**
-   (fail-closed): an untriaged issue **blocks the gate** until it carries one
-   of `P0`–`P3`. All gate label criteria match **exact, case-sensitive label
-   names as they exist in the repo label set** (`P0`, `P1`, `P2`, `P3`,
-   `security`, `bug`, `tech-debt`). Legacy `priority:*`/`high`/`medium`/`low`
-   labels do **not** count as triage — an issue carrying only those blocks
-   like an unlabeled one. If an issue carries more than one `P0`–`P3` label,
-   the most severe governs. The triage pass that clears this criterion is
-   tracked as #510 and as an explicit ROADMAP M4 item.
-5. **Non-security `P2`/`P3` tech-debt does not block v1.0.0.** Its deferral
-   home is the named ROADMAP **M5 (v1.1.0) item "P2/P3 tech-debt burndown
-   (non-security)"** — deliberately distinct from M3's security-hardening
-   pass, which is security-scoped and v1.0.0-scoped and therefore cannot
-   absorb non-blocking deferrals without contradicting itself.
+- literal-zero tech-debt is replaced by severity-scoped criteria over
+  exact-form, case-sensitive labels (fail-closed on untriaged issues —
+  triage tracked as #510 and as an explicit ROADMAP M4 item);
+- **security blocks at any `P0`–`P3` level** — this cross-priority
+  precedence is **this ADR's own decision**: `docs/PRODUCT.md` ranking
+  rule 1 is, as written, only an equal-priority tie-breaker, and this ADR
+  deliberately extends it across priority levels for release gating,
+  because the ground truth shows `security` does not correlate with
+  P-level;
+- non-security `P2`/`P3` tech-debt no longer blocks v1.0.0 and defers to
+  the named ROADMAP **M5 (v1.1.0) item "P2/P3 tech-debt burndown
+  (non-security)"** — deliberately distinct from M3's security-hardening
+  pass, which is security-scoped and v1.0.0-scoped and therefore cannot
+  absorb non-blocking deferrals without contradicting itself;
+- `bug` stays literal zero, unwaived.
 
 Prerequisite: **#419/#420 (the pagination counting bug) must be fixed and
 re-verified before any automation trusts this gate** — the M4 "Release Gate
@@ -91,8 +86,11 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
   `GOVERNANCE.md`); the architect owns the spec text that expresses it. Any
   future change to the gate predicate is a new ADR, not an edit to a
   restatement.
-- The gate stays decidable with no judgment calls: every criterion is a label
-  query over open issues. Fail-closed on triage converts "triage the 188
+- The gate stays decidable with no judgment calls: every issue-based
+  criterion — including the anti-laundering floor, via the clerk-applied
+  `gate:confirmed-high` label — is a pure label query over open issues, and
+  the artifact criteria (coverage, nightly evals, the freeze marker) are
+  mechanical file/CI checks. Fail-closed on triage converts "triage the 188
   unlabeled issues" from a side condition into a structural property — the
   gate *cannot* pass while any tech-debt issue is untriaged, so nothing hides
   in the pile.

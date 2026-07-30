@@ -74,15 +74,20 @@ before any automation trusts this gate):
   (**fail-closed**: an untriaged issue blocks the gate until it carries one
   of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
   count as triage; if more than one `P0`–`P3` label is present, the most
-  severe governs). The triage pass that clears this is tracked as #510.
-  **Anti-laundering clause:** a `tech-debt` issue whose provenance is a
-  CONFIRMED-high adversarial-review finding counts as `P1` for this gate
-  regardless of the labels it currently carries, until the finding is
-  actually fixed — down-triaging such an issue does not unblock the gate;
+  severe governs). The triage pass that clears this is tracked as #510;
+- zero open `tech-debt` issues labeled `gate:confirmed-high` — the
+  **anti-laundering criterion**, and a pure label query like the rest. The
+  tech-debt clerk applies `gate:confirmed-high` at filing time to every
+  issue it opens from a CONFIRMED-high adversarial-review finding; the
+  label is a severity **floor** that coexists with whatever `P0`–`P3` label
+  triage assigns, and it is removed only by the merge of the finding's fix
+  (re-labeling priority does not touch it). Down-triaging such an issue
+  therefore cannot unblock the gate;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
-- coverage ≥95% lines on `hooks/scripts/**` (layer 2 above) and the
-  `nightly-eval.yml` eval thresholds green on `main` for 3 consecutive
+- coverage ≥95% lines on `hooks/scripts/**` (layer 2 above), measured at
+  the release candidate's HEAD — a commit-gate artifact, not a nightly one;
+- the `nightly-eval.yml` eval thresholds green on `main` for 3 consecutive
   nightly runs. The eval threshold **values** are TBD — owner: qa, tracked
   as #511; this criterion is not evaluable until #511 closes;
 - feature freeze ON — machine-decidable marker: the `## Feature freeze`

@@ -4,7 +4,8 @@ Milestones are ordered; within a milestone, tasks are independent unless noted.
 The autonomous loop works this list top-to-bottom, TDD-first, keeping the full
 suite green at every commit. **An item is checked off only when its work merges
 with green tests — never in advance.** (The `guard-roadmap` gate enforces this.)
-Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
+Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
+§ "Release Gate for v1.0.0".
 
 ## M0 — Foundation
 
