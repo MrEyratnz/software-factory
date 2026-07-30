@@ -149,7 +149,8 @@ if str(snapshot[0][1].get("if")) != str(gate[0][1].get("if")):
 # disable the gate forever while both if: strings still match each other.
 fr = yaml.safe_load(open(".github/workflows/factory-run.yml"))
 dispatched = str(fr["jobs"]["session"]["with"]["station"])
-if f"'{dispatched}'" not in str(gate[0][1].get("if", "")):
+quoted = chr(39) + dispatched + chr(39)
+if quoted not in str(gate[0][1].get("if", "")):
     sys.exit(4)
 sys.exit(0)
   '; then
