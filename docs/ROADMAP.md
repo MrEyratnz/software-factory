@@ -59,15 +59,14 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 ## M4 — v1.0.0 (milestone v1.0.0)
 
-- [ ] Release Gate script green per the authoritative definition in
-  `docs/specs/epic-1/spec.md` (ADR 0005): zero open `bug` (unwaived); zero
-  open `tech-debt` labeled `P0`/`P1`; zero `security`-labeled tech-debt at
-  any P-level; zero tech-debt lacking a valid `P0`–`P3` label (fail-closed
-  on untriaged; legacy `priority:*`/high/medium/low labels don't count);
-  zero unresolved review findings; v1.0.0 roadmap 100% merged-green;
-  coverage + eval thresholds green on `main` for 3 consecutive nightly runs.
-  Prereq: pagination counting bug #419/#420 fixed first; the script counts
-  via fully-paginated queries only
+- [ ] Tech-debt triage pass (#510): every open `tech-debt` issue carries
+  exactly one of `P0`–`P3` — required because the Release Gate fails closed
+  on untriaged tech-debt (see the spec section below; ADR 0005)
+- [ ] Release Gate script green per the **single authoritative definition**
+  in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (ADR 0005) —
+  all criteria in that section as written there, feature-freeze check
+  included; prerequisites tracked there: #419/#420 (fully-paginated
+  counting), #510 (triage pass), #511 (eval threshold values)
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 

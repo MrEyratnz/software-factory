@@ -48,10 +48,15 @@ receipt/commit contract enforces them forever.
 
 ## Release Gate for v1.0.0 (decidable, no judgment calls)
 
-This section is the **single authoritative definition** of the gate
-(`GOVERNANCE.md` pins it here; `docs/ROADMAP.md` M4 and `docs/PRODUCT.md`
-reference it rather than restating it). Scope and rationale: ADR 0005
+This section is the **single authoritative definition** of the gate — it is
+where `docs/ROADMAP.md` (its preamble and M4) and `.claude/CLAUDE.md` pin the
+gate, and `docs/PRODUCT.md` and `docs/ARCHITECTURE.md` point here rather than
+restating it. Scope and rationale: ADR 0005
 (`docs/adr/0005-m4-tech-debt-gate-scope.md`).
+
+Every label criterion below matches **exact, case-sensitive label names as
+they exist in this repo's label set**: `P0`, `P1`, `P2`, `P3`, `security`,
+`bug`, `tech-debt`.
 
 All of, verified by the release captain in one script whose issue counts come
 from **fully-paginated queries** (never a bare `gh issue list`, whose 30-item
@@ -61,18 +66,24 @@ before any automation trusts this gate):
 - zero open `bug` issues — literal, unwaived (a bug is fixed, never
   deferred, even under freeze);
 - zero open `tech-debt` issues labeled `P0` or `P1`;
-- zero open `tech-debt` issues labeled `security`, at any `P0`–`P3` level
-  (security outranks priority — `docs/PRODUCT.md` ranking rule 1);
+- zero open `tech-debt` issues labeled `security`, at any `P0`–`P3` level —
+  a cross-priority rule decided in ADR 0005, which deliberately **extends**
+  `docs/PRODUCT.md` ranking rule 1 (on its own that rule is only an
+  equal-priority tie-breaker);
 - zero open `tech-debt` issues lacking a valid `P0`–`P3` label
   (**fail-closed**: an untriaged issue blocks the gate until it carries one
   of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
   count as triage; if more than one `P0`–`P3` label is present, the most
-  severe governs);
+  severe governs). The triage pass that clears this is tracked as #510;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
-- coverage and eval thresholds green on `main` for 3 consecutive nightly
-  runs;
-- feature freeze per `docs/PRODUCT.md`.
+- coverage ≥95% lines on `hooks/scripts/**` (layer 2 above) and the
+  `nightly-eval.yml` eval thresholds green on `main` for 3 consecutive
+  nightly runs. The eval threshold **values** are TBD — owner: qa, tracked
+  as #511; this criterion is not evaluable until #511 closes;
+- feature freeze ON — machine-decidable marker: the `## Feature freeze`
+  section of `docs/PRODUCT.md` contains a line beginning exactly
+  `**Freeze state: ON**`.
 
 Non-security `P2`/`P3` tech-debt does not block v1.0.0; it is routed to the
 named ROADMAP M5 (v1.1.0) item "P2/P3 tech-debt burndown (non-security)" —

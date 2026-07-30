@@ -31,11 +31,15 @@ reopen the v1.0 gate — only a genuine `bug` can enter the frozen milestone,
 and it must be fixed, not deferred. Freeze state is recorded here when it
 flips, with the date and the gate evidence.
 
-**Freeze state: OFF** (gate not yet within one sprint of holding — M2 and M3
-are both 0% done, and 221 open `tech-debt` + 6 open `bug` issues stand
-between here and M4's "zero open bug/tech-debt" gate). New `idea`/`research`
-issues discovered this pass (#222, #223) were already correctly routed to
-`v1.1.0` by triage; no freeze-routing action needed this snapshot.
+**Freeze state: OFF** (gate not within one sprint of holding — M2 and M3 are
+both 0% done. The "221 open `tech-debt` + 6 open `bug`" figures originally
+recorded here were a 2026-07-28 snapshot taken under the since-superseded
+literal-zero gate; the verified 2026-07-29 ground truth is 273 open
+`tech-debt` / 9 open `bug`, and the gate is now the redefined one — ADR 0005,
+authoritative in `docs/specs/epic-1/spec.md` — which is also not close to
+holding). New `idea`/`research` issues discovered this pass (#222, #223) were
+already correctly routed to `v1.1.0` by triage; no freeze-routing action
+needed this snapshot.
 
 ## Sprint 2 backlog snapshot (2026-07-28)
 
@@ -103,11 +107,13 @@ P1 labels.
    mandatory house rule, not just a preference.
 7. **#328** (P1, labeled this pass; dupes #227/#302 labeled P3 and pointed
    here) — `debt-reconcile`'s Stop hook fetches tech-debt issues with no
-   `--limit`, defaulting to `gh`'s newest-30, against 221 currently open. The
-   Stop-gate reconciliation this repo's whole tech-debt convention depends on
-   — and by extension M4's "zero open bug/tech-debt" gate — cannot see ~86%
-   of what it's supposed to enforce against at current backlog size. This is
-   a gate-integrity bug, not routine tech-debt.
+   `--limit`, defaulting to `gh`'s newest-30, against 221 open at the
+   2026-07-28 snapshot (273 by the 2026-07-29 ground truth). The Stop-gate
+   reconciliation this repo's whole tech-debt convention depends on — and by
+   extension M4's Release Gate (ADR 0005; authoritative in
+   `docs/specs/epic-1/spec.md`) — cannot see ~86% of what it's supposed to
+   enforce against at current backlog size. This is a gate-integrity bug,
+   not routine tech-debt.
 8. **#231** (P1, labeled this pass) — cron-prod dispatch-condition inversion
    in the checkpoint reconciliation; same loop-health cluster as #206/#228.
    Bundle with #206 so both land in one change.
@@ -278,10 +284,11 @@ decision to merge is not mine to make.
 
 ### The problem
 
-`docs/ROADMAP.md` M4 reads literally: "Release Gate script green: zero open
-`bug`/`tech-debt`, zero unresolved review findings, v1.0.0 roadmap 100%
-merged-green, coverage + eval thresholds green on `main` for 3 consecutive
-nightly runs." Multiple disagreeing counts were circulating (a stale cached
+`docs/ROADMAP.md` M4 read literally (before ADR 0005 rewrote it): "Release
+Gate script green: zero open `bug`/`tech-debt`, zero unresolved review
+findings, v1.0.0 roadmap 100% merged-green, coverage + eval thresholds green
+on `main` for 3 consecutive nightly runs." Multiple disagreeing counts were
+circulating (a stale cached
 "30", a `gh`-CLI query capped at 200 showing ">=194", a same-day dashboard
 run reporting 273) — before this decision, nobody had ground truth.
 
@@ -333,15 +340,10 @@ worse than a scoped, honest gate.
 
 **The redefined criterion is recorded in ADR 0005
 (`docs/adr/0005-m4-tech-debt-gate-scope.md`) and defined authoritatively —
-once — in `docs/specs/epic-1/spec.md` ("Release Gate for v1.0.0"), which
-`GOVERNANCE.md` pins the gate to. This file carries the product rationale
-only and deliberately does not restate the predicate.** In product terms:
-`bug` stays literal zero, unwaived; `P0`/`P1` tech-debt and `security`-labeled
-tech-debt at any P-level block v1.0.0 (security outranks priority per this
-file's ranking rule 1); the gate is **fail-closed on triage** — any tech-debt
-issue without a valid `P0`–`P3` label blocks until triaged, and legacy
-`priority:*`/`high`/`medium`/`low` labels don't count; non-security `P2`/`P3`
-defers to ROADMAP M5's named "P2/P3 tech-debt burndown (non-security)" item.
+once — in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (the
+section `docs/ROADMAP.md` and `.claude/CLAUDE.md` pin the gate to). This
+file carries the product rationale only and deliberately does not restate
+the predicate — read the spec section for the criteria.**
 
 Two blocking prerequisites remain before the gate can be evaluated:
 
@@ -351,16 +353,17 @@ Two blocking prerequisites remain before the gate can be evaluated:
    precondition for the M4 "Release Gate script" work item even being
    buildable correctly.
 2. **The 188 tech-debt issues with no `P0`–`P3` label (147 with zero
-   priority signal at all) must be triaged.** Under ADR 0005 this is
-   structural, not advisory: the gate fails closed on every untriaged issue,
-   so it *cannot* hold until the 188 reach zero — silently treating
-   "unlabeled" as "P2/P3, deferrable" is exactly the silent ambiguity this
-   file's ranking rules forbid, and the predicate now makes it impossible.
-   This is sized as its own debt-burndown allocation (a dedicated triage
-   pass, sprint-1-style: "N issues triaged, `P0`–`P3` applied to all with a
-   one-line rationale"), not a one-line milestone move — it does not fit
-   in a single sprint's planning-comment budget. Recommended to the
-   planner as a standing agenda item until the 188 reach zero.
+   priority signal at all) must be triaged — tracked as #510 and as an
+   explicit ROADMAP M4 item.** Under ADR 0005 this is structural, not
+   advisory: the gate fails closed on every untriaged issue, so it *cannot*
+   hold until the 188 reach zero — silently treating "unlabeled" as "P2/P3,
+   deferrable" is exactly the silent ambiguity this file's ranking rules
+   forbid, and the predicate now makes it impossible. This is sized as its
+   own debt-burndown allocation (a dedicated triage pass, sprint-1-style:
+   "N issues triaged, `P0`–`P3` applied to all with a one-line rationale"),
+   not a one-line milestone move — it does not fit in a single sprint's
+   planning-comment budget. Recommended to the planner as a standing agenda
+   item until the 188 reach zero.
 
 Until both prerequisites clear, **M4 stays unchecked** and the Release Gate
 should not be evaluated as "close to holding" on tech-debt count alone —

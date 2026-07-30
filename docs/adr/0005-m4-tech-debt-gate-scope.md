@@ -6,9 +6,9 @@ Status: accepted · Date: 2026-07-30
 
 The v1.0.0 Release Gate (M4) reads literally "zero open `bug`/`tech-debt`
 issues at any priority, no judgment calls" — stated in three places:
-`docs/specs/epic-1/spec.md` (the definition `GOVERNANCE.md` pins the gate to),
-`docs/ROADMAP.md` M4, and, since PR #444, a fourth *divergent* definition in
-`docs/PRODUCT.md`.
+`docs/specs/epic-1/spec.md` (the definition `docs/ROADMAP.md`'s preamble and
+`.claude/CLAUDE.md` pin the gate to), `docs/ROADMAP.md` M4, and, since PR
+#444, a fourth *divergent* definition in `docs/PRODUCT.md`.
 
 Ground truth (2026-07-29, fully-paginated `gh api graphql` — recorded in
 `docs/PRODUCT.md`): **273 open `tech-debt` issues** (P0: 3, P1: 15, P2: 44,
@@ -43,14 +43,20 @@ predicate. The criterion:
    deferred, even under freeze).
 2. **Zero open `tech-debt` issues labeled `P0` or `P1`.**
 3. **Zero open `tech-debt` issues labeled `security`, at any `P0`–`P3`
-   level** — security outranks priority (`docs/PRODUCT.md` ranking rule 1),
-   and the ground truth shows `security` does not correlate with P-level.
+   level.** This cross-priority precedence is **this ADR's own decision**:
+   `docs/PRODUCT.md` ranking rule 1 is, as written, only an equal-priority
+   tie-breaker — this ADR deliberately extends it across priority levels for
+   release gating, because the ground truth shows `security` does not
+   correlate with P-level.
 4. **Zero open `tech-debt` issues lacking a valid `P0`–`P3` label**
    (fail-closed): an untriaged issue **blocks the gate** until it carries one
-   of `P0`–`P3`. Legacy `priority:*`/`high`/`medium`/`low` labels do **not**
-   count as triage — an issue carrying only those blocks like an unlabeled
-   one. If an issue carries more than one `P0`–`P3` label, the most severe
-   governs.
+   of `P0`–`P3`. All gate label criteria match **exact, case-sensitive label
+   names as they exist in the repo label set** (`P0`, `P1`, `P2`, `P3`,
+   `security`, `bug`, `tech-debt`). Legacy `priority:*`/`high`/`medium`/`low`
+   labels do **not** count as triage — an issue carrying only those blocks
+   like an unlabeled one. If an issue carries more than one `P0`–`P3` label,
+   the most severe governs. The triage pass that clears this criterion is
+   tracked as #510 and as an explicit ROADMAP M4 item.
 5. **Non-security `P2`/`P3` tech-debt does not block v1.0.0.** Its deferral
    home is the named ROADMAP **M5 (v1.1.0) item "P2/P3 tech-debt burndown
    (non-security)"** — deliberately distinct from M3's security-hardening
@@ -74,9 +80,10 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
 | #464 ownership-lane violation | Scope decided by product owner (PR #444), gate wording landed in the architect-owned spec via this ADR |
 | #465 PRODUCT.md self-contradiction (sweep-before-ship vs. does-not-block) | The sprint-1 P2 sweep claim is corrected to cite this gate; PRODUCT.md restates no predicate |
 | #466 missing numbered ADR | This ADR; owner named below |
-| #467 fail-open on 188 unlabeled issues | Criterion 4: unlabeled blocks, full stop, until triaged |
-| #470 legacy-label semantics undefined | Criterion 4: legacy labels are not valid triage; `P0`–`P3` only; multi-label → most severe governs |
+| #467 fail-open on 188 unlabeled issues | Criterion 4: unlabeled blocks, full stop, until triaged; triage pass tracked as #510 |
+| #470 legacy-label semantics undefined | Criterion 4: legacy labels are not valid triage; exact-form case-sensitive `P0`–`P3` only; multi-label → most severe governs |
 | #468 deferral target unnamed | Criterion 5: the named M5 "P2/P3 tech-debt burndown (non-security)" item |
+| #469 ground-truth counts embedded as durable facts | Every count in this ADR and `docs/PRODUCT.md` is an explicitly dated 2026-07-29 snapshot, not a live value; the stale 221/6 freeze figures in `docs/PRODUCT.md` are corrected and date-stamped |
 
 ## Consequences
 
@@ -90,10 +97,13 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
   gate *cannot* pass while any tech-debt issue is untriaged, so nothing hides
   in the pile.
 - New obligation: the triage pass over the 188 unlabeled (147 with zero
-  signal) issues is now release-blocking work, and the M5 burndown item is a
-  standing commitment — deferred P2/P3 debt is tracked scope, not amnesty.
+  signal) issues is now release-blocking work with a tracked home (#510 +
+  a ROADMAP M4 item), and the M5 burndown item is a standing commitment —
+  deferred P2/P3 debt is tracked scope, not amnesty.
 - The M4 Release Gate script inherits hard requirements: fully-paginated
-  counting (blocked on #419/#420) and legacy-label rejection.
+  counting (blocked on #419/#420), exact-form case-sensitive label matching,
+  legacy-label rejection, and concrete eval-threshold values (owner: qa,
+  tracked as #511) before the nightly-runs criterion is evaluable.
 - Trade-off accepted: v1.0.0 can ship with known non-security P2/P3 debt
   open. That is honest and bounded (44 + 23 today, plus whatever triage
   reclassifies), versus a literal-zero gate that invites mass-closing or
