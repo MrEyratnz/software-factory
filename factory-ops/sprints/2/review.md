@@ -4,8 +4,9 @@
 - **Plan:** `factory-ops/sprints/2/plan.md`
 - **sprint_ends_at:** 2026-07-29T20:00:00Z
 - **Review held:** 2026-07-29T23:05Z (~3h05m past the boundary — the sprint
-  planning PR for this very sprint, #362, only merged at 22:12:42Z, ~8h
-  before its own boundary; see retro for the mechanism)
+  planning PR for this very sprint, #362, only merged at 22:12:42Z, ~2h12m
+  AFTER its own 20:00:00Z sprint_ends_at boundary; see retro for the
+  mechanism)
 - **Reviewer:** planner session, verified against live GitHub issue/PR state
   and a fully-paginated `gh api graphql` label count at review time — not
   taken on trust from `factory-ops/state/checkpoint.json`, which sprint 1's

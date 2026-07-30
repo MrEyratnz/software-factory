@@ -103,7 +103,7 @@ than claiming all of it as this sprint's capacity.
 | #115 | coder App lacks `actions:read`; factory-run's own CI-check calls 403 | P1 | **BLOCKED-on-human** — org-admin must grant the coder App `actions:read` | Unchanged from sprint 2. Once granted: a real `gh run`/CI-status call succeeds from the coder station, linked in the issue. |
 | #228 | Build-loop no-op-guard: live evidence suggests it may not be fully resolved | P0 (loop integrity) | **BLOCKED-on-human** — depends on #115 | Unchanged from sprint 2: (a) a live post-#115 `factory-run` dispatch is cited; AND (b) a fresh no-op detection guard merges with a failing-then-passing test. |
 
-19 issues tracked total (5 committed core + 7 overflow + 1 already-delivered
+17 issues tracked total (5 committed core + 8 overflow + 1 already-delivered
 + 1 triage-bucket item + 2 blocked-on-human, plus #423 counted once in the
 committed core though it is a prerequisite for overflow item #120). Only the
 5-item committed core counts toward this sprint's closeable-capacity claim.
