@@ -71,16 +71,18 @@ session_commits="$(comm -13 "$before" <(git rev-list --branches HEAD | sort -u))
 # carry our identity, but it lists no files, so it classifies as a park,
 # never as roadmap work.)
 me="$(git config user.email 2>/dev/null || true)"
-if [ -n "$me" ]; then
-  own=""
-  for c in $session_commits; do
-    if [ "$(git show -s --format=%ce "$c")" = "$me" ]; then
-      own="${own}${c}
-"
-    fi
-  done
-  session_commits="$(printf '%s' "$own")"
+if [ -z "$me" ]; then
+  echo "::error::session git identity (user.email) is unset — commits cannot be attributed to this session, so the gate fails closed rather than crediting foreign work (#681)."
+  exit 1
 fi
+own=""
+for c in $session_commits; do
+  if [ "$(git show -s --format=%ce "$c")" = "$me" ]; then
+    own="${own}${c}
+"
+  fi
+done
+session_commits="$(printf '%s' "$own")"
 
 if [ -z "$session_commits" ]; then
   echo "::error::factory-run session reported success but created no commit this run — no PR, no checkpoint update, nothing landed. Producing only a status report is a FAILURE per the conductor's mandate. Next: read the session transcript artifact for why it stopped; the hourly cron will re-dispatch."
@@ -115,21 +117,31 @@ fi
 remote_commits="$(git rev-list --remotes=origin 2>/dev/null | sort -u)"
 pushed="$(comm -12 <(printf '%s\n' "$session_commits") <(printf '%s\n' "$remote_commits"))"
 
+# Local work that never reached origin WARNS, not reds (#676): CLAUDE.md's
+# park protocol is commit-then-exit with no mandated push, so this shape is
+# indistinguishable from a legitimate mid-work limit park — and "never red
+# on a limit" wins. The warning names both readings so the operator can
+# tell them apart from the transcript; repeat-park escalation is #487.
 if [ -z "$pushed" ] || ! has_work "$pushed"; then
-  echo "::error::factory-run session produced roadmap work locally but none of it reached origin — the push failed, so the loop has not advanced. Check the session transcript for push/auth errors (the cited incident hit permission_denials on exactly this plumbing)."
-  exit 1
+  echo "::warning::factory-run session produced roadmap work locally but none of it reached origin — either a mid-work usage-limit park (legitimate; the hourly cron resumes it) or a failed push. Not red, per the never-red-on-a-limit law; check the session transcript to distinguish. Stop-reason-aware enforcement is tracked as #487."
+  exit 0
 fi
 
-# Layer 4 (#644): the mandate is a commit AND a pull request. Pushed work
-# counts only if it either already landed on origin's default branch
-# (merged or pushed there directly — strictly better than an open PR) or
-# an open PR's head branch carries it. A push that succeeded while
+# Layer 4 (#644): the mandate is a commit AND a pull request. Pushed WORK
+# commits (checkpoint bumps never vouch for stranded work — #678) count
+# only if one either already landed on origin's default branch (merged or
+# pushed there directly — strictly better than an open PR) or an open or
+# merged PR's head branch carries it. A push that succeeded while
 # `gh pr create` failed (rate limit, permission denial — the cited
 # incident's exact failure class) is stranded work, not a deliverable.
+# Fetch first so a PR merged while the session ran is visible (#677).
+git fetch origin --quiet 2>/dev/null || true
 default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)"
 default_branch="${default_branch:-main}"
 pr_ok=0
+gh_failed=0
 for c in $pushed; do
+  has_work "$c" || continue
   if git merge-base --is-ancestor "$c" "origin/$default_branch" 2>/dev/null; then
     pr_ok=1
     break
@@ -137,18 +149,28 @@ for c in $pushed; do
 done
 if [ "$pr_ok" = "0" ]; then
   for c in $pushed; do
+    has_work "$c" || continue
     for b in $(git branch --format='%(refname:short)' --contains "$c" 2>/dev/null); do
-      n="$(gh pr list --state open --head "$b" --json number --jq 'length' 2>/dev/null || true)"
-      if [ -n "$n" ] && [ "$n" != "0" ]; then
-        pr_ok=1
-        break 2
+      if n="$(gh pr list --state all --head "$b" --json state --jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)"; then
+        if [ "${n:-0}" != "0" ]; then
+          pr_ok=1
+          break 2
+        fi
+      else
+        # An API failure is inconclusive, not proof of no PR (#679) —
+        # a transient rate-limit/5xx must not red a completed run.
+        gh_failed=1
       fi
     done
   done
 fi
 if [ "$pr_ok" = "0" ]; then
-  echo "::error::factory-run session pushed roadmap work, but no open PR carries it and it has not landed on origin/$default_branch — the mandate is a commit AND a pull request. Check the session transcript for gh pr create failures or permission denials (the cited incident's exact failure class)."
-  exit 1
+  if [ "$gh_failed" = "1" ]; then
+    echo "::warning::factory-run pushed roadmap work but the PR-existence check was inconclusive (GitHub API error on gh pr list) — not failing on a transient API error. Verify a PR exists for the pushed branch if this warning repeats."
+  else
+    echo "::error::factory-run session pushed roadmap work, but no open or merged PR carries it and it has not landed on origin/$default_branch — the mandate is a commit AND a pull request. Check the session transcript for gh pr create failures or permission denials (the cited incident's exact failure class)."
+    exit 1
+  fi
 fi
 
 touched_checkpoint=0

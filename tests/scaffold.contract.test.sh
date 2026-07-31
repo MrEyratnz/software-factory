@@ -152,6 +152,14 @@ dispatched = str(fr["jobs"]["session"]["with"]["station"])
 quoted = chr(39) + dispatched + chr(39)
 if quoted not in str(gate[0][1].get("if", "")):
     sys.exit(4)
+# The snapshot file path must be EXACTLY the one the gate reads — substring
+# overlap is not enough; a one-sided rename still contains the old prefix
+# and would pass a looser check while breaking at runtime (#685).
+import re
+snap_paths = set(re.findall(r"\$RUNNER_TEMP/[\w.-]+", str(snapshot[0][1].get("run", ""))))
+gate_paths = set(re.findall(r"\$RUNNER_TEMP/[\w.-]+", str(gate[0][1].get("run", ""))))
+if not snap_paths or not snap_paths.issubset(gate_paths):
+    sys.exit(5)
 sys.exit(0)
   '; then
     ok "$SESSION_WF snapshots refs before the session and gates factory-run against them after"
@@ -163,6 +171,8 @@ sys.exit(0)
       bad "$SESSION_WF: snapshot and gate steps have drifted apart — their if: conditions differ (#489)"
     elif [ "$st" = "4" ]; then
       bad "$SESSION_WF: the gate's station literal does not match the station factory-run.yml dispatches — the gate is silently disabled (#558)"
+    elif [ "$st" = "5" ]; then
+      bad "$SESSION_WF: the snapshot file path and the path the gate reads have drifted (#685)"
     else
       bad "$SESSION_WF does not wire a pre-session ref snapshot into a post-session require-deliverable.sh gate"
     fi
@@ -189,6 +199,13 @@ if [ -f "$GATE_SCRIPT" ]; then
   GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
   GATE_ORIGIN="$(mktemp -d)"
   GATE_FIXTURE="$(mktemp -d)"
+  # Deterministic gh for layer 4: answers "zero matching PRs", successfully —
+  # so the no-PR red path is provable without the real API, and a real gh
+  # failure can't skew the fixture into the inconclusive-warn path (#679).
+  GATE_GH_STUB="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\necho 0\n' > "$GATE_GH_STUB/gh"
+  chmod +x "$GATE_GH_STUB/gh"
+  GATE_PATH="$GATE_GH_STUB:$PATH"
   (
     git init -q --bare "$GATE_ORIGIN"
     cd "$GATE_FIXTURE" || exit 1
@@ -285,16 +302,22 @@ if [ -f "$GATE_SCRIPT" ]; then
     bad "deliverable gate misclassified an empty commit — phantom blank line counted as work (#515)"
   fi
 
-  # Real work committed but never pushed IS the stall — red (#484).
+  # Real work committed but never pushed is ambiguous between a mid-work
+  # limit park (protocol-legitimate, no push mandated) and a failed push —
+  # so it WARNS and passes, never reds (#676; never-red-on-a-limit).
   ( cd "$GATE_FIXTURE" && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" ) >/dev/null 2>&1
-  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
-    bad "deliverable gate PASSED real work stranded locally — a failed push still reads as success (#484)"
+  local_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  local_rc=$?
+  if [ "$local_rc" = "0" ] && printf '%s' "$local_out" | grep -q '^::warning::'; then
+    ok "deliverable gate WARN-passes local-only work — indistinguishable from a mid-work limit park, never red on a limit (#676)"
+  elif [ "$local_rc" != "0" ]; then
+    bad "deliverable gate REDS local-only work — a protocol-compliant mid-work limit park goes red (#676)"
   else
-    ok "deliverable gate correctly FAILS real work that never reached origin (#484)"
+    bad "deliverable gate passed local-only work silently — the operator loses the possibly-failed-push signal (#676)"
   fi
 
   ( cd "$GATE_FIXTURE" && git push -q origin main ) >/dev/null 2>&1
-  real_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  real_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
   if [ $? = 0 ] && ! printf '%s' "$real_out" | grep -q '^::warning::'; then
     ok "deliverable gate correctly PASSES pushed real work cleanly (roadmap work on origin's default branch)"
   else
@@ -310,12 +333,21 @@ if [ -f "$GATE_SCRIPT" ]; then
   refs_before2="$(mktemp)"
   ( cd "$GATE_FIXTURE" && git rev-list --branches --remotes HEAD | sort -u > "$refs_before2" )
   ( cd "$GATE_FIXTURE" && git checkout -q -b stranded-branch && echo more > src/more.txt && git add src/more.txt && git commit -q -m "feat: stranded work" && git push -q origin stranded-branch && git checkout -q main ) >/dev/null 2>&1
-  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before2" ) >/dev/null 2>&1; then
+  if ( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before2" ) >/dev/null 2>&1; then
     bad "deliverable gate PASSED work stranded on a side branch with no PR — a failed gh pr create still reads as success (#644)"
   else
     ok "deliverable gate correctly FAILS side-branch work with no open PR (#644)"
   fi
-  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$refs_before" "$refs_before2"
+
+  # A checkpoint bump on main must NOT vouch for the stranded side-branch
+  # work (#678): checkpoint commits are bookkeeping, never the PR evidence.
+  ( cd "$GATE_FIXTURE" && echo '{"n":2}' > factory-ops/state/checkpoint.json && git add factory-ops/state/checkpoint.json && git commit -q -m "chore(checkpoint): park" && git push -q origin main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before2" ) >/dev/null 2>&1; then
+    bad "deliverable gate let a main-branch checkpoint bump vouch for stranded side-branch work (#678)"
+  else
+    ok "deliverable gate still FAILS stranded side-branch work when a checkpoint bump landed on main (#678)"
+  fi
+  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$GATE_GH_STUB" "$refs_before" "$refs_before2"
 else
   bad "$GATE_SCRIPT missing — factory-run deliverable gate has no testable implementation"
 fi

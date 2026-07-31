@@ -225,7 +225,12 @@ jobs:
       # the origin remote-ref set separately for "did it reach GitHub".
       - name: snapshot commit refs before the session runs
         if: inputs.station == 'factory-run'
-        run: git rev-list --branches --remotes HEAD | sort -u > "$RUNNER_TEMP/refs-before.txt"
+        # set-head: actions/checkout does not create refs/remotes/origin/HEAD,
+        # without which the gate's default-branch detection would silently
+        # fall back to a hardcoded name (#683).
+        run: |
+          git remote set-head origin --auto >/dev/null 2>&1 || true
+          git rev-list --branches --remotes HEAD | sort -u > "$RUNNER_TEMP/refs-before.txt"
 
       - name: run station session
         shell: bash   # pipefail: without it `tee` masks the CLI's exit status
