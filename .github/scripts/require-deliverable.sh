@@ -116,7 +116,38 @@ remote_commits="$(git rev-list --remotes=origin 2>/dev/null | sort -u)"
 pushed="$(comm -12 <(printf '%s\n' "$session_commits") <(printf '%s\n' "$remote_commits"))"
 
 if [ -z "$pushed" ] || ! has_work "$pushed"; then
-  echo "::error::factory-run session produced roadmap work locally but none of it reached origin — the push (or PR creation) failed, so the loop has not advanced. Check the session transcript for push/auth errors (the cited incident hit permission_denials on exactly this plumbing)."
+  echo "::error::factory-run session produced roadmap work locally but none of it reached origin — the push failed, so the loop has not advanced. Check the session transcript for push/auth errors (the cited incident hit permission_denials on exactly this plumbing)."
+  exit 1
+fi
+
+# Layer 4 (#644): the mandate is a commit AND a pull request. Pushed work
+# counts only if it either already landed on origin's default branch
+# (merged or pushed there directly — strictly better than an open PR) or
+# an open PR's head branch carries it. A push that succeeded while
+# `gh pr create` failed (rate limit, permission denial — the cited
+# incident's exact failure class) is stranded work, not a deliverable.
+default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)"
+default_branch="${default_branch:-main}"
+pr_ok=0
+for c in $pushed; do
+  if git merge-base --is-ancestor "$c" "origin/$default_branch" 2>/dev/null; then
+    pr_ok=1
+    break
+  fi
+done
+if [ "$pr_ok" = "0" ]; then
+  for c in $pushed; do
+    for b in $(git branch --format='%(refname:short)' --contains "$c" 2>/dev/null); do
+      n="$(gh pr list --state open --head "$b" --json number --jq 'length' 2>/dev/null || true)"
+      if [ -n "$n" ] && [ "$n" != "0" ]; then
+        pr_ok=1
+        break 2
+      fi
+    done
+  done
+fi
+if [ "$pr_ok" = "0" ]; then
+  echo "::error::factory-run session pushed roadmap work, but no open PR carries it and it has not landed on origin/$default_branch — the mandate is a commit AND a pull request. Check the session transcript for gh pr create failures or permission denials (the cited incident's exact failure class)."
   exit 1
 fi
 

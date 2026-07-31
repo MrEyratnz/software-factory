@@ -298,6 +298,9 @@ jobs:
       # test (tests/scaffold.contract.test.sh) encode this scenario directly.
       - name: fail when factory-run reports success without a real deliverable
         if: inputs.station == 'factory-run'
+        env:
+          # Layer 4 asks GitHub whether an open PR carries the pushed work.
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/require-deliverable.sh" "$RUNNER_TEMP/refs-before.txt"
 
       # Cost telemetry (efficiency program): usage + duration per station to the

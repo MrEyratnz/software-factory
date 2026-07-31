@@ -296,11 +296,26 @@ if [ -f "$GATE_SCRIPT" ]; then
   ( cd "$GATE_FIXTURE" && git push -q origin main ) >/dev/null 2>&1
   real_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
   if [ $? = 0 ] && ! printf '%s' "$real_out" | grep -q '^::warning::'; then
-    ok "deliverable gate correctly PASSES pushed real work cleanly (roadmap commit + checkpoint both on origin)"
+    ok "deliverable gate correctly PASSES pushed real work cleanly (roadmap work on origin's default branch)"
   else
     bad "deliverable gate FAILED or warned on a session that pushed real work — false negative would red-flag every legitimate factory-run"
   fi
-  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$refs_before"
+
+  # Work pushed to a SIDE branch with no PR must red: the mandate is a
+  # commit AND a pull request; a push that succeeded while gh pr create
+  # failed is stranded work (#644). Fresh snapshot first, so the earlier
+  # main-landed work is out of scope and only the stranded commit counts.
+  # (In this hermetic fixture `gh` has no repo to answer for, which is
+  # exactly the no-open-PR condition.)
+  refs_before2="$(mktemp)"
+  ( cd "$GATE_FIXTURE" && git rev-list --branches --remotes HEAD | sort -u > "$refs_before2" )
+  ( cd "$GATE_FIXTURE" && git checkout -q -b stranded-branch && echo more > src/more.txt && git add src/more.txt && git commit -q -m "feat: stranded work" && git push -q origin stranded-branch && git checkout -q main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before2" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED work stranded on a side branch with no PR — a failed gh pr create still reads as success (#644)"
+  else
+    ok "deliverable gate correctly FAILS side-branch work with no open PR (#644)"
+  fi
+  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$refs_before" "$refs_before2"
 else
   bad "$GATE_SCRIPT missing — factory-run deliverable gate has no testable implementation"
 fi
