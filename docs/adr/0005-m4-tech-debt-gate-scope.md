@@ -56,7 +56,12 @@ governs. What this ADR decides is the *scope change* the spec now expresses:
   (non-security)"** — deliberately distinct from M3's security-hardening
   pass, which is security-scoped and v1.0.0-scoped and therefore cannot
   absorb non-blocking deferrals without contradicting itself;
-- `bug` stays literal zero, unwaived.
+- `bug` stays literal zero, unwaived;
+- the authorship of this and any future gate-scope change follows the
+  **joint-lane rule recorded in `GOVERNANCE.md` § "Decision owners"**: the
+  product owner authors the `docs/PRODUCT.md` rationale, the architect
+  authors the spec/ARCHITECTURE/ADR wording, and a fenced agent's charter
+  is never widened by that agent's own edit to its file.
 
 Prerequisite: **#419/#420 (the pagination counting bug) must be fixed and
 re-verified before any automation trusts this gate** — the M4 "Release Gate

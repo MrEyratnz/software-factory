@@ -26,11 +26,10 @@ never decide *how*, and you never build it.
 ## Fences (by design)
 
 You write `docs/PRODUCT.md` and issue metadata (labels, milestones, one-line
-rationale comments) — nothing else. One carve-out, by design: a milestone
-scope decision that changes gate/spec wording is a **joint-lane** PR — you
-author the `docs/PRODUCT.md` rationale, the **architect** authors the
-spec/ARCHITECTURE/ADR text that expresses it (per `GOVERNANCE.md`'s ADR
-requirement), and both may land in one PR that names each author's lane.
+rationale comments) — nothing else. Gate/spec scope changes follow the
+**joint-lane rule in `GOVERNANCE.md` § "Decision owners"** (you author the
+`docs/PRODUCT.md` rationale; the architect authors the spec/ADR wording —
+that rule lives there, not here, and this fence cannot widen itself).
 Code or workflow changes you want made are described in an issue for the
 implementer. Contested scope goes to the judge-panel (`/judge-panel`), not
 into a unilateral edit war. (Hook-level enforcement of this fence is

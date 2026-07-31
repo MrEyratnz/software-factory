@@ -64,8 +64,9 @@ says "most severe": `P0` > `P1` > `P2` > `P3`.
 
 All of, verified by the `release-captain` in one script whose issue counts come
 from **fully-paginated queries** (never a bare `gh issue list`, whose 30-item
-default page is the counting bug tracked as #419/#420 — both must be fixed
-before any automation trusts this gate):
+default page is the counting bug tracked as #419/#420 — both must be fixed,
+and the #649 anti-laundering backfill completed, before any automation
+trusts this gate):
 
 - zero open `bug` issues — literal, unwaived (a bug is fixed, never
   deferred, even under freeze);
@@ -86,7 +87,20 @@ before any automation trusts this gate):
   label is a severity **floor** that coexists with whatever `P0`–`P3` label
   triage assigns, and it is removed only by the merge of the finding's fix
   (re-labeling priority does not touch it). Down-triaging such an issue
-  therefore cannot unblock the gate;
+  therefore cannot unblock the gate. The clerk mechanism is prospective
+  only — the one-time backfill audit of the pre-existing backlog is
+  tracked as #649 and is a **prerequisite of this criterion**: until #649
+  closes, this criterion is not evaluable (same gating shape as the eval
+  thresholds on #511);
+- zero gate-relevant issues **closed as `not planned`** at or after
+  2026-07-30 (ADR 0005's date) — the close-laundering criterion.
+  "Gate-relevant" means labeled `bug`, or labeled `tech-debt` with any of
+  `P0`/`P1`/`security`/`gate:confirmed-high`. A gate-relevant issue leaves
+  the gate only through a merged fix (close reason `completed` with a
+  linked merged PR) or as a duplicate of an issue that itself blocks or
+  was fixed. Mass-closing the backlog therefore cannot green the gate.
+  Decidable via the closed issues' `stateReason` over the same
+  fully-paginated GraphQL the open-issue counts use;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
 - coverage ≥95% lines on `hooks/scripts/**` (layer 2 above), measured at
