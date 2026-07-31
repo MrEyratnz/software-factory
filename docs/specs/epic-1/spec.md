@@ -46,7 +46,10 @@ receipt/commit contract enforces them forever.
       layer 3
 - [ ] Three consecutive nightly runs green on `main` (feeds the Release Gate)
 
-## Release Gate for v1.0.0 (decidable, no judgment calls)
+## Release Gate for v1.0.0
+
+Decidable, no judgment calls — every criterion below is either a pure label
+query or a mechanical artifact check.
 
 This section is the **single authoritative definition** of the gate — it is
 where `docs/ROADMAP.md` (its preamble and M4) and `.claude/CLAUDE.md` pin the
@@ -56,9 +59,10 @@ restating it. Scope and rationale: ADR 0005
 
 Every label criterion below matches **exact, case-sensitive label names as
 they exist in this repo's label set**: `P0`, `P1`, `P2`, `P3`, `security`,
-`bug`, `tech-debt`.
+`bug`, `tech-debt`, `gate:confirmed-high`. Severity order, where a rule
+says "most severe": `P0` > `P1` > `P2` > `P3`.
 
-All of, verified by the release captain in one script whose issue counts come
+All of, verified by the `release-captain` in one script whose issue counts come
 from **fully-paginated queries** (never a bare `gh issue list`, whose 30-item
 default page is the counting bug tracked as #419/#420 — both must be fixed
 before any automation trusts this gate):
@@ -92,7 +96,8 @@ before any automation trusts this gate):
   as #511; this criterion is not evaluable until #511 closes;
 - feature freeze ON — machine-decidable marker: the `## Feature freeze`
   section of `docs/PRODUCT.md` contains **exactly one** line beginning
-  `**Freeze state:`, and that line reads `**Freeze state: ON**`. A freeze
+  `**Freeze state:`, and that line **begins with** `**Freeze state: ON**`
+  (trailing annotation after the marker is allowed). A freeze
   flip edits that single line in place — never appends a second state line —
   so the test is over the current state, not a flip log.
 

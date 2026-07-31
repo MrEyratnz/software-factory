@@ -293,8 +293,9 @@ circulating (a stale cached
 "30", a `gh`-CLI query capped at 200 showing ">=194", a same-day dashboard
 run reporting 273) — before this decision, nobody had ground truth.
 
-### Ground truth (verified 2026-07-29, `gh api graphql`, fully paginated —
-not `gh issue list`, which silently truncates)
+### Ground truth (verified 2026-07-29, fully paginated `gh api graphql`)
+
+(Not `gh issue list`, which silently truncates — see "Root cause" below.)
 
 - **286 open issues total.**
 - **273 labeled `tech-debt`.** (The 273 figure quoted elsewhere was
