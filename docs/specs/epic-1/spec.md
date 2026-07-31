@@ -92,15 +92,23 @@ trusts this gate):
   tracked as #649 and is a **prerequisite of this criterion**: until #649
   closes, this criterion is not evaluable (same gating shape as the eval
   thresholds on #511);
-- zero gate-relevant issues **closed as `not planned`** at or after
-  2026-07-30 (ADR 0005's date) — the close-laundering criterion.
-  "Gate-relevant" means labeled `bug`, or labeled `tech-debt` with any of
-  `P0`/`P1`/`security`/`gate:confirmed-high`. A gate-relevant issue leaves
-  the gate only through a merged fix (close reason `completed` with a
-  linked merged PR) or as a duplicate of an issue that itself blocks or
-  was fixed. Mass-closing the backlog therefore cannot green the gate.
-  Decidable via the closed issues' `stateReason` over the same
-  fully-paginated GraphQL the open-issue counts use;
+- zero gate-relevant issues closed at or after **2026-07-29** (the
+  ground-truth baseline date) other than through a mechanically-verified
+  fix or duplicate — the close-laundering criterion, **fail-closed across
+  every close reason**. "Gate-relevant" means: labeled `bug`; or labeled
+  `tech-debt` with any of `P0`/`P1`/`security`/`gate:confirmed-high`; or
+  labeled `tech-debt` **lacking a valid `P0`–`P3` label** — the identical
+  set the open-issue criteria block on, so closing an untriaged issue
+  cannot bypass triage. A closed gate-relevant issue is exempt only if:
+  (a) `stateReason` is `completed` **and** GitHub's closed-by-PR
+  cross-reference (`closedByPullRequestsReferences` in the same
+  fully-paginated GraphQL) lists at least one **merged** pull request; or
+  (b) `stateReason` is `duplicate` and the canonical duplicate target is
+  itself either still open (and so counted by the open-issue criteria) or
+  satisfies (a). Everything else — `completed` with no merged PR,
+  `not planned`, duplicate without a qualifying target — blocks the gate.
+  Mass-closing the backlog therefore cannot green the gate under any
+  close reason;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
 - coverage ≥95% lines on `hooks/scripts/**` (layer 2 above), measured at

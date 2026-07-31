@@ -63,7 +63,8 @@ governs. What this ADR decides is the *scope change* the spec now expresses:
   authors the spec/ARCHITECTURE/ADR wording, and a fenced agent's charter
   is never widened by that agent's own edit to its file.
 
-Prerequisite: **#419/#420 (the pagination counting bug) must be fixed and
+Prerequisite: **#419/#420 (the pagination counting bug) and #649 (the
+anti-laundering backfill audit) must be fixed and
 re-verified before any automation trusts this gate** — the M4 "Release Gate
 script" must count via fully-paginated queries, never a bare `gh issue list`.
 
@@ -91,10 +92,12 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
   `GOVERNANCE.md`); the architect owns the spec text that expresses it. Any
   future change to the gate predicate is a new ADR, not an edit to a
   restatement.
-- The gate stays decidable with no judgment calls: every issue-based
-  criterion — including the anti-laundering floor, via the clerk-applied
-  `gate:confirmed-high` label — is a pure label query over open issues, and
-  the artifact criteria (coverage, nightly evals, the freeze marker) are
+- The gate stays decidable with no judgment calls, across three mechanical
+  bucket kinds: label queries over **open** issues (including the
+  anti-laundering floor via the clerk-applied `gate:confirmed-high`
+  label), the close-laundering query over **closed** issues
+  (`stateReason` + merged-PR cross-reference, spec-defined), and the
+  artifact checks (coverage, nightly evals, the freeze marker) as
   mechanical file/CI checks. Fail-closed on triage converts "triage the 188
   unlabeled issues" from a side condition into a structural property — the
   gate *cannot* pass while any tech-debt issue is untriaged, so nothing hides

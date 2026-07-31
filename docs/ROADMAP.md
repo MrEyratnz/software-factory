@@ -67,7 +67,8 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
   in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (ADR 0005) —
   all criteria in that section as written there, feature-freeze check
   included; prerequisites tracked there: #419/#420 (fully-paginated
-  counting), #510 (triage pass), #511 (eval threshold values)
+  counting), #510 (triage pass), #511 (eval threshold values), #649
+  (anti-laundering backfill audit)
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 
