@@ -328,7 +328,72 @@ elif python3 -c "import yaml" 2>/dev/null; then
   else
     bad "ceiling-check MISSED an inbound station's environment pointing at the wrong role"
   fi
+  # Same mutation also proves the station-vs-environment check is not dead
+  # code: it must fire even though `on-issue.yml`'s station ('triage') is
+  # still mapped and no OTHER job took the 'triage' environment slot (#100
+  # review finding: the old check was pre-filtered by expected_env and could
+  # never observe a mismatch).
+  if printf '%s' "$CASE_OUT" | grep -q "declares station 'triage' but targets environment 'qa', not the documented 'triage' role"; then
+    ok "ceiling-check's station-vs-environment check fires on its own (not dead code)"
+  else
+    bad "ceiling-check's station-vs-environment check MISSED the same drift its own dedicated message should catch"
+  fi
   cp "$CEILING_FIXTURE/.github/workflows/on-issue.yml.orig" "$CEILING_FIXTURE/.github/workflows/on-issue.yml"
+
+  # 4. Unmapped role escape: a caller on a real-but-undocumented role
+  # (release/orchestrator/security-style) must not silently pass just
+  # because ROW_TO_ENVIRONMENT/STATION_TO_ROW has no row for it.
+  cat > "$CEILING_FIXTURE/.github/workflows/release-session.yml" <<'YAML'
+name: release-session
+on:
+  workflow_dispatch: {}
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/claude-session.yml
+    secrets: inherit
+    with:
+      station: release
+      environment: release
+YAML
+  CASE_OUT="$(python3 "$SECURITY_CEILING_CHECK" "$CEILING_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q "declares station 'release' which has no documented ceiling row"; then
+    ok "ceiling-check catches a caller on an undocumented role (regression fixture: release-session.yml)"
+  else
+    bad "ceiling-check MISSED a caller on an undocumented role — unmapped-role escape (#100)"
+  fi
+  rm -f "$CEILING_FIXTURE/.github/workflows/release-session.yml"
+
+  # 5. Station-key collision: two jobs sharing a station string must not
+  # silently drop one from the audit (the old station-keyed dict overwrote
+  # on collision).
+  cat > "$CEILING_FIXTURE/.github/workflows/review-mirror.yml" <<'YAML'
+name: review-mirror
+on:
+  pull_request_target: {}
+jobs:
+  review-mirror:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/claude-session.yml
+    secrets: inherit
+    with:
+      station: review
+      environment: coder
+YAML
+  CASE_OUT="$(python3 "$SECURITY_CEILING_CHECK" "$CEILING_FIXTURE" 2>&1)"
+  if printf '%s' "$CASE_OUT" | grep -q "both declare station 'review'"; then
+    ok "ceiling-check catches two jobs sharing a station name (regression fixture: review-mirror.yml)"
+  else
+    bad "ceiling-check MISSED a station-name collision — one job could silently vanish from the audit (#100)"
+  fi
+  if printf '%s' "$CASE_OUT" | grep -q "declares station 'review' but targets environment 'coder'"; then
+    ok "ceiling-check still examines the colliding job's own environment instead of dropping it"
+  else
+    bad "ceiling-check dropped the colliding job instead of still auditing its environment"
+  fi
+  rm -f "$CEILING_FIXTURE/.github/workflows/review-mirror.yml"
 
   rm -rf "$CEILING_FIXTURE"
 else

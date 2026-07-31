@@ -49,6 +49,19 @@ ROW_TO_ENVIRONMENT = {
     "factory-run": "coder",
 }
 
+# A job's own `with.station:` input is its self-declared identity — distinct
+# from `with.environment:` (the credential it actually runs on) so that the
+# two can be compared for drift. Station names don't always match the doc
+# row's leading word (the QA row's caller is nightly-eval.yml's `station:
+# nightly-eval`), so this mapping is maintained separately from
+# ROW_TO_ENVIRONMENT and reviewed by hand alongside it.
+STATION_TO_ROW = {
+    "triage": "triage",
+    "review": "review",
+    "nightly-eval": "qa",
+    "factory-run": "factory-run",
+}
+
 
 def _to_app_perm(perm):
     """GITHUB_TOKEN permission name -> bootstrap.sh role_perms() JSON key."""
@@ -92,10 +105,12 @@ def parse_role_perms(bootstrap_path):
 
 
 def discover_session_jobs(workflows_glob):
-    """{ key: {"path","job","environment","ceiling"} } for every job calling
-    claude-session.yml, keyed by its `with.station` (falling back to
-    path:job if a caller ever omits one) — discovered, never hardcoded, so a
-    future station cannot escape this check just by not being listed."""
+    """{ "path:job": {"path","job","station","environment","ceiling"} } for
+    every job calling claude-session.yml, keyed by its own path:job identity
+    — never by `with.station`, which callers choose freely and which two
+    jobs could share, silently dropping one from every check below —
+    discovered, never hardcoded, so a future station cannot escape this
+    check just by not being listed."""
     jobs = {}
     for path in sorted(glob.glob(workflows_glob)):
         wf = yaml.safe_load(open(path, encoding="utf-8"))
@@ -109,9 +124,10 @@ def discover_session_jobs(workflows_glob):
             station = wth.get("station")
             environment = wth.get("environment")
             ceiling = job.get("permissions") or {}
-            jobs[station or f"{path}:{name}"] = {
+            jobs[f"{path}:{name}"] = {
                 "path": path,
                 "job": name,
+                "station": station,
                 "environment": environment,
                 "ceiling": ceiling,
             }
@@ -131,6 +147,55 @@ def check(root):
 
     role_perms = parse_role_perms(bootstrap_path)
     session_jobs = discover_session_jobs(os.path.join(root, ".github/workflows/*.yml"))
+
+    # Fail closed on any caller whose station isn't one this check knows how
+    # to audit at all — a real-but-undocumented role (release, orchestrator,
+    # security, ...) must not silently escape every check below just because
+    # ROW_TO_ENVIRONMENT/STATION_TO_ROW has no entry for it.
+    for info in session_jobs.values():
+        if info["station"] not in STATION_TO_ROW:
+            problems.append(
+                f"{info['path']}:{info['job']} declares station "
+                f"'{info['station']}' which has no documented ceiling row — "
+                f"add one to docs/security/README.md and STATION_TO_ROW, or "
+                f"this check cannot bound its permissions"
+            )
+
+    # A station name is meant to identify one job. Two jobs sharing a
+    # station string collide in any station-keyed view — including this
+    # check's own history of keying `discover_session_jobs` by station —
+    # and would silently drop one job from every check that follows.
+    stations_seen = {}
+    for info in session_jobs.values():
+        station = info["station"]
+        if station is None:
+            continue
+        prior = stations_seen.get(station)
+        if prior is not None:
+            problems.append(
+                f"{info['path']}:{info['job']} and {prior} both declare "
+                f"station '{station}' — duplicate station names collide in "
+                f"any station-keyed audit of these jobs"
+            )
+        else:
+            stations_seen[station] = f"{info['path']}:{info['job']}"
+
+    # A job's own declared station says which documented role it claims to
+    # be; its `environment:` is the credential it actually runs on. Checked
+    # over every discovered job (not just ones that already landed under
+    # their expected environment) so a station silently pointed at a wider
+    # role's environment cannot hide by construction.
+    for info in session_jobs.values():
+        row = STATION_TO_ROW.get(info["station"])
+        if row is None:
+            continue  # already flagged above as an unmapped station
+        expected_env = ROW_TO_ENVIRONMENT.get(row)
+        if expected_env is not None and info["environment"] != expected_env:
+            problems.append(
+                f"{info['path']}:{info['job']} declares station "
+                f"'{info['station']}' but targets environment "
+                f"'{info['environment']}', not the documented '{expected_env}' role"
+            )
 
     jobs_by_env = {}
     for key, info in session_jobs.items():
@@ -166,17 +231,12 @@ def check(root):
                         f"docs/security/README.md's ceiling table does not document"
                     )
 
-            # 2. the job's environment must be the role the doc says this
-            #    station holds — an inbound station's environment silently
-            #    pointing at a different (wider) role is exactly the drift
-            #    #100 warns a convention alone cannot catch.
-            if info["environment"] != expected_env:
-                problems.append(
-                    f"{info['path']}:{info['job']} ({row}) targets environment "
-                    f"'{info['environment']}', not the documented '{expected_env}' role"
-                )
+            # (station-vs-environment drift is checked once, over every
+            # discovered job, above — `matches` here is already pre-filtered
+            # by `expected_env` so re-checking it against the same value
+            # here can never fire.)
 
-        # 3. the App token's OWN scope for this role must match the ceiling
+        # 2. the App token's OWN scope for this role must match the ceiling
         #    EXACTLY, not just cover it: under-privilege 403s on the App
         #    path; over-privilege means the ceiling never bounded that
         #    credential at all — the App path is the one every station
