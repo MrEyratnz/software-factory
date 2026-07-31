@@ -237,6 +237,16 @@ if [ -f "$GATE_SCRIPT" ]; then
     ok "deliverable gate correctly FAILS a no-op session after a DWIM checkout of a pre-existing remote branch (#564)"
   fi
 
+  # A commit ANOTHER actor pushes after the snapshot, absorbed into local
+  # heads (the `git pull` shape), must not count as this session's work —
+  # the committer-identity filter is what excludes it (#564, round 5).
+  ( cd "$GATE_FIXTURE" && echo foreign > foreign.txt && git add foreign.txt && GIT_AUTHOR_EMAIL=other-bot@example.com GIT_COMMITTER_EMAIL=other-bot@example.com git commit -q -m "feat: foreign actor work" && git push -q origin main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED on a foreign actor's post-snapshot commit pulled into local heads — false green (#564)"
+  else
+    ok "deliverable gate correctly FAILS when the only post-snapshot commit belongs to a foreign actor (#564)"
+  fi
+
   # LOCAL-only checkpoint commit: the CLAUDE.md usage-limit park mandates
   # commit-without-push — must warn, never red (#556).
   (

@@ -62,6 +62,26 @@ CHECKPOINT_PATH="factory-ops/state/checkpoint.json"
 
 session_commits="$(comm -13 "$before" <(git rev-list --branches HEAD | sort -u))"
 
+# Of the post-snapshot commits, only ones committed under THIS session's
+# git identity count as its own work: a mid-session `git pull` absorbs
+# commits other actors pushed AFTER the snapshot straight into local
+# heads, and the snapshot cannot exclude what did not exist yet — the
+# committer identity (set by the "session identity" step) is the property
+# a foreign actor's commit cannot share. (A pull's own merge commit does
+# carry our identity, but it lists no files, so it classifies as a park,
+# never as roadmap work.)
+me="$(git config user.email 2>/dev/null || true)"
+if [ -n "$me" ]; then
+  own=""
+  for c in $session_commits; do
+    if [ "$(git show -s --format=%ce "$c")" = "$me" ]; then
+      own="${own}${c}
+"
+    fi
+  done
+  session_commits="$(printf '%s' "$own")"
+fi
+
 if [ -z "$session_commits" ]; then
   echo "::error::factory-run session reported success but created no commit this run — no PR, no checkpoint update, nothing landed. Producing only a status report is a FAILURE per the conductor's mandate. Next: read the session transcript artifact for why it stopped; the hourly cron will re-dispatch."
   exit 1
