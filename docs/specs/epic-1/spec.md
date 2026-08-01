@@ -103,16 +103,28 @@ trusts this gate):
   (a) `stateReason` is `completed` **and** GitHub's closed-by-PR
   cross-reference (`closedByPullRequestsReferences` in the same
   fully-paginated GraphQL) lists at least one **merged** pull request; or
-  (b) `stateReason` is `duplicate` and the canonical duplicate target is
-  itself either still open (and so counted by the open-issue criteria) or
-  satisfies (a). Everything else — `completed` with no merged PR,
-  `not planned`, duplicate without a qualifying target — blocks the gate.
-  Mass-closing the backlog therefore cannot green the gate under any
-  close reason;
+  (b) `stateReason` is `duplicate` and the duplicate target — the issue
+  named by the **most recent `MarkedAsDuplicateEvent`** on the closed
+  issue's timeline (same fully-paginated GraphQL; no such event → the
+  exemption does not apply, fail closed), followed **transitively**
+  through further duplicate closures to a terminal issue (a cycle or a
+  chain that does not terminate → fail closed) — is itself
+  **gate-relevant** and either still open (so the open-issue criteria
+  count it) or exempt under (a). A duplicate whose terminal target is not
+  gate-relevant blocks: routing debt onto an issue no criterion watches
+  is laundering, not deduplication. Everything else — `completed` with no
+  merged PR, `not planned`, duplicate without a qualifying target —
+  blocks the gate. Mass-closing the backlog therefore cannot green the
+  gate under any close reason;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
-- coverage ≥95% lines on `hooks/scripts/**` (layer 2 above), measured at
-  the release candidate's HEAD — a commit-gate artifact, not a nightly one;
+- coverage ≥95% lines on `hooks/scripts/**` **and `hooks/lib/common.sh`**
+  (the library the gate's own paginated counting relies on — an untested
+  counting path is the #419/#420 class recurring), measured at **the exact
+  SHA `/ship` builds: the tip of the release branch at the moment the
+  Release Gate script runs, the same commit the release-proof is minted
+  on** — a commit-gate artifact bound to one concrete ref, not a nightly
+  one;
 - the `nightly-eval.yml` eval thresholds green on `main` for 3 consecutive
   nightly runs. The eval threshold **values** are TBD — owner: qa, tracked
   as #511; this criterion is not evaluable until #511 closes;

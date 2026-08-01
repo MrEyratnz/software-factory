@@ -375,13 +375,16 @@ Until both prerequisites clear, **M4 stays unchecked** and the Release Gate
 should not be evaluated as "close to holding" on tech-debt count alone —
 current true state is 18 `P0`/`P1` tech-debt items + 10 security-labeled
 tech-debt items (some overlapping) outstanding against even the *redefined*
-gate, before the ~228 untriaged issues are even sorted into it.
+gate, before the 188 `P0`–`P3`-unlabeled issues (the #510 triage set; the
+larger ~228 figure is the never-planned set, an overlapping but distinct
+category) are even sorted into it.
 
 ### Freeze interaction
 
 This does not flip the feature freeze (still **OFF** — the gate is not
 within one sprint of holding under either the literal or redefined
 reading). It does mean that once the freeze does go on, `idea`/`research`
-issues route to `v1.1.0` as normal, but the ~228 untriaged tech-debt items
-are pre-existing debt, not new scope — they still need the triage pass
-above regardless of freeze state.
+issues route to `v1.1.0` as normal, but the 188 unlabeled tech-debt items
+(#510) are pre-existing debt, not new scope — they still need the triage
+pass above regardless of freeze state, and the wider never-planned ~228
+still need a plan reference.

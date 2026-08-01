@@ -81,9 +81,9 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
 | #464 ownership-lane violation | Scope decided by product owner (PR #444), gate wording landed in the architect-owned spec via this ADR |
 | #465 PRODUCT.md self-contradiction (sweep-before-ship vs. does-not-block) | The sprint-1 P2 sweep claim is corrected to cite this gate; PRODUCT.md restates no predicate |
 | #466 missing numbered ADR | This ADR; owner named below |
-| #467 fail-open on 188 unlabeled issues | Criterion 4: unlabeled blocks, full stop, until triaged; triage pass tracked as #510 |
-| #470 legacy-label semantics undefined | Criterion 4: legacy labels are not valid triage; exact-form case-sensitive `P0`–`P3` only; multi-label → most severe governs |
-| #468 deferral target unnamed | Criterion 5: the named M5 "P2/P3 tech-debt burndown (non-security)" item |
+| #467 fail-open on 188 unlabeled issues | The spec's fail-closed triage bullet: unlabeled blocks, full stop, until triaged; triage pass tracked as #510 |
+| #470 legacy-label semantics undefined | The same fail-closed triage bullet: legacy labels are not valid triage; exact-form case-sensitive `P0`–`P3` only; multi-label → most severe governs |
+| #468 deferral target unnamed | The spec's non-security P2/P3 deferral paragraph: the named M5 "P2/P3 tech-debt burndown (non-security)" item |
 | #469 ground-truth counts embedded as durable facts | Every count in this ADR and `docs/PRODUCT.md` is an explicitly dated 2026-07-29 snapshot, not a live value; the stale 221/6 freeze figures in `docs/PRODUCT.md` are corrected and date-stamped |
 
 ## Consequences
