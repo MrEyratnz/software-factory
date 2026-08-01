@@ -212,6 +212,30 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "telemetry → $OTEL_ENDPOINT (station=$SESSION_STATION)"
 
+      # Checkpoint/resume across job ATTEMPTS (#725): a session killed by a
+      # usage limit, max-turns, or a runner timeout leaves its transcript
+      # under ~/.claude/projects and its session_id in the result JSON.
+      # Persisting both lets `gh run rerun --failed` RESUME the parked
+      # session instead of re-paying the whole context from zero — the
+      # measured waste this closes was $1-12+ per killed session, several
+      # sessions per limit window. Keys are run_id+attempt-scoped: restore
+      # only ever matches THIS run's earlier attempts, never another run's
+      # session (and GitHub's cache isolation keeps it branch-scoped).
+      # Trade-off, stated: the transcript holds session content (tool
+      # outputs over this repo's files). The Actions cache is repo-internal
+      # and branch-scoped — same trust domain as the checkout itself — and
+      # content capture into TELEMETRY stays off per the observability
+      # contract; this is a deliberate, reviewed exception for self-resume.
+      - name: restore prior attempt's session state (resume on rerun)
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.claude/projects
+            ~/.factory-session-state
+          key: session-state-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            session-state-${{ inputs.station }}-${{ github.run_id }}-
+
       - name: run station session
         shell: bash   # pipefail: without it `tee` masks the CLI's exit status
         env:
@@ -224,7 +248,19 @@ jobs:
         run: |
           extra=()
           if [ -n "$ALLOWED_TOOLS" ]; then extra+=(--allowedTools "$ALLOWED_TOOLS"); fi
-          claude -p "$SESSION_PROMPT" \
+          # Resume the previous attempt's parked session when its id AND
+          # transcript survived the cache round-trip (#725); session-resume.sh
+          # prints the id only when both hold. The resume prompt is short by
+          # design — the parked context already contains the full mandate.
+          sid="$(bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" pre "$HOME/.factory-session-state")"
+          if [ -n "$sid" ]; then
+            echo "resuming parked session $sid (attempt ${{ github.run_attempt }})"
+            extra+=(--resume "$sid")
+            prompt="Continue this parked station session exactly where it stopped. Re-read factory-ops/state/checkpoint.json if you need to re-orient; your original mandate is unchanged."
+          else
+            prompt="$SESSION_PROMPT"
+          fi
+          claude -p "$prompt" \
             --plugin-dir "$GITHUB_WORKSPACE" \
             --settings '{"enabledPlugins":{"dark-software-factory@software-factory":false}}' \
             --permission-mode "${{ inputs.permission_mode }}" \
@@ -233,6 +269,21 @@ jobs:
             --max-turns "${{ inputs.max_turns }}" \
             --output-format json \
             "${extra[@]}" | tee "$RUNNER_TEMP/session-result.json"
+
+      # Save the session id + transcript EVERY time, success or failure —
+      # the failed attempt is the one whose state the next attempt needs.
+      - name: checkpoint session state for a possible rerun
+        if: always()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" post "$HOME/.factory-session-state" "$RUNNER_TEMP/session-result.json"
+
+      - name: save session state (resume on rerun)
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.claude/projects
+            ~/.factory-session-state
+          key: session-state-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # `claude -p --output-format json` EXITS 0 even when the run failed — the
       # failure lives in the result JSON ("is_error": true, e.g. "Not logged in").

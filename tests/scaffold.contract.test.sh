@@ -88,6 +88,103 @@ else
   bad "$SESSION_WF missing"
 fi
 
+# --- failed sessions must RESUME on rerun, not re-pay from zero (#725) -------
+# Measured 2026-07-29..08-01: seven usage-limit windows each killed 2-3
+# in-flight sessions that had already spent $1-12+ and 6-25 minutes; every
+# `gh run rerun --failed` started cold and re-paid the full context. The fix
+# is checkpoint/resume: persist the session transcript + session id across
+# job ATTEMPTS (actions/cache keyed run_id-attempt, restored by same-run
+# prefix), and on a rerun invoke `claude -p --resume <session-id>` so the
+# parked context is reused, not re-bought.
+if [ -f "$SESSION_WF" ] && python3 -c "import yaml" 2>/dev/null; then
+  if WF="$SESSION_WF" python3 - <<'PYEOF'
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+names = [str(s.get("name", "")) for s in steps]
+try:
+    session_idx = next(i for i, n in enumerate(names) if n == "run station session")
+except StopIteration:
+    sys.exit(2)
+restore = [s for i, s in enumerate(steps)
+           if i < session_idx and "actions/cache/restore" in str(s.get("uses", ""))]
+save = [s for i, s in enumerate(steps)
+        if i > session_idx and "actions/cache/save" in str(s.get("uses", ""))
+        and str(s.get("if", "")).strip().startswith("always()")]
+if not restore or not save:
+    sys.exit(3)
+r, s = restore[0], save[0]
+r_path = str(r.get("with", {}).get("path", ""))
+s_path = str(s.get("with", {}).get("path", ""))
+s_key = str(s.get("with", {}).get("key", ""))
+r_keys = str(r.get("with", {}).get("restore-keys", "")) + str(r.get("with", {}).get("key", ""))
+if r_path != s_path or not r_path:
+    sys.exit(4)
+if "run_attempt" not in s_key or "run_id" not in s_key:
+    sys.exit(5)
+if "run_id" not in r_keys:
+    sys.exit(6)
+sess_run = str(steps[session_idx].get("run", ""))
+sys.exit(0 if ("--resume" in sess_run and "session-resume.sh" in sess_run) else 7)
+PYEOF
+  then
+    ok "$SESSION_WF checkpoints session state across attempts and resumes it (restore-before, always-save-after, attempt-scoped keys, --resume branch)"
+  else
+    case $? in
+      2) bad "$SESSION_WF: no 'run station session' step to anchor resume wiring (#725)" ;;
+      3) bad "$SESSION_WF: missing cache restore-before-session or always()-guarded save-after-session — a failed attempt's state is lost (#725)" ;;
+      4) bad "$SESSION_WF: cache restore/save paths differ or are empty — state saved is not the state restored (#725)" ;;
+      5) bad "$SESSION_WF: cache save key must include run_id and run_attempt so each attempt checkpoints separately (#725)" ;;
+      6) bad "$SESSION_WF: cache restore must be scoped to this run_id so another run's session is never resumed (#725)" ;;
+      *) bad "$SESSION_WF: the session step never invokes claude -p --resume via session-resume.sh — reruns re-pay the whole session (#725)" ;;
+    esac
+  fi
+else
+  ok "pyyaml unavailable locally — session-resume wiring check deferred to CI"
+fi
+
+# Behavioral proof for the resume helper: post extracts and persists the
+# session id from a result JSON (success or error alike); pre answers with
+# the id only when both the id and its transcript actually exist.
+RESUME_HELPER=".github/scripts/session-resume.sh"
+if [ -f "$RESUME_HELPER" ]; then
+  RH_ABS="$PWD/$RESUME_HELPER"
+  RH_STATE="$(mktemp -d)"; RH_HOME="$(mktemp -d)"
+  RH_RESULT="$(mktemp)"
+
+  printf '{"session_id":"11111111-2222-3333-4444-555555555555","is_error":true,"result":"limit"}' > "$RH_RESULT"
+  if HOME="$RH_HOME" bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ "$(cat "$RH_STATE/session-id" 2>/dev/null)" = "11111111-2222-3333-4444-555555555555" ]; then
+    ok "session-resume.sh post persists the session id even from an is_error result — the limit-park case"
+  else
+    bad "session-resume.sh post failed to persist the session id from an error result (#725)"
+  fi
+
+  if [ -z "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" 2>/dev/null)" ]; then
+    ok "session-resume.sh pre stays silent when the transcript is missing — no blind resume into a lost session"
+  else
+    bad "session-resume.sh pre offered a resume with no transcript on disk — claude would cold-fail (#725)"
+  fi
+
+  mkdir -p "$RH_HOME/.claude/projects/-tmp-fixture"
+  : > "$RH_HOME/.claude/projects/-tmp-fixture/11111111-2222-3333-4444-555555555555.jsonl"
+  if [ "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE")" = "11111111-2222-3333-4444-555555555555" ]; then
+    ok "session-resume.sh pre returns the saved id when its transcript exists — resume is offered"
+  else
+    bad "session-resume.sh pre did not offer a resume despite id+transcript present (#725)"
+  fi
+
+  printf 'not json' > "$RH_RESULT"
+  rm -f "$RH_STATE/session-id"
+  if HOME="$RH_HOME" bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ ! -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post tolerates an unparseable result (exit 0, no stale id) — a crashed session never poisons the next attempt"
+  else
+    bad "session-resume.sh post mishandled an unparseable result — nonzero exit or stale id (#725)"
+  fi
+  rm -rf "$RH_STATE" "$RH_HOME" "$RH_RESULT"
+else
+  bad "$RESUME_HELPER missing — no checkpoint/resume capability; every failed run re-pays from zero (#725)"
+fi
+
 # --- the cron heartbeat must be able to actually WAKE the factory ------------
 # cron-prod's only job is to POST a repository_dispatch (event_type
 # factory-resume) that starts factory-run. Two GitHub facts make the bare
