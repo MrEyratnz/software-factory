@@ -140,6 +140,15 @@ default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/d
 default_branch="${default_branch:-main}"
 pr_ok=0
 gh_failed=0
+# Probe gh ONCE up front (#644 round-8): if authenticated reads work, an
+# empty `gh pr list` below is AUTHORITATIVE "no PR" and must red — this is
+# exactly the incident class where the token could read but not create a
+# PR, which the old any-gh-failure-warns logic laundered. Only a failing
+# probe (no network / no auth at all) makes the check inconclusive.
+gh_reads_ok=0
+if gh api rate_limit >/dev/null 2>&1; then
+  gh_reads_ok=1
+fi
 for c in $pushed; do
   has_work "$c" || continue
   if git merge-base --is-ancestor "$c" "origin/$default_branch" 2>/dev/null; then
@@ -157,19 +166,19 @@ if [ "$pr_ok" = "0" ]; then
           break 2
         fi
       else
-        # An API failure is inconclusive, not proof of no PR (#679) —
-        # a transient rate-limit/5xx must not red a completed run.
+        # A mid-loop failure AFTER a successful probe is a transient
+        # rate-limit/5xx (#679) — inconclusive, never proof of no PR.
         gh_failed=1
       fi
     done
   done
 fi
 if [ "$pr_ok" = "0" ]; then
-  if [ "$gh_failed" = "1" ]; then
-    echo "::warning::factory-run pushed roadmap work but the PR-existence check was inconclusive (GitHub API error on gh pr list) — not failing on a transient API error. Verify a PR exists for the pushed branch if this warning repeats."
-  else
-    echo "::error::factory-run session pushed roadmap work, but no open or merged PR carries it and it has not landed on origin/$default_branch — the mandate is a commit AND a pull request. Check the session transcript for gh pr create failures or permission denials (the cited incident's exact failure class)."
+  if [ "$gh_reads_ok" = "1" ] && [ "$gh_failed" = "0" ]; then
+    echo "::error::factory-run session pushed roadmap work, but no open or merged PR carries it and it has not landed on origin/$default_branch — the mandate is a commit AND a pull request, and gh reads are working so this answer is authoritative. Check the session transcript for gh pr create failures or permission denials (the cited incident's exact failure class)."
     exit 1
+  else
+    echo "::warning::factory-run pushed roadmap work but the PR-existence check was inconclusive (gh API unreachable or erroring mid-check) — not failing on an API outage. Verify a PR exists for the pushed branch; if this warning repeats, the gh credential itself is broken and PR creation is likely failing too."
   fi
 fi
 

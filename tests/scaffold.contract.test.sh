@@ -199,13 +199,22 @@ if [ -f "$GATE_SCRIPT" ]; then
   GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
   GATE_ORIGIN="$(mktemp -d)"
   GATE_FIXTURE="$(mktemp -d)"
-  # Deterministic gh for layer 4: answers "zero matching PRs", successfully —
-  # so the no-PR red path is provable without the real API, and a real gh
-  # failure can't skew the fixture into the inconclusive-warn path (#679).
+  # Deterministic gh stubs for layer 4 (#648/#729): "probe ok + zero PRs"
+  # proves the authoritative no-PR red; "probe ok + one PR" proves the
+  # production success path (protected main means real runs pass ONLY via
+  # this branch); "everything fails" proves the inconclusive warn.
   GATE_GH_STUB="$(mktemp -d)"
-  printf '#!/usr/bin/env bash\necho 0\n' > "$GATE_GH_STUB/gh"
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in api) exit 0 ;; *) echo 0 ;; esac\n' > "$GATE_GH_STUB/gh"
   chmod +x "$GATE_GH_STUB/gh"
   GATE_PATH="$GATE_GH_STUB:$PATH"
+  GATE_GH_STUB_PR="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in api) exit 0 ;; *) echo 1 ;; esac\n' > "$GATE_GH_STUB_PR/gh"
+  chmod +x "$GATE_GH_STUB_PR/gh"
+  GATE_PATH_PR="$GATE_GH_STUB_PR:$PATH"
+  GATE_GH_STUB_DOWN="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$GATE_GH_STUB_DOWN/gh"
+  chmod +x "$GATE_GH_STUB_DOWN/gh"
+  GATE_PATH_DOWN="$GATE_GH_STUB_DOWN:$PATH"
   (
     git init -q --bare "$GATE_ORIGIN"
     cd "$GATE_FIXTURE" || exit 1
@@ -347,7 +356,28 @@ if [ -f "$GATE_SCRIPT" ]; then
   else
     ok "deliverable gate still FAILS stranded side-branch work when a checkpoint bump landed on main (#678)"
   fi
-  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$GATE_GH_STUB" "$refs_before" "$refs_before2"
+
+  # THE production success path (#648): main is protected in the real repo,
+  # so every genuine factory-run passes ONLY via layer 4's gh answer — a PR
+  # exists for the side branch. Must be a clean, warning-free PASS.
+  pr_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH_PR" bash "$GATE_SCRIPT_ABS" "$refs_before2" 2>&1 )"
+  pr_rc=$?
+  if [ "$pr_rc" = "0" ] && ! printf '%s' "$pr_out" | grep -q '^::warning::'; then
+    ok "deliverable gate cleanly PASSES side-branch work whose branch has an open PR — the production path (#648)"
+  else
+    bad "deliverable gate mishandled side-branch work WITH a PR (rc=$pr_rc) — every real factory-run would red or warn (#648)"
+  fi
+
+  # gh entirely down (probe fails): inconclusive — warn, never red, never
+  # silently pass (#729/#679).
+  down_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH_DOWN" bash "$GATE_SCRIPT_ABS" "$refs_before2" 2>&1 )"
+  down_rc=$?
+  if [ "$down_rc" = "0" ] && printf '%s' "$down_out" | grep -q '^::warning::'; then
+    ok "deliverable gate WARN-passes when gh is entirely unreachable — inconclusive, not authoritative (#729)"
+  else
+    bad "deliverable gate mishandled a full gh outage (rc=$down_rc) — an API outage must neither red nor silently pass (#729)"
+  fi
+  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$GATE_GH_STUB" "$GATE_GH_STUB_PR" "$GATE_GH_STUB_DOWN" "$refs_before" "$refs_before2"
 else
   bad "$GATE_SCRIPT missing — factory-run deliverable gate has no testable implementation"
 fi
