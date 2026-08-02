@@ -34,8 +34,8 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
 - [ ] Hook unit tests: stdin JSON fixtures per event type, exit-code and
   stderr-class (`[hard-boundary]` vs `[heuristic]`) assertions, matcher edge
   cases, forgery-guard cases, multi-repo `-C`/`cd` binding
-- [ ] Coverage threshold ≥95% lines on `hooks/scripts/**`, enforced as a
-  failing test in the suite
+- [ ] Coverage threshold ≥95% lines on `hooks/scripts/**` and
+  `hooks/lib/common.sh`, enforced as a failing test in the suite
 - [ ] Behavioral evals: trigger evals per skill/command (8–10 should /
   8–10 near-miss shouldn't, ≥3 runs each, trigger-rate thresholds) via a
   headless `claude -p` harness, results to `factory-ops/qa/`
@@ -61,7 +61,8 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
 ## M4 — v1.0.0 (milestone v1.0.0)
 
 - [ ] Tech-debt triage pass (#510): every open `tech-debt` issue carries
-  exactly one of `P0`–`P3` — required because the Release Gate fails closed
+  at least one valid `P0`–`P3` label (most severe governs if multiple, per
+  the spec) — required because the Release Gate fails closed
   on untriaged tech-debt (see the spec section below; ADR 0005)
 - [ ] Release Gate script green per the **single authoritative definition**
   in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (ADR 0005) —

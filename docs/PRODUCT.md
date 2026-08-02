@@ -350,7 +350,10 @@ section `docs/ROADMAP.md` and `.claude/CLAUDE.md` pin the gate to). This
 file carries the product rationale only and deliberately does not restate
 the predicate — read the spec section for the criteria.**
 
-Two blocking prerequisites remain before the gate can be evaluated:
+Four blocking prerequisites remain before the gate can be evaluated —
+#419/#420 (counting), #510 (triage), #511 (eval threshold values, owner
+qa), #649 (anti-laundering backfill); the first two are expanded below,
+all four are normative in the spec's prerequisite line:
 
 1. **#419 and #420 (the counting bug) must be fixed and re-verified before
    this redefined gate is trusted by any automation.** A gate that counts

@@ -22,9 +22,9 @@ credible — and the suite is what makes the v1.0.0 Release Gate decidable.
 2. **Unit tests for every hook script**: stdin JSON fixtures per event type;
    assertions on exit codes AND stderr class tags (`[hard-boundary]` vs
    `[heuristic]`); matcher edge cases; forgery-guard cases; multi-repo
-   `-C`/`cd` binding. **Coverage ≥95% lines on `hooks/scripts/**`, enforced as
-   a failing test** — that is what makes "no uncovered cases"
-   machine-decidable.
+   `-C`/`cd` binding. **Coverage ≥95% lines on `hooks/scripts/**` and
+   `hooks/lib/common.sh`, enforced as a failing test** — that is what makes
+   "no uncovered cases" machine-decidable.
 3. **Behavioral evals** (nightly): per skill/command, trigger evals — 8–10
    should-trigger and 8–10 near-miss shouldn't-trigger prompts, ≥3 runs each,
    trigger-rate thresholds — and outcome evals with programmatic assertions
@@ -39,7 +39,8 @@ receipt/commit contract enforces them forever.
 
 - [ ] Every command/agent/skill/hook config passes layer-1 checks in the gate
 - [ ] Every hook script has fixture-driven unit tests incl. both stderr classes
-- [ ] Coverage gate ≥95% lines on `hooks/scripts/**` fails the suite when unmet
+- [ ] Coverage gate ≥95% lines on `hooks/scripts/**` and
+      `hooks/lib/common.sh` fails the suite when unmet
 - [ ] Trigger + outcome evals exist for every skill and command, with
       thresholds that fail `nightly-eval.yml`
 - [ ] `.factory/config.json` gates run all deterministic layers; nightly runs
@@ -80,14 +81,19 @@ trusts this gate):
   of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
   count as triage; if more than one `P0`–`P3` label is present, the most
   severe governs). The triage pass that clears this is tracked as #510;
-- zero open `tech-debt` issues labeled `gate:confirmed-high` — the
-  **anti-laundering criterion**, and a pure label query like the rest. The
-  tech-debt clerk applies `gate:confirmed-high` at filing time to every
-  issue it opens from a CONFIRMED-high adversarial-review finding; the
-  label is a severity **floor** that coexists with whatever `P0`–`P3` label
-  triage assigns, and it is removed only by the merge of the finding's fix
-  (re-labeling priority does not touch it). Down-triaging such an issue
-  therefore cannot unblock the gate. The clerk mechanism is prospective
+- zero open issues that have **ever carried** `gate:confirmed-high` and
+  lack a qualifying merged fix PR — the **anti-laundering criterion**.
+  This one is deliberately a **timeline query, not a current-label
+  query** (`LabeledEvent`s in the same fully-paginated GraphQL): a
+  current-state label query would be defeated by simply removing the
+  label from an open, down-triaged issue. The tech-debt clerk applies
+  `gate:confirmed-high` at filing time to every issue it opens from a
+  CONFIRMED-high adversarial-review finding; the label is a severity
+  **floor** that coexists with whatever `P0`–`P3` label triage assigns.
+  Because history cannot be unlabeled, neither down-triage nor label
+  removal unblocks the gate — only the finding's fix merging (per the
+  close-laundering criterion's exemption (a), fingerprint-bound) does.
+  The clerk mechanism is prospective
   only — the one-time backfill audit of the pre-existing backlog is
   tracked as #649 and is a **prerequisite of this criterion**: until #649
   closes, this criterion is not evaluable (same gating shape as the eval
@@ -102,7 +108,12 @@ trusts this gate):
   cannot bypass triage. A closed gate-relevant issue is exempt only if:
   (a) `stateReason` is `completed` **and** GitHub's closed-by-PR
   cross-reference (`closedByPullRequestsReferences` in the same
-  fully-paginated GraphQL) lists at least one **merged** pull request; or
+  fully-paginated GraphQL) lists at least one **merged** pull request,
+  **and** — for an issue whose body carries a `fingerprint:` trailer (all
+  clerk-filed review findings do) — that merged PR cites the same
+  fingerprint in its body or a commit message, so a trivial unrelated
+  "Closes #X" PR cannot clear a finding it never fixed; an issue with no
+  fingerprint trailer needs only the merged closing PR; or
   (b) `stateReason` is `duplicate` and the duplicate target — the issue
   named by the **most recent `MarkedAsDuplicateEvent`** on the closed
   issue's timeline (same fully-paginated GraphQL; no such event → the
