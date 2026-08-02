@@ -101,9 +101,10 @@ if [ -f "$SESSION_WF" ] && python3 -c "import yaml" 2>/dev/null; then
 import os, sys, yaml
 wf = yaml.safe_load(open(os.environ["WF"]))
 steps = wf["jobs"]["session"]["steps"]
-names = [str(s.get("name", "")) for s in steps]
+# Anchor on the step that actually launches the CLI, not a cosmetic step
+# name (#759).
 try:
-    session_idx = next(i for i, n in enumerate(names) if n == "run station session")
+    session_idx = next(i for i, s in enumerate(steps) if "claude -p" in str(s.get("run", "")))
 except StopIteration:
     sys.exit(2)
 restore = [s for i, s in enumerate(steps)
@@ -117,46 +118,64 @@ r, s = restore[0], save[0]
 r_path = str(r.get("with", {}).get("path", ""))
 s_path = str(s.get("with", {}).get("path", ""))
 s_key = str(s.get("with", {}).get("key", ""))
-r_keys = str(r.get("with", {}).get("restore-keys", "")) + str(r.get("with", {}).get("key", ""))
 if r_path != s_path or not r_path:
     sys.exit(4)
 if "run_attempt" not in s_key or "run_id" not in s_key:
     sys.exit(5)
-if "run_id" not in r_keys:
+# restore-keys must be a true PREFIX of the save key (#757): presence of
+# the tokens alone would stay green if the trailing '-' were dropped and
+# resume silently regressed.
+r_prefixes = [l.strip() for l in str(r.get("with", {}).get("restore-keys", "")).splitlines() if l.strip()]
+if not r_prefixes or not any(s_key.startswith(p) for p in r_prefixes):
+    sys.exit(6)
+if not any("run_id" in p for p in r_prefixes):
     sys.exit(6)
 sess_run = str(steps[session_idx].get("run", ""))
-sys.exit(0 if ("--resume" in sess_run and "session-resume.sh" in sess_run) else 7)
+# Both branches must exist: --resume for a parked id, and arm+--session-id
+# so a fresh session checkpoints BEFORE launch and survives a SIGKILL that
+# never writes a result JSON (#752/#753).
+ok_flags = ("--resume" in sess_run and "session-resume.sh" in sess_run
+            and "--session-id" in sess_run and " arm " in sess_run)
+sys.exit(0 if ok_flags else 7)
 PYEOF
   then
-    ok "$SESSION_WF checkpoints session state across attempts and resumes it (restore-before, always-save-after, attempt-scoped keys, --resume branch)"
+    ok "$SESSION_WF checkpoints session state across attempts and resumes it (restore-before, always-save-after, attempt-scoped prefix keys, arm/--session-id + --resume branches)"
   else
     case $? in
-      2) bad "$SESSION_WF: no 'run station session' step to anchor resume wiring (#725)" ;;
+      2) bad "$SESSION_WF: no claude -p step to anchor resume wiring (#725)" ;;
       3) bad "$SESSION_WF: missing cache restore-before-session or always()-guarded save-after-session — a failed attempt's state is lost (#725)" ;;
       4) bad "$SESSION_WF: cache restore/save paths differ or are empty — state saved is not the state restored (#725)" ;;
       5) bad "$SESSION_WF: cache save key must include run_id and run_attempt so each attempt checkpoints separately (#725)" ;;
-      6) bad "$SESSION_WF: cache restore must be scoped to this run_id so another run's session is never resumed (#725)" ;;
-      *) bad "$SESSION_WF: the session step never invokes claude -p --resume via session-resume.sh — reruns re-pay the whole session (#725)" ;;
+      6) bad "$SESSION_WF: restore-keys must be a run_id-scoped true prefix of the save key — otherwise resume silently regresses or leaks across runs (#725/#757)" ;;
+      *) bad "$SESSION_WF: the session step must arm a pre-assigned --session-id on fresh runs and --resume a parked one via session-resume.sh (#725/#752/#753)" ;;
     esac
   fi
 else
   ok "pyyaml unavailable locally — session-resume wiring check deferred to CI"
 fi
 
-# Behavioral proof for the resume helper: post extracts and persists the
-# session id from a result JSON (success or error alike); pre answers with
-# the id only when both the id and its transcript actually exist.
+# Behavioral proof for the resume helper: arm records the pre-assigned id
+# (rejecting non-UUIDs), pre answers only when id + transcript both exist,
+# and post clears the checkpoint ONLY on a confirmed clean completion —
+# every kill shape (is_error, empty result, unparseable result) must keep
+# it armed, and a clean run must never leave one behind (#752/#753/#754).
 RESUME_HELPER=".github/scripts/session-resume.sh"
 if [ -f "$RESUME_HELPER" ]; then
   RH_ABS="$PWD/$RESUME_HELPER"
   RH_STATE="$(mktemp -d)"; RH_HOME="$(mktemp -d)"
   RH_RESULT="$(mktemp)"
+  RH_SID="11111111-2222-3333-4444-555555555555"
 
-  printf '{"session_id":"11111111-2222-3333-4444-555555555555","is_error":true,"result":"limit"}' > "$RH_RESULT"
-  if HOME="$RH_HOME" bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ "$(cat "$RH_STATE/session-id" 2>/dev/null)" = "11111111-2222-3333-4444-555555555555" ]; then
-    ok "session-resume.sh post persists the session id even from an is_error result — the limit-park case"
+  if bash "$RH_ABS" arm "$RH_STATE" "$RH_SID" && [ "$(cat "$RH_STATE/session-id" 2>/dev/null)" = "$RH_SID" ]; then
+    ok "session-resume.sh arm records the pre-assigned session id before launch"
   else
-    bad "session-resume.sh post failed to persist the session id from an error result (#725)"
+    bad "session-resume.sh arm failed to record the session id (#725)"
+  fi
+
+  if bash "$RH_ABS" arm "$RH_STATE" '*' 2>/dev/null; then
+    bad "session-resume.sh arm accepted a non-UUID id — a glob would self-match unrelated transcripts (#756)"
+  else
+    ok "session-resume.sh arm rejects a non-UUID id (#756)"
   fi
 
   if [ -z "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" 2>/dev/null)" ]; then
@@ -166,19 +185,39 @@ if [ -f "$RESUME_HELPER" ]; then
   fi
 
   mkdir -p "$RH_HOME/.claude/projects/-tmp-fixture"
-  : > "$RH_HOME/.claude/projects/-tmp-fixture/11111111-2222-3333-4444-555555555555.jsonl"
-  if [ "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE")" = "11111111-2222-3333-4444-555555555555" ]; then
-    ok "session-resume.sh pre returns the saved id when its transcript exists — resume is offered"
+  : > "$RH_HOME/.claude/projects/-tmp-fixture/$RH_SID.jsonl"
+  if [ "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE")" = "$RH_SID" ]; then
+    ok "session-resume.sh pre returns the armed id when its transcript exists — resume is offered"
   else
     bad "session-resume.sh pre did not offer a resume despite id+transcript present (#725)"
   fi
 
-  printf 'not json' > "$RH_RESULT"
-  rm -f "$RH_STATE/session-id"
-  if HOME="$RH_HOME" bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ ! -f "$RH_STATE/session-id" ]; then
-    ok "session-resume.sh post tolerates an unparseable result (exit 0, no stale id) — a crashed session never poisons the next attempt"
+  printf '{"session_id":"%s","is_error":true,"result":"limit"}' "$RH_SID" > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post keeps the checkpoint on an is_error result — the limit park stays resumable"
   else
-    bad "session-resume.sh post mishandled an unparseable result — nonzero exit or stale id (#725)"
+    bad "session-resume.sh post dropped the checkpoint on an error result — the park is unresumable (#725)"
+  fi
+
+  printf '' > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post keeps the checkpoint on an EMPTY result — the SIGKILL/timeout case stays resumable (#753/#754)"
+  else
+    bad "session-resume.sh post dropped the checkpoint on an empty result — the flagship hard-kill case cold-starts (#753/#754)"
+  fi
+
+  printf 'not json' > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post keeps the checkpoint on an unparseable result — a truncated write stays resumable"
+  else
+    bad "session-resume.sh post mishandled an unparseable result (#725)"
+  fi
+
+  printf '{"session_id":"%s","is_error":false,"result":"done"}' "$RH_SID" > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ ! -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post CLEARS the checkpoint on clean completion — a finished station is never resumed by a rerun (#752)"
+  else
+    bad "session-resume.sh post kept the checkpoint after a clean completion — a rerun would re-drive a completed station's side effects (#752)"
   fi
   rm -rf "$RH_STATE" "$RH_HOME" "$RH_RESULT"
 else

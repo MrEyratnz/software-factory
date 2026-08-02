@@ -231,7 +231,7 @@ jobs:
         with:
           path: |
             ~/.claude/projects
-            ~/.factory-session-state
+            ~/.dsf-session-state
           key: session-state-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             session-state-${{ inputs.station }}-${{ github.run_id }}-
@@ -252,12 +252,19 @@ jobs:
           # transcript survived the cache round-trip (#725); session-resume.sh
           # prints the id only when both hold. The resume prompt is short by
           # design — the parked context already contains the full mandate.
-          sid="$(bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" pre "$HOME/.factory-session-state")"
+          # Fresh sessions pre-assign their id (--session-id) and ARM the
+          # checkpoint BEFORE launch, so even a hard timeout/SIGKILL that
+          # never writes a result JSON leaves a resumable id+transcript
+          # (#753); the post step clears it only on clean completion (#752).
+          sid="$(bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" pre "$HOME/.dsf-session-state")"
           if [ -n "$sid" ]; then
             echo "resuming parked session $sid (attempt ${{ github.run_attempt }})"
             extra+=(--resume "$sid")
             prompt="Continue this parked station session exactly where it stopped. Re-read factory-ops/state/checkpoint.json if you need to re-orient; your original mandate is unchanged."
           else
+            sid="$(cat /proc/sys/kernel/random/uuid)"
+            bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" arm "$HOME/.dsf-session-state" "$sid"
+            extra+=(--session-id "$sid")
             prompt="$SESSION_PROMPT"
           fi
           claude -p "$prompt" \
@@ -270,11 +277,13 @@ jobs:
             --output-format json \
             "${extra[@]}" | tee "$RUNNER_TEMP/session-result.json"
 
-      # Save the session id + transcript EVERY time, success or failure —
-      # the failed attempt is the one whose state the next attempt needs.
-      - name: checkpoint session state for a possible rerun
+      # The checkpoint was armed BEFORE the session launched; this step
+      # CLEARS it on confirmed clean completion only — a finished station
+      # must never be resumed by a rerun of an unrelated failed step
+      # (#752). Killed/parked outcomes keep the armed id for resume.
+      - name: clear the session checkpoint on clean completion
         if: always()
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" post "$HOME/.factory-session-state" "$RUNNER_TEMP/session-result.json"
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" post "$HOME/.dsf-session-state" "$RUNNER_TEMP/session-result.json"
 
       - name: save session state (resume on rerun)
         if: always()
@@ -282,7 +291,7 @@ jobs:
         with:
           path: |
             ~/.claude/projects
-            ~/.factory-session-state
+            ~/.dsf-session-state
           key: session-state-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # `claude -p --output-format json` EXITS 0 even when the run failed — the
