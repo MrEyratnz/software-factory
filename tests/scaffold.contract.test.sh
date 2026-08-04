@@ -136,7 +136,19 @@ sess_run = str(steps[session_idx].get("run", ""))
 # never writes a result JSON (#752/#753).
 ok_flags = ("--resume" in sess_run and "session-resume.sh" in sess_run
             and "--session-id" in sess_run and " arm " in sess_run)
-sys.exit(0 if ok_flags else 7)
+if not ok_flags:
+    sys.exit(7)
+# The post CLEAR step must exist BETWEEN the session and the cache save
+# (#787): delete or reorder it and a completed station gets re-armed —
+# the exact #752 regression this contract exists to pin.
+save_idx = next(i for i, s in enumerate(steps)
+                if i > session_idx and "actions/cache/save" in str(s.get("uses", "")))
+post_steps = [i for i, s in enumerate(steps)
+              if session_idx < i < save_idx
+              and "session-resume.sh" in str(s.get("run", ""))
+              and " post " in str(s.get("run", ""))
+              and str(s.get("if", "")).strip().startswith("always()")]
+sys.exit(0 if post_steps else 8)
 PYEOF
   then
     ok "$SESSION_WF checkpoints session state across attempts and resumes it (restore-before, always-save-after, attempt-scoped prefix keys, arm/--session-id + --resume branches)"
@@ -147,7 +159,8 @@ PYEOF
       4) bad "$SESSION_WF: cache restore/save paths differ or are empty — state saved is not the state restored (#725)" ;;
       5) bad "$SESSION_WF: cache save key must include run_id and run_attempt so each attempt checkpoints separately (#725)" ;;
       6) bad "$SESSION_WF: restore-keys must be a run_id-scoped true prefix of the save key — otherwise resume silently regresses or leaks across runs (#725/#757)" ;;
-      *) bad "$SESSION_WF: the session step must arm a pre-assigned --session-id on fresh runs and --resume a parked one via session-resume.sh (#725/#752/#753)" ;;
+      7) bad "$SESSION_WF: the session step must arm a pre-assigned --session-id on fresh runs and --resume a parked one via session-resume.sh (#725/#752/#753)" ;;
+      *) bad "$SESSION_WF: no always()-guarded session-resume.sh post CLEAR step between the session and the cache save — the #752 completed-station re-arm regression is unpinned (#787)" ;;
     esac
   fi
 else
@@ -166,10 +179,16 @@ if [ -f "$RESUME_HELPER" ]; then
   RH_RESULT="$(mktemp)"
   RH_SID="11111111-2222-3333-4444-555555555555"
 
-  if bash "$RH_ABS" arm "$RH_STATE" "$RH_SID" && [ "$(cat "$RH_STATE/session-id" 2>/dev/null)" = "$RH_SID" ]; then
-    ok "session-resume.sh arm records the pre-assigned session id before launch"
+  if bash "$RH_ABS" arm "$RH_STATE" "$RH_SID" "shaAAAA" && [ "$(cat "$RH_STATE/session-id" 2>/dev/null)" = "$RH_SID" ] && [ "$(cat "$RH_STATE/head-sha" 2>/dev/null)" = "shaAAAA" ]; then
+    ok "session-resume.sh arm records the pre-assigned session id + head SHA before launch"
   else
-    bad "session-resume.sh arm failed to record the session id (#725)"
+    bad "session-resume.sh arm failed to record the session id + head SHA (#725/#786)"
+  fi
+
+  if bash "$RH_ABS" arm "$RH_STATE" "$(printf '%s\nevil' "$RH_SID")" 2>/dev/null; then
+    bad "session-resume.sh arm accepted a multi-line id — per-line matching lets an embedded value through (#791)"
+  else
+    ok "session-resume.sh arm rejects a multi-line id — whole-string UUID match (#791)"
   fi
 
   if bash "$RH_ABS" arm "$RH_STATE" '*' 2>/dev/null; then
@@ -186,10 +205,16 @@ if [ -f "$RESUME_HELPER" ]; then
 
   mkdir -p "$RH_HOME/.claude/projects/-tmp-fixture"
   : > "$RH_HOME/.claude/projects/-tmp-fixture/$RH_SID.jsonl"
-  if [ "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE")" = "$RH_SID" ]; then
-    ok "session-resume.sh pre returns the armed id when its transcript exists — resume is offered"
+  if [ "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" "shaAAAA")" = "$RH_SID" ]; then
+    ok "session-resume.sh pre returns the armed id when transcript exists and the SHA matches — resume is offered"
   else
-    bad "session-resume.sh pre did not offer a resume despite id+transcript present (#725)"
+    bad "session-resume.sh pre did not offer a resume despite id+transcript+matching SHA (#725)"
+  fi
+
+  if [ -z "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" "shaBBBB")" ]; then
+    ok "session-resume.sh pre cold-starts on a head-SHA mismatch — a resumed station never acts on a stale diff (#786)"
+  else
+    bad "session-resume.sh pre offered a resume against a DIFFERENT checkout SHA — a review could approve vanished code (#786)"
   fi
 
   printf '{"session_id":"%s","is_error":true,"result":"limit"}' "$RH_SID" > "$RH_RESULT"
@@ -213,11 +238,11 @@ if [ -f "$RESUME_HELPER" ]; then
     bad "session-resume.sh post mishandled an unparseable result (#725)"
   fi
 
-  printf '{"session_id":"%s","is_error":false,"result":"done"}' "$RH_SID" > "$RH_RESULT"
+  printf '{"session_id":"%s","result":"done"}' "$RH_SID" > "$RH_RESULT"
   if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ ! -f "$RH_STATE/session-id" ]; then
-    ok "session-resume.sh post CLEARS the checkpoint on clean completion — a finished station is never resumed by a rerun (#752)"
+    ok "session-resume.sh post CLEARS on a result the failure guard calls green (is_error absent/falsy) — one predicate, no divergence (#752/#788)"
   else
-    bad "session-resume.sh post kept the checkpoint after a clean completion — a rerun would re-drive a completed station's side effects (#752)"
+    bad "session-resume.sh post kept the checkpoint on a guard-green result — a rerun would resume a finished station (#752/#788)"
   fi
   rm -rf "$RH_STATE" "$RH_HOME" "$RH_RESULT"
 else

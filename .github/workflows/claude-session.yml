@@ -256,14 +256,17 @@ jobs:
           # checkpoint BEFORE launch, so even a hard timeout/SIGKILL that
           # never writes a result JSON leaves a resumable id+transcript
           # (#753); the post step clears it only on clean completion (#752).
-          sid="$(bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" pre "$HOME/.dsf-session-state")"
+          # The head SHA binds the checkpoint to the checkout it was armed
+          # on — a resume against a different SHA would act on a stale
+          # diff (#786), so pre cold-starts on mismatch.
+          sid="$(bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" pre "$HOME/.dsf-session-state" "$GITHUB_SHA")"
           if [ -n "$sid" ]; then
             echo "resuming parked session $sid (attempt ${{ github.run_attempt }})"
             extra+=(--resume "$sid")
             prompt="Continue this parked station session exactly where it stopped. Re-read factory-ops/state/checkpoint.json if you need to re-orient; your original mandate is unchanged."
           else
             sid="$(cat /proc/sys/kernel/random/uuid)"
-            bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" arm "$HOME/.dsf-session-state" "$sid"
+            bash "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" arm "$HOME/.dsf-session-state" "$sid" "$GITHUB_SHA"
             extra+=(--session-id "$sid")
             prompt="$SESSION_PROMPT"
           fi

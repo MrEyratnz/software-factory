@@ -17,15 +17,19 @@
 # result) keeps the checkpoint armed.
 #
 # Subcommands:
-#   arm  <state-dir> <uuid>          — record the id the session will use;
-#                                      rejects anything but a UUID (#756)
-#   pre  <state-dir>                 — print the armed id IFF its transcript
-#                                      exists on disk; else print nothing
-#   post <state-dir> <result-json>   — clear the id ONLY when the result
-#                                      parses and is_error is false
+#   arm  <state-dir> <uuid> [head-sha]
+#        Record the id the session will use (rejects anything but a UUID,
+#        #756) plus the checkout SHA it was armed against (#786).
+#   pre  <state-dir> [head-sha]
+#        Print the armed id IFF its transcript exists on disk AND, when a
+#        head-sha is given, it matches the armed one — a resumed station
+#        must never continue against a different checkout than it was
+#        killed on (#786); on mismatch print nothing (cold start).
+#   post <state-dir> <result-json>
+#        Clear the id ONLY when the result parses and is_error is falsy —
+#        the SAME predicate the workflow's failure guard uses (#788), so
+#        "job went green" and "checkpoint cleared" can never diverge.
 set -uo pipefail
-
-UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 cmd="${1:-}"
 state_dir="${2:-}"
@@ -37,19 +41,35 @@ fi
 case "$cmd" in
   arm)
     sid="${3:-}"
-    if ! printf '%s' "$sid" | grep -qE "$UUID_RE"; then
+    head_sha="${4:-}"
+    # Whole-string match ([[ =~ ]] anchors the full value, unlike per-line
+    # grep — #791): a multi-line or embedded value must not pass the gate.
+    if ! [[ "$sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
       echo "session-resume.sh: refusing to arm non-UUID session id '$sid'" >&2
       exit 2
     fi
     mkdir -p "$state_dir"
     printf '%s' "$sid" > "$state_dir/session-id"
+    if [ -n "$head_sha" ]; then
+      printf '%s' "$head_sha" > "$state_dir/head-sha"
+    fi
     exit 0
     ;;
   pre)
+    expected_sha="${3:-}"
     sid="$(cat "$state_dir/session-id" 2>/dev/null || true)"
     # A non-UUID id is never used: it cannot have come from arm, and a
     # crafted value would otherwise glob-match inside find (#756).
-    printf '%s' "$sid" | grep -qE "$UUID_RE" || exit 0
+    [[ "$sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || exit 0
+    # A resume against a DIFFERENT checkout than the session was killed on
+    # would act on a stale diff (a review approving vanished code — #786):
+    # when both sides have a SHA and they differ, cold-start instead.
+    if [ -n "$expected_sha" ] && [ -f "$state_dir/head-sha" ]; then
+      armed_sha="$(cat "$state_dir/head-sha" 2>/dev/null || true)"
+      if [ -n "$armed_sha" ] && [ "$armed_sha" != "$expected_sha" ]; then
+        exit 0
+      fi
+    fi
     # Resume only if the transcript this id names actually survived the
     # cache round-trip; find is path-agnostic to the project-dir munging,
     # and the UUID shape guarantees the -name pattern is literal.
@@ -60,19 +80,22 @@ case "$cmd" in
     ;;
   post)
     result_json="${3:-}"
-    # Clear the checkpoint ONLY on a confirmed clean completion. A missing,
-    # empty, or unparseable result means the session was killed mid-run —
-    # exactly when the armed checkpoint must survive for the next attempt.
+    # Clear the checkpoint ONLY on a confirmed clean completion, judged by
+    # the SAME truthiness predicate as the workflow's failure guard
+    # (`if (o.is_error)` — #788): a result the guard calls green must also
+    # clear the checkpoint, or a later rerun resumes a finished station.
+    # A missing, empty, or unparseable result means the session was killed
+    # mid-run — exactly when the armed checkpoint must survive.
     if [ -n "$result_json" ] && [ -s "$result_json" ]; then
       verdict="$(node -e '
         const fs = require("fs");
         try {
           const o = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-          process.stdout.write(o.is_error === false ? "clean" : "parked");
+          process.stdout.write(o.is_error ? "parked" : "clean");
         } catch (e) { process.stdout.write("parked"); }
       ' "$result_json" 2>/dev/null || printf 'parked')"
       if [ "$verdict" = "clean" ]; then
-        rm -f "$state_dir/session-id"
+        rm -f "$state_dir/session-id" "$state_dir/head-sha"
       fi
     fi
     exit 0
