@@ -149,6 +149,13 @@ trusts this gate):
   merged PR, `not planned`, duplicate without a qualifying target —
   blocks the gate. Mass-closing the backlog therefore cannot green the
   gate under any close reason;
+- issues **#419, #420, #511, and #649 are CLOSED** — the gate-tooling
+  integrity prerequisites as a mechanical **state** check, not a prose
+  note and not a label query: down-triaging any of them cannot defer the
+  requirement, because the criterion asks whether the issue is closed,
+  not what priority it carries. (Their closes are themselves subject to
+  the close-laundering criterion above, so closing-without-fixing does
+  not satisfy this either.);
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
 - coverage ≥95% lines on `hooks/scripts/**` **and `hooks/lib/common.sh`**
