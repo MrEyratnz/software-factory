@@ -88,6 +88,167 @@ else
   bad "$SESSION_WF missing"
 fi
 
+# --- failed sessions must RESUME on rerun, not re-pay from zero (#725) -------
+# Measured 2026-07-29..08-01: seven usage-limit windows each killed 2-3
+# in-flight sessions that had already spent $1-12+ and 6-25 minutes; every
+# `gh run rerun --failed` started cold and re-paid the full context. The fix
+# is checkpoint/resume: persist the session transcript + session id across
+# job ATTEMPTS (actions/cache keyed run_id-attempt, restored by same-run
+# prefix), and on a rerun invoke `claude -p --resume <session-id>` so the
+# parked context is reused, not re-bought.
+if [ -f "$SESSION_WF" ] && python3 -c "import yaml" 2>/dev/null; then
+  if WF="$SESSION_WF" python3 - <<'PYEOF'
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+# Anchor on the step that actually launches the CLI, not a cosmetic step
+# name (#759).
+try:
+    session_idx = next(i for i, s in enumerate(steps) if "claude -p" in str(s.get("run", "")))
+except StopIteration:
+    sys.exit(2)
+restore = [s for i, s in enumerate(steps)
+           if i < session_idx and "actions/cache/restore" in str(s.get("uses", ""))]
+save = [s for i, s in enumerate(steps)
+        if i > session_idx and "actions/cache/save" in str(s.get("uses", ""))
+        and str(s.get("if", "")).strip().startswith("always()")]
+if not restore or not save:
+    sys.exit(3)
+r, s = restore[0], save[0]
+r_path = str(r.get("with", {}).get("path", ""))
+s_path = str(s.get("with", {}).get("path", ""))
+s_key = str(s.get("with", {}).get("key", ""))
+if r_path != s_path or not r_path:
+    sys.exit(4)
+if "run_attempt" not in s_key or "run_id" not in s_key:
+    sys.exit(5)
+# restore-keys must be a true PREFIX of the save key (#757): presence of
+# the tokens alone would stay green if the trailing '-' were dropped and
+# resume silently regressed.
+r_prefixes = [l.strip() for l in str(r.get("with", {}).get("restore-keys", "")).splitlines() if l.strip()]
+if not r_prefixes or not any(s_key.startswith(p) for p in r_prefixes):
+    sys.exit(6)
+if not any("run_id" in p for p in r_prefixes):
+    sys.exit(6)
+sess_run = str(steps[session_idx].get("run", ""))
+# Both branches must exist: --resume for a parked id, and arm+--session-id
+# so a fresh session checkpoints BEFORE launch and survives a SIGKILL that
+# never writes a result JSON (#752/#753).
+ok_flags = ("--resume" in sess_run and "session-resume.sh" in sess_run
+            and "--session-id" in sess_run and " arm " in sess_run)
+if not ok_flags:
+    sys.exit(7)
+# The post CLEAR step must exist BETWEEN the session and the cache save
+# (#787): delete or reorder it and a completed station gets re-armed —
+# the exact #752 regression this contract exists to pin.
+save_idx = next(i for i, s in enumerate(steps)
+                if i > session_idx and "actions/cache/save" in str(s.get("uses", "")))
+post_steps = [i for i, s in enumerate(steps)
+              if session_idx < i < save_idx
+              and "session-resume.sh" in str(s.get("run", ""))
+              and " post " in str(s.get("run", ""))
+              and str(s.get("if", "")).strip().startswith("always()")]
+sys.exit(0 if post_steps else 8)
+PYEOF
+  then
+    ok "$SESSION_WF checkpoints session state across attempts and resumes it (restore-before, always-save-after, attempt-scoped prefix keys, arm/--session-id + --resume branches)"
+  else
+    case $? in
+      2) bad "$SESSION_WF: no claude -p step to anchor resume wiring (#725)" ;;
+      3) bad "$SESSION_WF: missing cache restore-before-session or always()-guarded save-after-session — a failed attempt's state is lost (#725)" ;;
+      4) bad "$SESSION_WF: cache restore/save paths differ or are empty — state saved is not the state restored (#725)" ;;
+      5) bad "$SESSION_WF: cache save key must include run_id and run_attempt so each attempt checkpoints separately (#725)" ;;
+      6) bad "$SESSION_WF: restore-keys must be a run_id-scoped true prefix of the save key — otherwise resume silently regresses or leaks across runs (#725/#757)" ;;
+      7) bad "$SESSION_WF: the session step must arm a pre-assigned --session-id on fresh runs and --resume a parked one via session-resume.sh (#725/#752/#753)" ;;
+      *) bad "$SESSION_WF: no always()-guarded session-resume.sh post CLEAR step between the session and the cache save — the #752 completed-station re-arm regression is unpinned (#787)" ;;
+    esac
+  fi
+else
+  ok "pyyaml unavailable locally — session-resume wiring check deferred to CI"
+fi
+
+# Behavioral proof for the resume helper: arm records the pre-assigned id
+# (rejecting non-UUIDs), pre answers only when id + transcript both exist,
+# and post clears the checkpoint ONLY on a confirmed clean completion —
+# every kill shape (is_error, empty result, unparseable result) must keep
+# it armed, and a clean run must never leave one behind (#752/#753/#754).
+RESUME_HELPER=".github/scripts/session-resume.sh"
+if [ -f "$RESUME_HELPER" ]; then
+  RH_ABS="$PWD/$RESUME_HELPER"
+  RH_STATE="$(mktemp -d)"; RH_HOME="$(mktemp -d)"
+  RH_RESULT="$(mktemp)"
+  RH_SID="11111111-2222-3333-4444-555555555555"
+
+  if bash "$RH_ABS" arm "$RH_STATE" "$RH_SID" "shaAAAA" && [ "$(cat "$RH_STATE/session-id" 2>/dev/null)" = "$RH_SID" ] && [ "$(cat "$RH_STATE/head-sha" 2>/dev/null)" = "shaAAAA" ]; then
+    ok "session-resume.sh arm records the pre-assigned session id + head SHA before launch"
+  else
+    bad "session-resume.sh arm failed to record the session id + head SHA (#725/#786)"
+  fi
+
+  if bash "$RH_ABS" arm "$RH_STATE" "$(printf '%s\nevil' "$RH_SID")" 2>/dev/null; then
+    bad "session-resume.sh arm accepted a multi-line id — per-line matching lets an embedded value through (#791)"
+  else
+    ok "session-resume.sh arm rejects a multi-line id — whole-string UUID match (#791)"
+  fi
+
+  if bash "$RH_ABS" arm "$RH_STATE" '*' 2>/dev/null; then
+    bad "session-resume.sh arm accepted a non-UUID id — a glob would self-match unrelated transcripts (#756)"
+  else
+    ok "session-resume.sh arm rejects a non-UUID id (#756)"
+  fi
+
+  if [ -z "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" 2>/dev/null)" ]; then
+    ok "session-resume.sh pre stays silent when the transcript is missing — no blind resume into a lost session"
+  else
+    bad "session-resume.sh pre offered a resume with no transcript on disk — claude would cold-fail (#725)"
+  fi
+
+  mkdir -p "$RH_HOME/.claude/projects/-tmp-fixture"
+  : > "$RH_HOME/.claude/projects/-tmp-fixture/$RH_SID.jsonl"
+  if [ "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" "shaAAAA")" = "$RH_SID" ]; then
+    ok "session-resume.sh pre returns the armed id when transcript exists and the SHA matches — resume is offered"
+  else
+    bad "session-resume.sh pre did not offer a resume despite id+transcript+matching SHA (#725)"
+  fi
+
+  if [ -z "$(HOME="$RH_HOME" bash "$RH_ABS" pre "$RH_STATE" "shaBBBB")" ]; then
+    ok "session-resume.sh pre cold-starts on a head-SHA mismatch — a resumed station never acts on a stale diff (#786)"
+  else
+    bad "session-resume.sh pre offered a resume against a DIFFERENT checkout SHA — a review could approve vanished code (#786)"
+  fi
+
+  printf '{"session_id":"%s","is_error":true,"result":"limit"}' "$RH_SID" > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post keeps the checkpoint on an is_error result — the limit park stays resumable"
+  else
+    bad "session-resume.sh post dropped the checkpoint on an error result — the park is unresumable (#725)"
+  fi
+
+  printf '' > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post keeps the checkpoint on an EMPTY result — the SIGKILL/timeout case stays resumable (#753/#754)"
+  else
+    bad "session-resume.sh post dropped the checkpoint on an empty result — the flagship hard-kill case cold-starts (#753/#754)"
+  fi
+
+  printf 'not json' > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post keeps the checkpoint on an unparseable result — a truncated write stays resumable"
+  else
+    bad "session-resume.sh post mishandled an unparseable result (#725)"
+  fi
+
+  printf '{"session_id":"%s","result":"done"}' "$RH_SID" > "$RH_RESULT"
+  if bash "$RH_ABS" post "$RH_STATE" "$RH_RESULT" && [ ! -f "$RH_STATE/session-id" ]; then
+    ok "session-resume.sh post CLEARS on a result the failure guard calls green (is_error absent/falsy) — one predicate, no divergence (#752/#788)"
+  else
+    bad "session-resume.sh post kept the checkpoint on a guard-green result — a rerun would resume a finished station (#752/#788)"
+  fi
+  rm -rf "$RH_STATE" "$RH_HOME" "$RH_RESULT"
+else
+  bad "$RESUME_HELPER missing — no checkpoint/resume capability; every failed run re-pays from zero (#725)"
+fi
+
 # --- factory-run must not be able to report success on nothing ---------------
 # Observed live (GH Actions run 30490944976, 2026-07-29): a factory-run session
 # oriented, hit a couple of Bash permission_denials on raw plumbing commands,
