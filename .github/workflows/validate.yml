@@ -37,7 +37,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
       - name: shellcheck the hook scripts, lib, tests, and bootstrap
-        run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh bootstrap.sh
+        run: shellcheck -S warning hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh bootstrap.sh .github/scripts/*.sh
       # The scaffold contract's #97 permission invariants need pyyaml to parse
       # the workflows. Install it here rather than relying on the runner image
       # shipping it: without it those checks would defer to a CI job that never

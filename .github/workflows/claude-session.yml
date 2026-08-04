@@ -212,6 +212,26 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "telemetry → $OTEL_ENDPOINT (station=$SESSION_STATION)"
 
+      # Snapshot taken BEFORE the session runs, so the post-session gate below
+      # can diff against the session's own starting point instead of the
+      # dispatch SHA — see that step's comment for why the SHA comparison was
+      # wrong (fetch-depth:0 already holds unrelated branch history).
+      # Snapshot spans local heads AND remotes: everything that exists
+      # anywhere at session start is excluded from "this session's own
+      # work", so neither the fetch-depth:0 checkout's bot branches nor a
+      # mid-session DWIM checkout / pull of pre-existing origin history can
+      # count as a deliverable (#564). The gate later diffs local-head
+      # growth against this to find the session's own commits, and checks
+      # the origin remote-ref set separately for "did it reach GitHub".
+      - name: snapshot commit refs before the session runs
+        if: inputs.station == 'factory-run'
+        # set-head: actions/checkout does not create refs/remotes/origin/HEAD,
+        # without which the gate's default-branch detection would silently
+        # fall back to a hardcoded name (#683).
+        run: |
+          git remote set-head origin --auto >/dev/null 2>&1 || true
+          git rev-list --branches --remotes HEAD | sort -u > "$RUNNER_TEMP/refs-before.txt"
+
       - name: run station session
         shell: bash   # pipefail: without it `tee` masks the CLI's exit status
         env:
@@ -257,6 +277,36 @@ jobs:
             }
             console.log("station completed: " + (o.num_turns ?? "?") + " turns");
           ' "$f"
+
+      # factory-run's own mandate (see factory-run.yml's prompt) is a commit and
+      # a PR — "producing only a status report is a FAILURE". The is_error guard
+      # above cannot see that failure mode: `claude -p` ends cleanly (end_turn)
+      # even when the session did nothing but orient and stop, so the job goes
+      # green while the loop never advances (observed live: GH Actions run
+      # 30490944976 — oriented, hit a couple of Bash permission_denials on raw
+      # plumbing commands, then answered with a status dashboard and quit; no
+      # commit, no PR, no checkpoint update, four days stale). This check has to
+      # live HERE, not as a follow-up job in factory-run.yml: a job that calls a
+      # reusable workflow via `uses:` cannot hold any other steps, so this is the
+      # only place with access to the actual git workspace the session leaves
+      # behind — whatever local commits/branches it made, pushed or not.
+      # Scoped to the factory-run station only: other stations (review/triage/
+      # nightly-eval) can legitimately end a run with no commit at all.
+      #
+      # Diffs against the pre-session ref snapshot (previous step), NOT the
+      # dispatch SHA: an earlier version of this gate used
+      # `git rev-list --all --not "$base"`, which — on a fetch-depth:0 checkout
+      # that already holds every open PR/bot branch — counted all of that
+      # pre-existing unrelated history as "new" and never fired (CONFIRMED-high
+      # review finding on PR #421, reproduced live: 38 unrelated commits vs the
+      # 1 the session itself made). require-deliverable.sh and its behavioral
+      # test (tests/scaffold.contract.test.sh) encode this scenario directly.
+      - name: fail when factory-run reports success without a real deliverable
+        if: inputs.station == 'factory-run'
+        env:
+          # Layer 4 asks GitHub whether an open PR carries the pushed work.
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/require-deliverable.sh" "$RUNNER_TEMP/refs-before.txt"
 
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns
