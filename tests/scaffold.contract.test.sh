@@ -249,6 +249,300 @@ else
   bad "$RESUME_HELPER missing — no checkpoint/resume capability; every failed run re-pays from zero (#725)"
 fi
 
+# --- factory-run must not be able to report success on nothing ---------------
+# Observed live (GH Actions run 30490944976, 2026-07-29): a factory-run session
+# oriented, hit a couple of Bash permission_denials on raw plumbing commands,
+# then emitted a status dashboard as its final answer and stopped — no commit,
+# no PR, no checkpoint update. `claude -p`'s own is_error guard (above) does not
+# catch this: the CLI considers a clean end_turn a success, so the job went
+# green while factory-ops/state/checkpoint.json sat stale for days. This is a
+# DIFFERENT failure surface than #228/#251/#252 (those fixed where the mandate
+# lives and how the /factory-run skill counts its own iterations) — this is the
+# outer CI conductor never checking whether factory-run's specific mandate (a
+# commit, ideally with checkpoint.json touched) actually happened.
+#
+# The check must live INSIDE claude-session.yml's session job, scoped to the
+# factory-run station, not as a follow-up job in factory-run.yml: a job that
+# calls a reusable workflow via `uses:` cannot hold any other steps, so the
+# only place with access to the session's actual git workspace (whatever local
+# commits/branches it left behind, pushed or not) is a step appended after
+# "run station session" in the job that did the checkout.
+# The gate's real logic lives in .github/scripts/require-deliverable.sh (a
+# CONFIRMED-high PR #421 review finding: a first version that inlined
+# `git rev-list --all --not "$base"` directly in the workflow step asserted
+# the right SHAPE — checkpoint.json/exit 1/::error:: tokens — while being
+# BEHAVIORALLY a no-op on any active repo, and this shape-only check did not
+# catch it. This check now only confirms the workflow WIRES the snapshot +
+# script correctly; the fixture test below proves the script's BEHAVIOR.
+if [ -f "$SESSION_WF" ] && python3 -c "import yaml" 2>/dev/null; then
+  if WF="$SESSION_WF" python3 -c '
+import os, sys, yaml
+wf = yaml.safe_load(open(os.environ["WF"]))
+steps = wf["jobs"]["session"]["steps"]
+names = [s.get("name", "") for s in steps]
+try:
+    session_idx = next(i for i, n in enumerate(names) if n == "run station session")
+except StopIteration:
+    sys.exit(2)
+snapshot = [
+    (i, s) for i, s in enumerate(steps)
+    if i < session_idx
+    and "factory-run" in str(s.get("if", ""))
+    and "rev-list" in str(s.get("run", ""))
+    and "refs-before" in str(s.get("run", ""))
+]
+gate = [
+    (i, s) for i, s in enumerate(steps)
+    if i > session_idx
+    and "factory-run" in str(s.get("if", ""))
+    and "require-deliverable.sh" in str(s.get("run", ""))
+    and "refs-before" in str(s.get("run", ""))
+]
+if not (snapshot and gate):
+    sys.exit(1)
+# The two steps must be gated by the IDENTICAL condition: if they ever
+# drift (one fires without the other), every factory-run either loses the
+# gate silently or hard-fails on a missing snapshot file (#489).
+if str(snapshot[0][1].get("if")) != str(gate[0][1].get("if")):
+    sys.exit(3)
+# The station literal in those conditions must be the station factory-run
+# actually dispatches (#558): a rename on either side would silently
+# disable the gate forever while both if: strings still match each other.
+fr = yaml.safe_load(open(".github/workflows/factory-run.yml"))
+dispatched = str(fr["jobs"]["session"]["with"]["station"])
+quoted = chr(39) + dispatched + chr(39)
+if quoted not in str(gate[0][1].get("if", "")):
+    sys.exit(4)
+# The snapshot file path must be EXACTLY the one the gate reads — substring
+# overlap is not enough; a one-sided rename still contains the old prefix
+# and would pass a looser check while breaking at runtime (#685).
+import re
+snap_paths = set(re.findall(r"\$RUNNER_TEMP/[\w.-]+", str(snapshot[0][1].get("run", ""))))
+gate_paths = set(re.findall(r"\$RUNNER_TEMP/[\w.-]+", str(gate[0][1].get("run", ""))))
+if not snap_paths or not snap_paths.issubset(gate_paths):
+    sys.exit(5)
+sys.exit(0)
+  '; then
+    ok "$SESSION_WF snapshots refs before the session and gates factory-run against them after"
+  else
+    st=$?
+    if [ "$st" = "2" ]; then
+      bad "$SESSION_WF: could not locate the \"run station session\" step to anchor the gate around"
+    elif [ "$st" = "3" ]; then
+      bad "$SESSION_WF: snapshot and gate steps have drifted apart — their if: conditions differ (#489)"
+    elif [ "$st" = "4" ]; then
+      bad "$SESSION_WF: the gate's station literal does not match the station factory-run.yml dispatches — the gate is silently disabled (#558)"
+    elif [ "$st" = "5" ]; then
+      bad "$SESSION_WF: the snapshot file path and the path the gate reads have drifted (#685)"
+    else
+      bad "$SESSION_WF does not wire a pre-session ref snapshot into a post-session require-deliverable.sh gate"
+    fi
+  fi
+else
+  ok "pyyaml unavailable locally — factory-run deliverable-gate wiring check deferred to CI"
+fi
+
+# Behavioral proof, not shape: build a throwaway git repo with a bare origin
+# remote that already holds unrelated branch history (simulating the
+# fetch-depth:0 checkout's other open PRs/bot branches — the exact condition
+# that made the SHA-based version of this gate a no-op), snapshot it, then
+# prove each of the gate's layers fires: (a) FAILS on no new commit;
+# (b) FAILS on a no-op session that DWIM-checkouts a pre-existing remote
+#     branch — pre-existing origin history must not read as work (#564);
+# (c) PASSES but WARNS on a LOCAL-only checkpoint commit — the CLAUDE.md
+#     usage-limit park mandates commit-without-push and must never red
+#     (#556), and the same holds after it is pushed (#485/#487);
+# (d) an empty (merge/--allow-empty) commit does not upgrade the park (#515);
+# (e) FAILS on real work stranded locally — committed but never pushed (#484);
+# (f) PASSES silently-clean once the real work reaches origin.
+GATE_SCRIPT=".github/scripts/require-deliverable.sh"
+if [ -f "$GATE_SCRIPT" ]; then
+  GATE_SCRIPT_ABS="$PWD/$GATE_SCRIPT"
+  GATE_ORIGIN="$(mktemp -d)"
+  GATE_FIXTURE="$(mktemp -d)"
+  # Deterministic gh stubs for layer 4 (#648/#729): "probe ok + zero PRs"
+  # proves the authoritative no-PR red; "probe ok + one PR" proves the
+  # production success path (protected main means real runs pass ONLY via
+  # this branch); "everything fails" proves the inconclusive warn.
+  GATE_GH_STUB="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in api) exit 0 ;; *) echo 0 ;; esac\n' > "$GATE_GH_STUB/gh"
+  chmod +x "$GATE_GH_STUB/gh"
+  GATE_PATH="$GATE_GH_STUB:$PATH"
+  GATE_GH_STUB_PR="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in api) exit 0 ;; *) echo 1 ;; esac\n' > "$GATE_GH_STUB_PR/gh"
+  chmod +x "$GATE_GH_STUB_PR/gh"
+  GATE_PATH_PR="$GATE_GH_STUB_PR:$PATH"
+  GATE_GH_STUB_DOWN="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$GATE_GH_STUB_DOWN/gh"
+  chmod +x "$GATE_GH_STUB_DOWN/gh"
+  GATE_PATH_DOWN="$GATE_GH_STUB_DOWN:$PATH"
+  (
+    git init -q --bare "$GATE_ORIGIN"
+    cd "$GATE_FIXTURE" || exit 1
+    git init -q -b main
+    git config user.email t@example.com
+    git config user.name t
+    git remote add origin "$GATE_ORIGIN"
+    echo one > f.txt && git add f.txt && git commit -q -m "chore: seed"
+    git push -q origin main
+    # Unrelated history already present at job start (other bots' PRs, qa
+    # nightlies) — must NOT count as this session's own work. The local
+    # branch is deleted after pushing so it exists ONLY as
+    # refs/remotes/origin/other-bot-pr, ready for the DWIM-checkout case.
+    git branch other-bot-pr
+    git checkout -q other-bot-pr
+    echo unrelated > g.txt && git add g.txt && git commit -q -m "chore: unrelated bot commit"
+    git push -q origin other-bot-pr
+    git checkout -q main
+    git branch -q -D other-bot-pr
+  ) >/dev/null 2>&1
+
+  # Setup sanity (#518): if the fixture didn't build, the "correctly FAILS"
+  # assertions below would pass for the wrong reason.
+  if ( cd "$GATE_FIXTURE" && git rev-parse --verify -q origin/main >/dev/null && git rev-parse --verify -q origin/other-bot-pr >/dev/null ); then
+    ok "deliverable-gate fixture built (origin holds main + unrelated bot branch)"
+  else
+    bad "deliverable-gate fixture setup failed — the behavioral assertions below prove nothing"
+  fi
+
+  refs_before="$(mktemp)"
+  ( cd "$GATE_FIXTURE" && git rev-list --branches --remotes HEAD | sort -u > "$refs_before" )
+
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED a session that made zero new commits (only pre-existing unrelated branch history present) — this is the exact PR #421 review finding"
+  else
+    ok "deliverable gate correctly FAILS a session that landed no new commit, even with unrelated branches already in the workspace"
+  fi
+
+  # DWIM checkout of a pre-existing remote branch creates a LOCAL head at a
+  # commit that already existed on origin — a no-op session doing this must
+  # still fail, not read pre-existing bot history as its own work (#564).
+  ( cd "$GATE_FIXTURE" && git checkout -q other-bot-pr && git checkout -q main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED a no-op session that only DWIM-checkouted a pre-existing remote branch — pre-existing origin history counted as work (#564)"
+  else
+    ok "deliverable gate correctly FAILS a no-op session after a DWIM checkout of a pre-existing remote branch (#564)"
+  fi
+
+  # A commit ANOTHER actor pushes after the snapshot, absorbed into local
+  # heads (the `git pull` shape), must not count as this session's work —
+  # the committer-identity filter is what excludes it (#564, round 5).
+  ( cd "$GATE_FIXTURE" && echo foreign > foreign.txt && git add foreign.txt && GIT_AUTHOR_EMAIL=other-bot@example.com GIT_COMMITTER_EMAIL=other-bot@example.com git commit -q -m "feat: foreign actor work" && git push -q origin main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED on a foreign actor's post-snapshot commit pulled into local heads — false green (#564)"
+  else
+    ok "deliverable gate correctly FAILS when the only post-snapshot commit belongs to a foreign actor (#564)"
+  fi
+
+  # LOCAL-only checkpoint commit: the CLAUDE.md usage-limit park mandates
+  # commit-without-push — must warn, never red (#556).
+  (
+    cd "$GATE_FIXTURE" || exit 1
+    mkdir -p factory-ops/state && echo '{}' > factory-ops/state/checkpoint.json
+    git add factory-ops/state/checkpoint.json
+    git commit -q -m "chore(checkpoint): reconcile"
+  ) >/dev/null 2>&1
+  park_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  park_rc=$?
+  if [ "$park_rc" = "0" ] && printf '%s' "$park_out" | grep -q '^::warning::'; then
+    ok "deliverable gate PASSES a LOCAL-only checkpoint park with a ::warning:: — the mandated no-push limit park never reds (#556)"
+  elif [ "$park_rc" != "0" ]; then
+    bad "deliverable gate REDS the mandated local-only checkpoint park — violates 'never red on a limit' (#556)"
+  else
+    bad "deliverable gate passed a checkpoint-only park silently — the operator loses the no-roadmap-work signal (#485)"
+  fi
+
+  # The same park stays a warn-pass after the checkpoint is pushed (#485/#487).
+  ( cd "$GATE_FIXTURE" && git push -q origin main ) >/dev/null 2>&1
+  park_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  park_rc=$?
+  if [ "$park_rc" = "0" ] && printf '%s' "$park_out" | grep -q '^::warning::'; then
+    ok "deliverable gate PASSES a pushed checkpoint-only park with a ::warning:: (#485/#487)"
+  else
+    bad "deliverable gate mishandled a pushed checkpoint-only park (rc=$park_rc) (#485/#487)"
+  fi
+
+  # An empty commit (merge/--allow-empty shape) must not upgrade the park to
+  # "real deliverable" (#515).
+  ( cd "$GATE_FIXTURE" && git commit -q --allow-empty -m "chore: empty" && git push -q origin main ) >/dev/null 2>&1
+  empty_out="$( cd "$GATE_FIXTURE" && bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  if [ $? = 0 ] && printf '%s' "$empty_out" | grep -q '^::warning::'; then
+    ok "deliverable gate does not count an empty commit as roadmap work (#515)"
+  else
+    bad "deliverable gate misclassified an empty commit — phantom blank line counted as work (#515)"
+  fi
+
+  # Real work committed but never pushed is ambiguous between a mid-work
+  # limit park (protocol-legitimate, no push mandated) and a failed push —
+  # so it WARNS and passes, never reds (#676; never-red-on-a-limit).
+  ( cd "$GATE_FIXTURE" && mkdir -p src && echo work > src/feature.txt && git add src/feature.txt && git commit -q -m "feat: roadmap work" ) >/dev/null 2>&1
+  local_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  local_rc=$?
+  if [ "$local_rc" = "0" ] && printf '%s' "$local_out" | grep -q '^::warning::'; then
+    ok "deliverable gate WARN-passes local-only work — indistinguishable from a mid-work limit park, never red on a limit (#676)"
+  elif [ "$local_rc" != "0" ]; then
+    bad "deliverable gate REDS local-only work — a protocol-compliant mid-work limit park goes red (#676)"
+  else
+    bad "deliverable gate passed local-only work silently — the operator loses the possibly-failed-push signal (#676)"
+  fi
+
+  ( cd "$GATE_FIXTURE" && git push -q origin main ) >/dev/null 2>&1
+  real_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before" 2>&1 )"
+  if [ $? = 0 ] && ! printf '%s' "$real_out" | grep -q '^::warning::'; then
+    ok "deliverable gate correctly PASSES pushed real work cleanly (roadmap work on origin's default branch)"
+  else
+    bad "deliverable gate FAILED or warned on a session that pushed real work — false negative would red-flag every legitimate factory-run"
+  fi
+
+  # Work pushed to a SIDE branch with no PR must red: the mandate is a
+  # commit AND a pull request; a push that succeeded while gh pr create
+  # failed is stranded work (#644). Fresh snapshot first, so the earlier
+  # main-landed work is out of scope and only the stranded commit counts.
+  # (In this hermetic fixture `gh` has no repo to answer for, which is
+  # exactly the no-open-PR condition.)
+  refs_before2="$(mktemp)"
+  ( cd "$GATE_FIXTURE" && git rev-list --branches --remotes HEAD | sort -u > "$refs_before2" )
+  ( cd "$GATE_FIXTURE" && git checkout -q -b stranded-branch && echo more > src/more.txt && git add src/more.txt && git commit -q -m "feat: stranded work" && git push -q origin stranded-branch && git checkout -q main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before2" ) >/dev/null 2>&1; then
+    bad "deliverable gate PASSED work stranded on a side branch with no PR — a failed gh pr create still reads as success (#644)"
+  else
+    ok "deliverable gate correctly FAILS side-branch work with no open PR (#644)"
+  fi
+
+  # A checkpoint bump on main must NOT vouch for the stranded side-branch
+  # work (#678): checkpoint commits are bookkeeping, never the PR evidence.
+  ( cd "$GATE_FIXTURE" && echo '{"n":2}' > factory-ops/state/checkpoint.json && git add factory-ops/state/checkpoint.json && git commit -q -m "chore(checkpoint): park" && git push -q origin main ) >/dev/null 2>&1
+  if ( cd "$GATE_FIXTURE" && PATH="$GATE_PATH" bash "$GATE_SCRIPT_ABS" "$refs_before2" ) >/dev/null 2>&1; then
+    bad "deliverable gate let a main-branch checkpoint bump vouch for stranded side-branch work (#678)"
+  else
+    ok "deliverable gate still FAILS stranded side-branch work when a checkpoint bump landed on main (#678)"
+  fi
+
+  # THE production success path (#648): main is protected in the real repo,
+  # so every genuine factory-run passes ONLY via layer 4's gh answer — a PR
+  # exists for the side branch. Must be a clean, warning-free PASS.
+  pr_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH_PR" bash "$GATE_SCRIPT_ABS" "$refs_before2" 2>&1 )"
+  pr_rc=$?
+  if [ "$pr_rc" = "0" ] && ! printf '%s' "$pr_out" | grep -q '^::warning::'; then
+    ok "deliverable gate cleanly PASSES side-branch work whose branch has an open PR — the production path (#648)"
+  else
+    bad "deliverable gate mishandled side-branch work WITH a PR (rc=$pr_rc) — every real factory-run would red or warn (#648)"
+  fi
+
+  # gh entirely down (probe fails): inconclusive — warn, never red, never
+  # silently pass (#729/#679).
+  down_out="$( cd "$GATE_FIXTURE" && PATH="$GATE_PATH_DOWN" bash "$GATE_SCRIPT_ABS" "$refs_before2" 2>&1 )"
+  down_rc=$?
+  if [ "$down_rc" = "0" ] && printf '%s' "$down_out" | grep -q '^::warning::'; then
+    ok "deliverable gate WARN-passes when gh is entirely unreachable — inconclusive, not authoritative (#729)"
+  else
+    bad "deliverable gate mishandled a full gh outage (rc=$down_rc) — an API outage must neither red nor silently pass (#729)"
+  fi
+  rm -rf "$GATE_FIXTURE" "$GATE_ORIGIN" "$GATE_GH_STUB" "$GATE_GH_STUB_PR" "$GATE_GH_STUB_DOWN" "$refs_before" "$refs_before2"
+else
+  bad "$GATE_SCRIPT missing — factory-run deliverable gate has no testable implementation"
+fi
+
 # --- the cron heartbeat must be able to actually WAKE the factory ------------
 # cron-prod's only job is to POST a repository_dispatch (event_type
 # factory-resume) that starts factory-run. Two GitHub facts make the bare
