@@ -168,12 +168,12 @@ jobs:
       group: issue-triage-${{ matrix.issue }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
 
       - name: Triage with Claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@v1.0.183
         env:
           # Read by the two wrapper scripts; pins every mutation to this
           # matrix job's issue at the tool layer, out of the model's hands.
