@@ -374,7 +374,7 @@ all four are normative in the spec's prerequisite line:
    planning-comment budget. Recommended to the planner as a standing agenda
    item until the 188 reach zero.
 
-Until both prerequisites clear, **M4 stays unchecked** and the Release Gate
+Until all four prerequisites clear, **M4 stays unchecked** and the Release Gate
 should not be evaluated as "close to holding" on tech-debt count alone —
 current true state is 18 `P0`/`P1` tech-debt items + 10 security-labeled
 tech-debt items (some overlapping) outstanding against even the *redefined*

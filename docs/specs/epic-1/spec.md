@@ -112,7 +112,12 @@ trusts this gate):
   **and** — for an issue whose body carries a `fingerprint:` trailer (all
   clerk-filed review findings do) — that merged PR cites the same
   fingerprint in its body or a commit message, so a trivial unrelated
-  "Closes #X" PR cannot clear a finding it never fixed; an issue with no
+  "Closes #X" PR cannot clear a finding it never fixed. The fix-side
+  obligation lives in `agents/implementer.md` step 6, defined together
+  with this check; and the criterion is always satisfiable after the
+  fact, because the PR **body** is editable post-merge — a genuine fix
+  whose author forgot the citation is remediated by editing the merged
+  PR's body to add it, never permanently blocked. An issue with no
   fingerprint trailer needs only the merged closing PR; or
   (b) `stateReason` is `duplicate` and the duplicate target — the issue
   named by the **most recent `MarkedAsDuplicateEvent`** on the closed

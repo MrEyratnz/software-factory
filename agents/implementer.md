@@ -23,6 +23,13 @@ one roadmap item and drive it red → green → refactor.
    (`commit_lint`). `guard-commit` will refuse the commit unless the message is
    conventional, tests were staged, and a green receipt matches the current
    tree — so run the full suite immediately before committing.
+6. **Cite the fingerprint when fixing tracked debt.** If the issue your PR
+   closes carries a `fingerprint:` trailer (every clerk-filed review finding
+   does), cite that same fingerprint in the PR body or a commit message —
+   the Release Gate's close-laundering exemption
+   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0") requires it to
+   credit the close as a real fix. Forgot? The PR body is editable after
+   merge; add it there.
 
 ## Fences (enforced, by design)
 
