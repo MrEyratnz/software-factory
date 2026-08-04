@@ -44,11 +44,11 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@v1.0.183
         env:
           # Read by scripts/review-comment.sh; pins the one comment write to
           # the triggering PR at the tool layer, out of the model's hands.
