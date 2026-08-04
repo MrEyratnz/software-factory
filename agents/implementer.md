@@ -25,11 +25,13 @@ one roadmap item and drive it red → green → refactor.
    tree — so run the full suite immediately before committing.
 6. **Cite the fingerprint when fixing tracked debt.** If the issue your PR
    closes carries a `fingerprint:` trailer (every clerk-filed review finding
-   does), cite that same fingerprint in the PR body or a commit message —
+   does), cite that same fingerprint in a **commit message** of the PR —
    the Release Gate's close-laundering exemption
-   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0") requires it to
-   credit the close as a real fix. Forgot? The PR body is editable after
-   merge; add it there.
+   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0") accepts only
+   immutable evidence (a post-merge-editable PR body would let a no-op
+   close be laundered later). Forgot? Land a follow-up commit on the
+   default branch naming both the issue and the fingerprint — the
+   remediation path the spec defines.
 
 ## Fences (enforced, by design)
 

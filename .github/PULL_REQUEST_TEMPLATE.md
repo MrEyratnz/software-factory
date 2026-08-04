@@ -8,8 +8,8 @@
 
 - [ ] Failing test written first; full suite (`bash tests/run-suite.sh`) green
 - [ ] If this PR closes an issue carrying a `fingerprint:` trailer, that same
-      fingerprint is cited here or in a commit message — the Release Gate's
-      close-laundering exemption (`docs/specs/epic-1/spec.md`
-      § "Release Gate for v1.0.0") requires it to credit the close as a real
-      fix (the PR body stays editable after merge if forgotten)
+      fingerprint is cited in a **commit message** (immutable evidence — the
+      Release Gate's close-laundering exemption in `docs/specs/epic-1/spec.md`
+      § "Release Gate for v1.0.0" does not accept the editable PR body; if
+      forgotten, a follow-up commit naming issue + fingerprint remediates)
 - [ ] Review findings not fixed here are filed as `tech-debt` issues

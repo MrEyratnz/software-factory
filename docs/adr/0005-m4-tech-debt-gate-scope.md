@@ -8,7 +8,7 @@ The v1.0.0 Release Gate (M4) reads literally "zero open `bug`/`tech-debt`
 issues at any priority, no judgment calls" — stated in three places:
 `docs/specs/epic-1/spec.md` (the definition `docs/ROADMAP.md`'s preamble and
 `.claude/CLAUDE.md` pin the gate to), `docs/ROADMAP.md` M4, and, since PR
-#444, a fourth *divergent* definition in `docs/PRODUCT.md`.
+#444's first draft, a third *divergent* definition in `docs/PRODUCT.md`.
 
 Ground truth (2026-07-29, fully-paginated `gh api graphql` — recorded in
 `docs/PRODUCT.md`): **273 open `tech-debt` issues** (P0: 3, P1: 15, P2: 44,

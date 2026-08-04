@@ -72,21 +72,32 @@ trusts this gate):
 - zero open `bug` issues — literal, unwaived (a bug is fixed, never
   deferred, even under freeze);
 - zero open `tech-debt` issues labeled `P0` or `P1`;
-- zero open `tech-debt` issues labeled `security`, at any `P0`–`P3` level —
-  a cross-priority rule decided in ADR 0005, which deliberately **extends**
-  `docs/PRODUCT.md` ranking rule 1 (on its own that rule is only an
-  equal-priority tie-breaker);
+- zero open `tech-debt` issues that have **ever carried** `security`, at
+  any `P0`–`P3` level — a cross-priority rule decided in ADR 0005, which
+  deliberately **extends** `docs/PRODUCT.md` ranking rule 1 (on its own
+  that rule is only an equal-priority tie-breaker). Ever-carried
+  (`LabeledEvent` timeline, same paginated GraphQL), **not** current
+  label: removing the `security` label is not a ranking act any charter
+  authorizes, and a current-state query would let exactly that removal
+  ship a real security issue in v1.0.0. (`P0`/`P1` deliberately remain
+  current-state: down-triage IS an authorized, auditable product-owner
+  ranking act, and the confirmed-high subset is separately floored
+  below);
 - zero open `tech-debt` issues lacking a valid `P0`–`P3` label
   (**fail-closed**: an untriaged issue blocks the gate until it carries one
   of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
   count as triage; if more than one `P0`–`P3` label is present, the most
   severe governs). The triage pass that clears this is tracked as #510;
-- zero open issues that have **ever carried** `gate:confirmed-high` and
-  lack a qualifying merged fix PR — the **anti-laundering criterion**.
-  This one is deliberately a **timeline query, not a current-label
-  query** (`LabeledEvent`s in the same fully-paginated GraphQL): a
-  current-state label query would be defeated by simply removing the
-  label from an open, down-triaged issue. The tech-debt clerk applies
+- zero open issues that have **ever carried** `gate:confirmed-high` —
+  the **anti-laundering criterion**, with no further qualifier: an OPEN
+  issue in this set always blocks (a fixed finding exits the set by being
+  closed by its fix PR, which the close-laundering criterion then
+  verifies — there is no "fixed but still open" state to adjudicate, so
+  no judgment call). This one is deliberately a **timeline query, not a
+  current-label query** (`LabeledEvent`s in the same fully-paginated
+  GraphQL): a current-state label query would be defeated by simply
+  removing the label from an open, down-triaged issue. The tech-debt
+  clerk applies
   `gate:confirmed-high` at filing time to every issue it opens from a
   CONFIRMED-high adversarial-review finding; the label is a severity
   **floor** that coexists with whatever `P0`–`P3` label triage assigns.
@@ -102,23 +113,29 @@ trusts this gate):
   ground-truth baseline date) other than through a mechanically-verified
   fix or duplicate — the close-laundering criterion, **fail-closed across
   every close reason**. "Gate-relevant" means: labeled `bug`; or labeled
-  `tech-debt` with any of `P0`/`P1`/`security`/`gate:confirmed-high`; or
-  labeled `tech-debt` **lacking a valid `P0`–`P3` label** — the identical
+  `tech-debt` with any of `P0`/`P1` current, or having **ever carried**
+  `security` or `gate:confirmed-high` (the same `LabeledEvent` timeline
+  queries the open-issue criteria use — a strip-the-labels-then-close
+  sequence must not slip past the close audit either); or labeled
+  `tech-debt` **lacking a valid `P0`–`P3` label** — the identical
   set the open-issue criteria block on, so closing an untriaged issue
   cannot bypass triage. A closed gate-relevant issue is exempt only if:
   (a) `stateReason` is `completed` **and** GitHub's closed-by-PR
   cross-reference (`closedByPullRequestsReferences` in the same
   fully-paginated GraphQL) lists at least one **merged** pull request,
-  **and** — for an issue whose body carries a `fingerprint:` trailer (all
-  clerk-filed review findings do) — that merged PR cites the same
-  fingerprint in its body or a commit message, so a trivial unrelated
-  "Closes #X" PR cannot clear a finding it never fixed. The fix-side
-  obligation lives in `agents/implementer.md` step 6, defined together
-  with this check; and the criterion is always satisfiable after the
-  fact, because the PR **body** is editable post-merge — a genuine fix
-  whose author forgot the citation is remediated by editing the merged
-  PR's body to add it, never permanently blocked. An issue with no
-  fingerprint trailer needs only the merged closing PR; or
+  **and** that merged PR has a **non-empty diff**, **and** — for an issue
+  whose body carries a `fingerprint:` trailer (all clerk-filed review
+  findings do) — the same fingerprint is cited in **immutable evidence
+  only**: a commit message of that merged PR, or of a later commit merged
+  to the default branch that names both the issue and the fingerprint
+  (the remediation path for a genuine fix whose author forgot — still
+  never a permanent block). The PR **body is explicitly NOT accepted**:
+  it is editable after merge, so a no-op close could be laundered by
+  pasting the publicly-visible fingerprint into it later; commit
+  messages, once merged, cannot be rewritten. The fix-side obligation
+  lives in `agents/implementer.md` step 6, defined together with this
+  check. An issue with no fingerprint trailer needs the merged,
+  non-empty-diff closing PR; or
   (b) `stateReason` is `duplicate` and the duplicate target — the issue
   named by the **most recent `MarkedAsDuplicateEvent`** on the closed
   issue's timeline (same fully-paginated GraphQL; no such event → the
