@@ -148,7 +148,27 @@ post_steps = [i for i, s in enumerate(steps)
               and "session-resume.sh" in str(s.get("run", ""))
               and " post " in str(s.get("run", ""))
               and str(s.get("if", "")).strip().startswith("always()")]
-sys.exit(0 if post_steps else 8)
+if not post_steps:
+    sys.exit(8)
+# The helper must be STAGED outside the mutable workspace before the
+# session and invoked from the staged copy everywhere (#877): the session
+# owns $GITHUB_WORKSPACE and can check out a ref that predates the helper,
+# which redded a green review job live (run 30949392912) and left a
+# completed session's checkpoint armed.
+stage_steps = [i for i, s in enumerate(steps)
+               if i < session_idx
+               and "session-resume.sh" in str(s.get("run", ""))
+               and "RUNNER_TEMP" in str(s.get("run", ""))
+               and ("cp " in str(s.get("run", "")) or "install " in str(s.get("run", "")))]
+if not stage_steps:
+    sys.exit(9)
+for idx in [session_idx] + post_steps:
+    r = str(steps[idx].get("run", ""))
+    if "GITHUB_WORKSPACE/.github/scripts/session-resume.sh" in r:
+        sys.exit(9)
+    if "session-resume.sh" in r and "$RUNNER_TEMP/session-resume.sh" not in r:
+        sys.exit(9)
+sys.exit(0)
 PYEOF
   then
     ok "$SESSION_WF checkpoints session state across attempts and resumes it (restore-before, always-save-after, attempt-scoped prefix keys, arm/--session-id + --resume branches)"
@@ -160,7 +180,8 @@ PYEOF
       5) bad "$SESSION_WF: cache save key must include run_id and run_attempt so each attempt checkpoints separately (#725)" ;;
       6) bad "$SESSION_WF: restore-keys must be a run_id-scoped true prefix of the save key — otherwise resume silently regresses or leaks across runs (#725/#757)" ;;
       7) bad "$SESSION_WF: the session step must arm a pre-assigned --session-id on fresh runs and --resume a parked one via session-resume.sh (#725/#752/#753)" ;;
-      *) bad "$SESSION_WF: no always()-guarded session-resume.sh post CLEAR step between the session and the cache save — the #752 completed-station re-arm regression is unpinned (#787)" ;;
+      8) bad "$SESSION_WF: no always()-guarded session-resume.sh post CLEAR step between the session and the cache save — the #752 completed-station re-arm regression is unpinned (#787)" ;;
+      *) bad "$SESSION_WF: session-resume.sh must be staged to \$RUNNER_TEMP before the session and invoked from the staged copy — the session mutates the workspace and can delete the helper out from under the post step (#877)" ;;
     esac
   fi
 else
