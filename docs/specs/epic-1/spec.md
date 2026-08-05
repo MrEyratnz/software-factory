@@ -83,9 +83,15 @@ not laundering. What bounds it: the ever-carried floors below (security
 and confirmed-high can never be re-ranked out), and mandatory
 visibility — the Release Gate script **reports every `P0`/`P1` →
 `P2`/`P3` down-rank made after the 2026-07-29 baseline** (from the same
-`LabeledEvent` timeline) in its output, and the `release-captain`'s
-gate run fails if that report cannot be produced. A down-rank is never
-silent; it is signed-for in the release record (#909).
+`LabeledEvent` timeline) in its output. The sign-off is itself a
+**blocking mechanical predicate**, not an informal step (#934): the
+gate emits its report (down-ranks + exemption evidence, see the close
+audit) with a **content hash**, and the gate FAILS unless the release
+record contains a committed acknowledgment file naming exactly that
+hash — no acknowledgment, stale hash, or unproducible report all fail.
+`/ship` is what commits the acknowledgment after the `release-captain`
+reviews the report; automation cannot skip it because the hash match is
+checked mechanically. A down-rank is never silent (#909).
 
 - zero open bug issues (ever-carried `bug`) — literal, unwaived (a bug
   is fixed, never deferred, even under freeze);
@@ -163,8 +169,9 @@ silent; it is signed-for in the release record (#909).
   be non-empty under whitespace-ignoring comparison. Residual risk,
   stated: a near-line cosmetic edit can still technically satisfy the
   intersection — so the gate output **lists every exemption (a) with
-  its hunk-overlap evidence** for the `release-captain`'s sign-off,
-  the same visibility rule the down-rank report uses. A
+  its hunk-overlap evidence** in the same hash-acknowledged report the
+  down-rank rule defines above: absent or unacknowledged, the gate
+  FAILS (#934). A
   pre-existing location that does not match the grammar (prose, ranges,
   bare basenames) makes binding (ii) inapplicable — binding (i) alone
   then governs, explicitly the same **heuristic floor** as the

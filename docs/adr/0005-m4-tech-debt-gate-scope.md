@@ -57,7 +57,7 @@ governs. What this ADR decides is the *scope change* the spec now expresses:
   security-scoped and v1.0.0-scoped and therefore cannot absorb
   non-blocking deferrals without contradicting itself;
 - the authorship of this and any future gate-scope change follows the
-  **joint-lane rule recorded in `GOVERNANCE.md` § "Decision owners"**: the
+  **joint-lane rule recorded in `GOVERNANCE.md` § "Decision owners (default path — no meeting needed)"**: the
   product owner authors the `docs/PRODUCT.md` rationale, the architect
   authors the spec/ARCHITECTURE/ADR wording, and a fenced agent's charter
   is never widened by that agent's own edit to its file;

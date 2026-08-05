@@ -111,7 +111,7 @@ P1 labels.
    2026-07-28 snapshot (273 by the 2026-07-29 ground truth). The Stop-gate
    reconciliation this repo's whole tech-debt convention depends on — and by
    extension M4's Release Gate (ADR 0005; authoritative in
-   `docs/specs/epic-1/spec.md`) — cannot see ~86% of what it's supposed to
+   `docs/specs/epic-1/spec.md`) — cannot see ~89% of what it's supposed to
    enforce against at current backlog size. This is a gate-integrity bug,
    not routine tech-debt.
 8. **#231** (P1, labeled this pass) — cron-prod dispatch-condition inversion

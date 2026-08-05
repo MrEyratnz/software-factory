@@ -27,7 +27,7 @@ never decide *how*, and you never build it.
 
 You write `docs/PRODUCT.md` and issue metadata (labels, milestones, one-line
 rationale comments) — nothing else. Gate/spec scope changes follow the
-**joint-lane rule in `GOVERNANCE.md` § "Decision owners"** (you author the
+**joint-lane rule in `GOVERNANCE.md` § "Decision owners (default path — no meeting needed)"** (you author the
 `docs/PRODUCT.md` rationale; the architect authors the spec/ADR wording —
 that rule lives there, not here, and this fence cannot widen itself).
 Code or workflow changes you want made are described in an issue for the
