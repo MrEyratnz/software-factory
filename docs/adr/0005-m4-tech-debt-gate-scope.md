@@ -1,7 +1,6 @@
 # ADR 0005 — Scope the v1.0.0 tech-debt gate: fail-closed on triage, security outranks priority
 
-Status: accepted · Date: 2026-08-05 (decision opened 2026-07-30; text
-finalized through the PR #444 review rounds)
+Status: accepted · Date: 2026-08-05
 
 ## Context
 
@@ -43,21 +42,20 @@ ADR's own rule there is exactly one maintainable copy, in the spec section
 above; if any summary in this ADR and the spec ever diverge, the spec
 governs. What this ADR decides is the *scope change* the spec now expresses:
 
-- literal-zero tech-debt is replaced by severity-scoped criteria over
-  exact-form, case-sensitive labels (fail-closed on untriaged issues —
-  triage tracked as #510 and as an explicit ROADMAP M4 item);
-- **security blocks at any `P0`–`P3` level** — this cross-priority
-  precedence is **this ADR's own decision**: `docs/PRODUCT.md` ranking
-  rule 1 is, as written, only an equal-priority tie-breaker, and this ADR
-  deliberately extends it across priority levels for release gating,
-  because the ground truth shows `security` does not correlate with
-  P-level;
-- non-security `P2`/`P3` tech-debt no longer blocks v1.0.0 and defers to
-  the named ROADMAP **M5 (v1.1.0) item "P2/P3 tech-debt burndown
-  (non-security)"** — deliberately distinct from M3's security-hardening
-  pass, which is security-scoped and v1.0.0-scoped and therefore cannot
-  absorb non-blocking deferrals without contradicting itself;
-- `bug` stays literal zero, unwaived;
+- literal-zero tech-debt is replaced by the severity-scoped,
+  fail-closed criteria **as written in the spec section — no
+  restatement here** (#924);
+- one decision originates in this ADR rather than the spec:
+  **security-precedence extends across priority levels for release
+  gating** — `docs/PRODUCT.md` ranking rule 1 is, as written, only an
+  equal-priority tie-breaker, and the ground truth shows `security`
+  does not correlate with P-level; the spec expresses the resulting
+  criterion;
+- the deferral home for what no longer blocks is the named ROADMAP
+  **M5 (v1.1.0) item "P2/P3 tech-debt burndown (non-security)"** —
+  deliberately distinct from M3's security-hardening pass, which is
+  security-scoped and v1.0.0-scoped and therefore cannot absorb
+  non-blocking deferrals without contradicting itself;
 - the authorship of this and any future gate-scope change follows the
   **joint-lane rule recorded in `GOVERNANCE.md` § "Decision owners"**: the
   product owner authors the `docs/PRODUCT.md` rationale, the architect
@@ -73,9 +71,9 @@ governs. What this ADR decides is the *scope change* the spec now expresses:
 Prerequisite: the canonical set is the spec's CLOSED-state criterion —
 no copy of the list here, the spec governs; notably the pagination
 counting bug and the anti-laundering backfill audit within it must be
-fixed and
-re-verified before any automation trusts this gate** — the M4 "Release Gate
-script" must count via fully-paginated queries, never a bare `gh issue list`.
+fixed and re-verified before any automation trusts this gate — the M4
+"Release Gate script" must count via fully-paginated queries, never a
+bare `gh issue list`.
 
 Explicitly rejected: the literal zero (unachievable except via mass-closing or
 the counting bug); treating unlabeled tech-debt as deferrable (fail-open — an

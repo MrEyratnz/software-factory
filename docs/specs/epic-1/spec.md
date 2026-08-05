@@ -128,13 +128,15 @@ silent; it is signed-for in the release record (#909).
   membership the open-issue criteria use (a strip-the-labels-then-close
   sequence must not slip past the close audit either): ever-carried
   `bug`; or ever-carried `security` or `gate:confirmed-high` (regardless
-  of any other label); or ever-carried `tech-debt` that has **ever
-  carried `P0` or `P1` after the 2026-07-29 baseline** (ever-carried
-  here too — a re-rank-then-close sequence must not dodge the audit the
-  way an honest still-open re-rank legitimately exits the open
-  criterion, #909); or ever-carried `tech-debt` lacking a valid
-  `P0`–`P3` label at close time. A closed gate-relevant issue is exempt
-  only if:
+  of any other label); or ever-carried `tech-debt` on which a `P0` or
+  `P1` label was **present at any moment in the interval [2026-07-29,
+  close]** — presence is computed from the full `LabeledEvent`/
+  `UnlabeledEvent` timeline as intervals, NOT from event dates, so a P1
+  applied 2026-07-28 and still on at the baseline is in scope (#922),
+  and a re-rank-then-close sequence cannot dodge the audit the way an
+  honest still-open re-rank legitimately exits the open criterion
+  (#909); or ever-carried `tech-debt` lacking a valid `P0`–`P3` label at
+  close time. A closed gate-relevant issue is exempt only if:
   (a) `stateReason` is `completed` **and** a **qualifying merged
   change** exists — either GitHub's closed-by-PR cross-reference
   (`closedByPullRequestsReferences` in the same fully-paginated GraphQL)
@@ -154,8 +156,15 @@ silent; it is signed-for in the release record (#909).
   qualifying PR's diff **touches the finding's location** — applicable
   when the recorded `location` matches the grammar
   `^[A-Za-z0-9._/-]+:[0-9]+` (exactly one repo-relative `path:line`,
-  which the clerk charter now mandates): at least one changed file path
-  equals that path after normalizing to repo-relative form. A
+  which the clerk charter now mandates): a changed **hunk** in that file
+  must **intersect the recorded line ± 20** (hunk ranges from the same
+  PR diff data — a comment tweak at line 1 of a 600-line file cannot
+  vouch for a finding at line 582, #923), and the qualifying diff must
+  be non-empty under whitespace-ignoring comparison. Residual risk,
+  stated: a near-line cosmetic edit can still technically satisfy the
+  intersection — so the gate output **lists every exemption (a) with
+  its hunk-overlap evidence** for the `release-captain`'s sign-off,
+  the same visibility rule the down-rank report uses. A
   pre-existing location that does not match the grammar (prose, ranges,
   bare basenames) makes binding (ii) inapplicable — binding (i) alone
   then governs, explicitly the same **heuristic floor** as the
@@ -192,9 +201,16 @@ silent; it is signed-for in the release record (#909).
   integrity prerequisites as a mechanical **state** check, not a prose
   note and not a label query: down-triaging any of them cannot defer the
   requirement, because the criterion asks whether the issue is closed,
-  not what priority it carries. (Their closes are themselves subject to
+  not what priority it carries. Their closes are themselves subject to
   the close-laundering criterion above, so closing-without-fixing does
-  not satisfy this either.);
+  not satisfy this either — and that path is **satisfiable by
+  construction** (#925): each prerequisite's done-condition produces a
+  **committed artifact** (the code fix for the counting bugs; the
+  committed audit record for the triage pass and the backfill; the
+  threshold values landing in `nightly-eval.yml` for the eval issue), so
+  its closing PR always has the non-empty diff and citation exemption
+  (a) requires — a process prerequisite is never deadlocked between the
+  two criteria;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
 - v1.0.0 roadmap items 100% merged-green;
 - coverage ≥95% lines on `hooks/scripts/**` **and `hooks/lib/common.sh`**
