@@ -69,21 +69,25 @@ default page is the counting bug tracked as #419/#420 — both must be fixed,
 and the #649 anti-laundering backfill completed, before any automation
 trusts this gate):
 
-- zero open `bug` issues — literal, unwaived (a bug is fixed, never
-  deferred, even under freeze);
-- zero open `tech-debt` issues labeled `P0` or `P1`;
-- zero open `tech-debt` issues that have **ever carried** `security`, at
-  any `P0`–`P3` level — a cross-priority rule decided in ADR 0005, which
+**Set membership is always ever-carried; only priority is current.** In
+every criterion below, "tech-debt issue" and "bug issue" mean an issue
+that has **ever carried** that label (`LabeledEvent` timeline, same
+paginated GraphQL) — stripping `tech-debt`, `bug`, or `security` is not a
+ranking act any charter authorizes, and a current-state anchor would let
+exactly that strip remove an issue from the counted set entirely
+(#887). The `P0`–`P3` labels alone are read current-state, because
+re-ranking IS an authorized, auditable product-owner act — and the
+ever-carried floors below bound what re-ranking can launder.
+
+- zero open bug issues (ever-carried `bug`) — literal, unwaived (a bug
+  is fixed, never deferred, even under freeze);
+- zero open tech-debt issues currently labeled `P0` or `P1`;
+- zero open issues that have **ever carried** `security`, at any
+  `P0`–`P3` level and regardless of any other label — issue-type-agnostic
+  by design, a cross-priority rule decided in ADR 0005, which
   deliberately **extends** `docs/PRODUCT.md` ranking rule 1 (on its own
-  that rule is only an equal-priority tie-breaker). Ever-carried
-  (`LabeledEvent` timeline, same paginated GraphQL), **not** current
-  label: removing the `security` label is not a ranking act any charter
-  authorizes, and a current-state query would let exactly that removal
-  ship a real security issue in v1.0.0. (`P0`/`P1` deliberately remain
-  current-state: down-triage IS an authorized, auditable product-owner
-  ranking act, and the confirmed-high subset is separately floored
-  below);
-- zero open `tech-debt` issues lacking a valid `P0`–`P3` label
+  that rule is only an equal-priority tie-breaker);
+- zero open tech-debt issues lacking a valid `P0`–`P3` label
   (**fail-closed**: an untriaged issue blocks the gate until it carries one
   of `P0`–`P3`; legacy `priority:*`/`high`/`medium`/`low` labels do not
   count as triage; if more than one `P0`–`P3` label is present, the most
@@ -112,30 +116,37 @@ trusts this gate):
 - zero gate-relevant issues closed at or after **2026-07-29** (the
   ground-truth baseline date) other than through a mechanically-verified
   fix or duplicate — the close-laundering criterion, **fail-closed across
-  every close reason**. "Gate-relevant" means: labeled `bug`; or labeled
-  `tech-debt` with any of `P0`/`P1` current, or having **ever carried**
-  `security` or `gate:confirmed-high` (the same `LabeledEvent` timeline
-  queries the open-issue criteria use — a strip-the-labels-then-close
-  sequence must not slip past the close audit either); or labeled
-  `tech-debt` **lacking a valid `P0`–`P3` label** — the identical
-  set the open-issue criteria block on, so closing an untriaged issue
-  cannot bypass triage. A closed gate-relevant issue is exempt only if:
+  every close reason**. "Gate-relevant" uses the same ever-carried set
+  membership the open-issue criteria use (a strip-the-labels-then-close
+  sequence must not slip past the close audit either): ever-carried
+  `bug`; or ever-carried `security` or `gate:confirmed-high` (regardless
+  of any other label); or ever-carried `tech-debt` with `P0`/`P1`
+  current at close time; or ever-carried `tech-debt` lacking a valid
+  `P0`–`P3` label at close time. A closed gate-relevant issue is exempt
+  only if:
   (a) `stateReason` is `completed` **and** GitHub's closed-by-PR
   cross-reference (`closedByPullRequestsReferences` in the same
   fully-paginated GraphQL) lists at least one **merged** pull request,
   **and** that merged PR has a **non-empty diff**, **and** — for an issue
   whose body carries a `fingerprint:` trailer (all clerk-filed review
-  findings do) — the same fingerprint is cited in **immutable evidence
-  only**: a commit message of that merged PR, or of a later commit merged
-  to the default branch that names both the issue and the fingerprint
-  (the remediation path for a genuine fix whose author forgot — still
-  never a permanent block). The PR **body is explicitly NOT accepted**:
-  it is editable after merge, so a no-op close could be laundered by
-  pasting the publicly-visible fingerprint into it later; commit
-  messages, once merged, cannot be rewritten. The fix-side obligation
-  lives in `agents/implementer.md` step 6, defined together with this
-  check. An issue with no fingerprint trailer needs the merged,
-  non-empty-diff closing PR; or
+  findings do) — two bindings both hold: (i) the same fingerprint is
+  cited in **immutable evidence only** — a commit message of that merged
+  PR, or of a later commit merged to the default branch that names both
+  the issue and the fingerprint (the remediation path for a genuine fix
+  whose author forgot — still never a permanent block); the PR **body is
+  explicitly NOT accepted**, being editable after merge; and (ii) the
+  qualifying PR's diff **touches the finding's location**: at least one
+  changed file path equals the `file` component of the issue's recorded
+  `location` (`file:line` in the clerk-filed body — decidable from the
+  PR file list in the same GraphQL), so a one-line no-op PR citing the
+  publicly-visible fingerprint cannot retire a finding it never went
+  near. Where the location file no longer exists (renamed/deleted), a
+  commit message of the qualifying PR must name the old path — same
+  immutability rule. The fix-side obligation lives in
+  `agents/implementer.md` step 6, defined together with this check. An
+  issue with no fingerprint trailer needs the merged, non-empty-diff
+  closing PR — stated honestly as a **heuristic floor**, not a proof of
+  fix, since hand-filed issues carry no machine-readable location; or
   (b) `stateReason` is `duplicate` and the duplicate target — the issue
   named by the **most recent `MarkedAsDuplicateEvent`** on the closed
   issue's timeline (same fully-paginated GraphQL; no such event → the

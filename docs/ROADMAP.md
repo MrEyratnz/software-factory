@@ -60,9 +60,10 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
 
 ## M4 — v1.0.0 (milestone v1.0.0)
 
-- [ ] Tech-debt triage pass (#510): every open `tech-debt` issue carries
-  at least one valid `P0`–`P3` label (most severe governs if multiple, per
-  the spec) — required because the Release Gate fails closed
+- [ ] Tech-debt triage pass (#510) complete, satisfying the fail-closed
+  triage criterion exactly as defined in `docs/specs/epic-1/spec.md`
+  § "Release Gate for v1.0.0" (no restatement here — the spec governs) —
+  required because the Release Gate fails closed
   on untriaged tech-debt (see the spec section below; ADR 0005)
 - [ ] Release Gate script green per the **single authoritative definition**
   in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (ADR 0005) —
