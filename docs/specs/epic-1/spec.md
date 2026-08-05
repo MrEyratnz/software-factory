@@ -103,19 +103,29 @@ digest inside `.factory/state/release-intent.json` — the one file the
 no fence widens and no agent writes outside its lane. The gate script
 verifies the field equals the hash of the report it just produced;
 mismatch or absence fails. `/ship` records the field after the
-`release-captain` reviews the report. **Two-principal rule (#996):**
-when the report contains **any exemption of an issue that ever carried
-`gate:confirmed-high`**, the commit that records `gateReportHash` must
-additionally be authored by a principal **distinct from every factory
-agent** — mechanically: its committer email must not match the bot
-identity pattern (`*[bot]@users.noreply.github.com`) any station
-session configures — so a laundered confirmed-high exemption cannot be
-rubber-stamped by the same machinery that produced it; the human
-operator (per `GOVERNANCE.md` § "Humans") is the second principal.
-Reports with no confirmed-high exemptions need only the
-`release-captain`'s acknowledgment. Wiring this into `/ship` is part
-of the M4 "Release Gate script" work item, which cannot ship without it
-since the gate fails closed on a missing acknowledgment. A down-rank is
+`release-captain` reviews the report. **Two-principal rule (#996, #1014, #1015):** when
+the report contains **any exemption of an issue that ever carried
+`gate:confirmed-high`**, a second acknowledgment must exist that no
+factory agent can produce: a commit on the release branch adding
+`factory-ops/release/<version>/confirmed-high.ack` (that path is
+ops-state, writable without any fence change) containing the same
+SHA-256 digest as its only line, where that commit's **GitHub signature
+verification state is `VALID`** and its **author is listed under
+"Human maintainers" in `MAINTAINERS.md`** — both read from the same
+GraphQL (commit signature state + author login), both fail-closed on
+unknown or unverified identities. The binding is the verified
+signature, NOT the committer email: an email is settable by any agent
+with `git config`, and for the record the bot identity regex — stated
+as an anchored **regex, not a glob** — is
+`\[bot\]@users\.noreply\.github\.com$` (a glob reading of `[bot]` is a
+character class and matches no real bot address — the inversion #1014
+caught). The human operator (per `GOVERNANCE.md` § "Humans" and the
+`MAINTAINERS.md` roster) is therefore the mandatory second principal
+for confirmed-high exemptions; reports with none need only the
+`release-captain`'s `gateReportHash` acknowledgment. Wiring this into
+`/ship` is part of the M4 "Release Gate script" work item, which
+cannot ship without it since the gate fails closed on a missing
+acknowledgment. A down-rank is
 never silent (#909).
 
 - zero open bug issues (ever-carried `bug`) — literal, unwaived (a bug
