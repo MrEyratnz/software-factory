@@ -103,7 +103,17 @@ digest inside `.factory/state/release-intent.json` — the one file the
 no fence widens and no agent writes outside its lane. The gate script
 verifies the field equals the hash of the report it just produced;
 mismatch or absence fails. `/ship` records the field after the
-`release-captain` reviews the report — wiring that into `/ship` is part
+`release-captain` reviews the report. **Two-principal rule (#996):**
+when the report contains **any exemption of an issue that ever carried
+`gate:confirmed-high`**, the commit that records `gateReportHash` must
+additionally be authored by a principal **distinct from every factory
+agent** — mechanically: its committer email must not match the bot
+identity pattern (`*[bot]@users.noreply.github.com`) any station
+session configures — so a laundered confirmed-high exemption cannot be
+rubber-stamped by the same machinery that produced it; the human
+operator (per `GOVERNANCE.md` § "Humans") is the second principal.
+Reports with no confirmed-high exemptions need only the
+`release-captain`'s acknowledgment. Wiring this into `/ship` is part
 of the M4 "Release Gate script" work item, which cannot ship without it
 since the gate fails closed on a missing acknowledgment. A down-rank is
 never silent (#909).
@@ -166,7 +176,12 @@ never silent (#909).
   permanent block — #894) a later commit merged to the default branch
   names both the issue and its fingerprint and satisfies the same
   bindings below, standing in for the missing link —
-  **and** that merged PR has a **non-empty diff**, **and** — for an issue
+  **and** that merged PR has a **non-empty diff**, **and** the
+  qualifying merged change is a **different PR than the one whose
+  review produced the finding** — the clerk records the source PR
+  number in the finding's provenance, and a PR retiring findings its
+  own review raised is self-certification, the pattern this criterion
+  exists to forbid (#995) — **and** — for an issue
   whose body carries a `fingerprint:` trailer (all clerk-filed review
   findings do) — two bindings both hold: (i) the same fingerprint is
   cited in **immutable evidence only** — a commit message of that merged
@@ -179,7 +194,10 @@ never silent (#909).
   NOT accepted**, being editable after merge; and (ii) the
   qualifying PR's diff **touches the finding's location** — applicable
   when the recorded `location` matches the grammar
-  `^[A-Za-z0-9._/-]+:[0-9]+` (exactly one repo-relative `path:line`,
+  `^[A-Za-z0-9._/-]+:[0-9]+$` — **anchored at both ends and matched
+  against the full location string** (#997), so a prose location that
+  merely starts with a path:line prefix cannot half-match into the
+  strict branch (exactly one repo-relative `path:line`,
   which the clerk charter now mandates): a changed **hunk** in that file
   must **delete or replace at least one pre-existing line inside the
   recorded line ± 20, in OLD-file coordinates** (the recorded location
@@ -196,10 +214,12 @@ never silent (#909).
   down-rank rule defines above: absent or unacknowledged, the gate
   FAILS (#934). A
   pre-existing location that does not match the grammar (prose, ranges,
-  bare basenames) makes binding (ii) inapplicable — binding (i) alone
-  then governs, explicitly the same **heuristic floor** as the
-  no-fingerprint case, and normalizing such locations to the grammar is
-  in #649's audit scope. So a one-line no-op PR citing the
+  bare basenames) does **NOT** fall back to citation-only exemption —
+  the close **blocks, fail-closed, until #649's audit normalizes the
+  location to the grammar** (already in that audit's scope); a
+  citation-only escape for exactly the findings with the weakest
+  location data would be the softest laundering path in the gate
+  (#995). So a one-line no-op PR citing the
   publicly-visible fingerprint cannot retire a grammar-conforming
   finding it never went near. Where the location file no longer exists (renamed/deleted), a
   commit message of the qualifying PR must name the old path — same
