@@ -89,9 +89,19 @@ gate emits its report (down-ranks + exemption evidence, see the close
 audit) with a **content hash**, and the gate FAILS unless the release
 record contains a committed acknowledgment file naming exactly that
 hash — no acknowledgment, stale hash, or unproducible report all fail.
-`/ship` is what commits the acknowledgment after the `release-captain`
-reviews the report; automation cannot skip it because the hash match is
-checked mechanically. A down-rank is never silent (#909).
+The artifact is pinned (#938): the report is
+`factory-ops/release/<version>/gate-report.json` — canonical JSON
+(object keys sorted lexicographically, LF line endings, UTF-8, no
+trailing whitespace) — its hash is the **SHA-256 of that file's exact
+bytes**, and the acknowledgment is
+`factory-ops/release/<version>/gate-report.ack` containing that hex
+digest as its only line, committed to the release branch. `/ship`
+commits the acknowledgment after the `release-captain` reviews the
+report — wiring that emit-and-commit step into `/ship` is part of the
+M4 "Release Gate script" work item, which cannot ship without it since
+the gate fails closed on a missing acknowledgment. Automation cannot
+skip it because the hash match is checked mechanically. A down-rank is
+never silent (#909).
 
 - zero open bug issues (ever-carried `bug`) — literal, unwaived (a bug
   is fixed, never deferred, even under freeze);
@@ -155,18 +165,23 @@ checked mechanically. A down-rank is never silent (#909).
   whose body carries a `fingerprint:` trailer (all clerk-filed review
   findings do) — two bindings both hold: (i) the same fingerprint is
   cited in **immutable evidence only** — a commit message of that merged
-  PR, or of a later commit merged to the default branch that names both
-  the issue and the fingerprint (the remediation path for a genuine fix
-  whose author forgot — still never a permanent block); the PR **body is
-  explicitly NOT accepted**, being editable after merge; and (ii) the
+  PR **as it exists on the default branch** (in this squash-only repo
+  that means the squash commit's message; branch-only commit messages
+  do not survive the merge and do not count — #941), or of a later
+  commit merged to the default branch that names both the issue and the
+  fingerprint (the remediation path for a genuine fix whose author
+  forgot — still never a permanent block); the PR **body is explicitly
+  NOT accepted**, being editable after merge; and (ii) the
   qualifying PR's diff **touches the finding's location** — applicable
   when the recorded `location` matches the grammar
   `^[A-Za-z0-9._/-]+:[0-9]+` (exactly one repo-relative `path:line`,
   which the clerk charter now mandates): a changed **hunk** in that file
-  must **intersect the recorded line ± 20** (hunk ranges from the same
-  PR diff data — a comment tweak at line 1 of a 600-line file cannot
-  vouch for a finding at line 582, #923), and the qualifying diff must
-  be non-empty under whitespace-ignoring comparison. Residual risk,
+  must **intersect the recorded line ± 20 in OLD-file coordinates**
+  (the recorded location predates the fix, so the pre-image side of the
+  hunk is the one it can be compared against — #942; hunk ranges from
+  the same PR diff data — a comment tweak at line 1 of a 600-line file
+  cannot vouch for a finding at line 582, #923), and the qualifying
+  diff must be non-empty under whitespace-ignoring comparison. Residual risk,
   stated: a near-line cosmetic edit can still technically satisfy the
   intersection — so the gate output **lists every exemption (a) with
   its hunk-overlap evidence** in the same hash-acknowledged report the
@@ -192,9 +207,16 @@ checked mechanically. A down-rank is never silent (#909).
   through further duplicate closures to a terminal issue (a cycle or a
   chain that does not terminate → fail closed) — is itself
   **gate-relevant** and either still open (so the open-issue criteria
-  count it) or exempt under (a). A duplicate whose terminal target is not
-  gate-relevant blocks: routing debt onto an issue no criterion watches
-  is laundering, not deduplication. Everything else — `completed` with no
+  count it) or exempt under (a). **Floor inheritance (#939):** when the
+  closed source has ever carried `security` or `gate:confirmed-high`,
+  the terminal target must **also carry that same floor label**
+  (applied at duplicate-marking time, and ever-carried thereafter like
+  any floor) — otherwise the exemption does not apply and the close
+  blocks. Without this, a floored issue could be duplicated onto a
+  fresh P1 target that is then down-ranked out of every open criterion.
+  A duplicate whose terminal target is not gate-relevant blocks:
+  routing debt onto an issue no criterion watches is laundering, not
+  deduplication. Everything else — `completed` with no
   merged PR, `not planned`, duplicate without a qualifying target —
   blocks the gate. Closing a gate-relevant issue therefore cannot green
   the gate without a verified fix or a qualifying duplicate — and the
