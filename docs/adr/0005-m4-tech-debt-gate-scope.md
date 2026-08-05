@@ -61,9 +61,17 @@ governs. What this ADR decides is the *scope change* the spec now expresses:
   **joint-lane rule recorded in `GOVERNANCE.md` § "Decision owners"**: the
   product owner authors the `docs/PRODUCT.md` rationale, the architect
   authors the spec/ARCHITECTURE/ADR wording, and a fenced agent's charter
-  is never widened by that agent's own edit to its file.
+  is never widened by that agent's own edit to its file;
+- the ≥95% coverage floor **widens to include `hooks/lib/common.sh`** —
+  recorded here because a gate-threshold scope change needs an ADR row:
+  the gate's own paginated counting lives in that library, and an
+  untested counting path is the #419/#420 class recurring. qa owns the
+  threshold going forward (its charter mirrors this scope and defers to
+  the spec on drift).
 
-Prerequisite: **#419/#420 (the pagination counting bug) and #649 (the
+Prerequisite: the canonical set is the spec's CLOSED-state criterion
+(**#419, #420, #510, #511, #649** — the spec governs on drift); notably
+**#419/#420 (the pagination counting bug) and #649 (the
 anti-laundering backfill audit) must be fixed and
 re-verified before any automation trusts this gate** — the M4 "Release Gate
 script" must count via fully-paginated queries, never a bare `gh issue list`.
@@ -74,6 +82,11 @@ untriaged P0 or security issue would slide through); and using M3's
 security-hardening pass as the P2/P3 dumping ground (scope contradiction).
 
 ### Review findings resolved
+
+Rows below record what THIS PR's diff resolves; the tracked issues
+**close on this PR's merge** via its `Closes #N` links with fingerprint
+citations in the merge evidence — they are open until then, and this
+table does not claim otherwise.
 
 | Finding | Resolution |
 |---|---|

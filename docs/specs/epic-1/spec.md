@@ -124,9 +124,14 @@ ever-carried floors below bound what re-ranking can launder.
   current at close time; or ever-carried `tech-debt` lacking a valid
   `P0`–`P3` label at close time. A closed gate-relevant issue is exempt
   only if:
-  (a) `stateReason` is `completed` **and** GitHub's closed-by-PR
-  cross-reference (`closedByPullRequestsReferences` in the same
-  fully-paginated GraphQL) lists at least one **merged** pull request,
+  (a) `stateReason` is `completed` **and** a **qualifying merged
+  change** exists — either GitHub's closed-by-PR cross-reference
+  (`closedByPullRequestsReferences` in the same fully-paginated GraphQL)
+  lists a **merged** pull request, **or** (the no-PR-link remediation
+  branch, so a legitimately-resolved issue closed by hand is never a
+  permanent block — #894) a later commit merged to the default branch
+  names both the issue and its fingerprint and satisfies the same
+  bindings below, standing in for the missing link —
   **and** that merged PR has a **non-empty diff**, **and** — for an issue
   whose body carries a `fingerprint:` trailer (all clerk-filed review
   findings do) — two bindings both hold: (i) the same fingerprint is
@@ -136,11 +141,13 @@ ever-carried floors below bound what re-ranking can launder.
   whose author forgot — still never a permanent block); the PR **body is
   explicitly NOT accepted**, being editable after merge; and (ii) the
   qualifying PR's diff **touches the finding's location**: at least one
-  changed file path equals the `file` component of the issue's recorded
-  `location` (`file:line` in the clerk-filed body — decidable from the
-  PR file list in the same GraphQL), so a one-line no-op PR citing the
-  publicly-visible fingerprint cannot retire a finding it never went
-  near. Where the location file no longer exists (renamed/deleted), a
+  changed file path equals, after normalizing to a repo-relative path,
+  the **first** `path` token of the issue's recorded `location` (the
+  clerk records exactly one repo-relative `path:line`; for pre-existing
+  issues whose location lists several paths or a prose range, the first
+  repo-relative path governs — one deterministic rule, no judgment
+  call), so a one-line no-op PR citing the publicly-visible fingerprint
+  cannot retire a finding it never went near. Where the location file no longer exists (renamed/deleted), a
   commit message of the qualifying PR must name the old path — same
   immutability rule. The fix-side obligation lives in
   `agents/implementer.md` step 6, defined together with this check. An
@@ -160,7 +167,9 @@ ever-carried floors below bound what re-ranking can launder.
   merged PR, `not planned`, duplicate without a qualifying target —
   blocks the gate. Mass-closing the backlog therefore cannot green the
   gate under any close reason;
-- issues **#419, #420, #511, and #649 are CLOSED** — the gate-tooling
+- issues **#419, #420, #510, #511, and #649 are CLOSED** — this list is
+  the **canonical prerequisite set**; every other doc references it
+  rather than restating its own. The gate-tooling
   integrity prerequisites as a mechanical **state** check, not a prose
   note and not a label query: down-triaging any of them cannot defer the
   requirement, because the criterion asks whether the issue is closed,
