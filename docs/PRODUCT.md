@@ -350,11 +350,10 @@ section `docs/ROADMAP.md` and `.claude/CLAUDE.md` pin the gate to). This
 file carries the product rationale only and deliberately does not restate
 the predicate — read the spec section for the criteria.**
 
-Five blocking prerequisites remain before the gate can be evaluated —
-#419/#420 (counting), #510 (triage), #511 (eval threshold values, owner
-qa), #649 (anti-laundering backfill); the first two are expanded below.
-The canonical list is the spec's CLOSED-state criterion (the spec
-governs on drift):
+Blocking prerequisites remain before the gate can be evaluated; the
+canonical list is **exactly the spec's CLOSED-state criterion** (no
+copy here — the spec governs). Two of them are expanded below for
+product context:
 
 1. **#419 and #420 (the counting bug) must be fixed and re-verified before
    this redefined gate is trusted by any automation.** A gate that counts
@@ -375,7 +374,8 @@ governs on drift):
    planning-comment budget. Recommended to the planner as a standing agenda
    item until the 188 reach zero.
 
-Until all five prerequisites clear, **M4 stays unchecked** and the Release Gate
+Until every prerequisite in that criterion clears, **M4 stays
+unchecked** and the Release Gate
 should not be evaluated as "close to holding" on tech-debt count alone —
 current true state is 18 `P0`/`P1` tech-debt items + 10 security-labeled
 tech-debt items (some overlapping) outstanding against even the *redefined*

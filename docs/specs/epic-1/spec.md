@@ -76,8 +76,16 @@ paginated GraphQL) — stripping `tech-debt`, `bug`, or `security` is not a
 ranking act any charter authorizes, and a current-state anchor would let
 exactly that strip remove an issue from the counted set entirely
 (#887). The `P0`–`P3` labels alone are read current-state, because
-re-ranking IS an authorized, auditable product-owner act — and the
-ever-carried floors below bound what re-ranking can launder.
+re-ranking IS an authorized product-owner act — stated honestly: a
+P0→P2 down-rank of a non-security, non-confirmed-high issue DOES move
+it out of the blocking set, by design, and that is a ranking decision,
+not laundering. What bounds it: the ever-carried floors below (security
+and confirmed-high can never be re-ranked out), and mandatory
+visibility — the Release Gate script **reports every `P0`/`P1` →
+`P2`/`P3` down-rank made after the 2026-07-29 baseline** (from the same
+`LabeledEvent` timeline) in its output, and the `release-captain`'s
+gate run fails if that report cannot be produced. A down-rank is never
+silent; it is signed-for in the release record (#909).
 
 - zero open bug issues (ever-carried `bug`) — literal, unwaived (a bug
   is fixed, never deferred, even under freeze);
@@ -120,8 +128,11 @@ ever-carried floors below bound what re-ranking can launder.
   membership the open-issue criteria use (a strip-the-labels-then-close
   sequence must not slip past the close audit either): ever-carried
   `bug`; or ever-carried `security` or `gate:confirmed-high` (regardless
-  of any other label); or ever-carried `tech-debt` with `P0`/`P1`
-  current at close time; or ever-carried `tech-debt` lacking a valid
+  of any other label); or ever-carried `tech-debt` that has **ever
+  carried `P0` or `P1` after the 2026-07-29 baseline** (ever-carried
+  here too — a re-rank-then-close sequence must not dodge the audit the
+  way an honest still-open re-rank legitimately exits the open
+  criterion, #909); or ever-carried `tech-debt` lacking a valid
   `P0`–`P3` label at close time. A closed gate-relevant issue is exempt
   only if:
   (a) `stateReason` is `completed` **and** a **qualifying merged
@@ -140,14 +151,18 @@ ever-carried floors below bound what re-ranking can launder.
   the issue and the fingerprint (the remediation path for a genuine fix
   whose author forgot — still never a permanent block); the PR **body is
   explicitly NOT accepted**, being editable after merge; and (ii) the
-  qualifying PR's diff **touches the finding's location**: at least one
-  changed file path equals, after normalizing to a repo-relative path,
-  the **first** `path` token of the issue's recorded `location` (the
-  clerk records exactly one repo-relative `path:line`; for pre-existing
-  issues whose location lists several paths or a prose range, the first
-  repo-relative path governs — one deterministic rule, no judgment
-  call), so a one-line no-op PR citing the publicly-visible fingerprint
-  cannot retire a finding it never went near. Where the location file no longer exists (renamed/deleted), a
+  qualifying PR's diff **touches the finding's location** — applicable
+  when the recorded `location` matches the grammar
+  `^[A-Za-z0-9._/-]+:[0-9]+` (exactly one repo-relative `path:line`,
+  which the clerk charter now mandates): at least one changed file path
+  equals that path after normalizing to repo-relative form. A
+  pre-existing location that does not match the grammar (prose, ranges,
+  bare basenames) makes binding (ii) inapplicable — binding (i) alone
+  then governs, explicitly the same **heuristic floor** as the
+  no-fingerprint case, and normalizing such locations to the grammar is
+  in #649's audit scope. So a one-line no-op PR citing the
+  publicly-visible fingerprint cannot retire a grammar-conforming
+  finding it never went near. Where the location file no longer exists (renamed/deleted), a
   commit message of the qualifying PR must name the old path — same
   immutability rule. The fix-side obligation lives in
   `agents/implementer.md` step 6, defined together with this check. An
@@ -165,8 +180,12 @@ ever-carried floors below bound what re-ranking can launder.
   gate-relevant blocks: routing debt onto an issue no criterion watches
   is laundering, not deduplication. Everything else — `completed` with no
   merged PR, `not planned`, duplicate without a qualifying target —
-  blocks the gate. Mass-closing the backlog therefore cannot green the
-  gate under any close reason;
+  blocks the gate. Closing a gate-relevant issue therefore cannot green
+  the gate without a verified fix or a qualifying duplicate — and the
+  one path that legitimately narrows the blocking set without a close
+  (a P0/P1 down-rank of a non-security, non-confirmed-high issue) is
+  reported by name in the gate output, per the down-rank visibility
+  rule above;
 - issues **#419, #420, #510, #511, and #649 are CLOSED** — this list is
   the **canonical prerequisite set**; every other doc references it
   rather than restating its own. The gate-tooling

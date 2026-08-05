@@ -1,6 +1,7 @@
 # ADR 0005 — Scope the v1.0.0 tech-debt gate: fail-closed on triage, security outranks priority
 
-Status: accepted · Date: 2026-07-30
+Status: accepted · Date: 2026-08-05 (decision opened 2026-07-30; text
+finalized through the PR #444 review rounds)
 
 ## Context
 
@@ -69,10 +70,10 @@ governs. What this ADR decides is the *scope change* the spec now expresses:
   threshold going forward (its charter mirrors this scope and defers to
   the spec on drift).
 
-Prerequisite: the canonical set is the spec's CLOSED-state criterion
-(**#419, #420, #510, #511, #649** — the spec governs on drift); notably
-**#419/#420 (the pagination counting bug) and #649 (the
-anti-laundering backfill audit) must be fixed and
+Prerequisite: the canonical set is the spec's CLOSED-state criterion —
+no copy of the list here, the spec governs; notably the pagination
+counting bug and the anti-laundering backfill audit within it must be
+fixed and
 re-verified before any automation trusts this gate** — the M4 "Release Gate
 script" must count via fully-paginated queries, never a bare `gh issue list`.
 
@@ -81,23 +82,12 @@ the counting bug); treating unlabeled tech-debt as deferrable (fail-open — an
 untriaged P0 or security issue would slide through); and using M3's
 security-hardening pass as the P2/P3 dumping ground (scope contradiction).
 
-### Review findings resolved
-
-Rows below record what THIS PR's diff resolves; the tracked issues
-**close on this PR's merge** via its `Closes #N` links with fingerprint
-citations in the merge evidence — they are open until then, and this
-table does not claim otherwise.
-
-| Finding | Resolution |
-|---|---|
-| #463 three contradicting gate definitions | Single authoritative predicate in `docs/specs/epic-1/spec.md`; ROADMAP M4 and PRODUCT.md reference it |
-| #464 ownership-lane violation | Scope decided by product owner (PR #444), gate wording landed in the architect-owned spec via this ADR |
-| #465 PRODUCT.md self-contradiction (sweep-before-ship vs. does-not-block) | The sprint-1 P2 sweep claim is corrected to cite this gate; PRODUCT.md restates no predicate |
-| #466 missing numbered ADR | This ADR; owner named below |
-| #467 fail-open on 188 unlabeled issues | The spec's fail-closed triage bullet: unlabeled blocks, full stop, until triaged; triage pass tracked as #510 |
-| #470 legacy-label semantics undefined | The same fail-closed triage bullet: legacy labels are not valid triage; exact-form case-sensitive `P0`–`P3` only; multi-label → most severe governs |
-| #468 deferral target unnamed | The spec's non-security P2/P3 deferral paragraph: the named M5 "P2/P3 tech-debt burndown (non-security)" item |
-| #469 ground-truth counts embedded as durable facts | Every count in this ADR and `docs/PRODUCT.md` is an explicitly dated 2026-07-29 snapshot, not a live value; the stale 221/6 freeze figures in `docs/PRODUCT.md` are corrected and date-stamped |
+(The per-finding resolution record for the PR #444 review rounds lives
+in that PR's description, not here — a durable ADR records the
+decision, not its own review's ticket ledger. Two findings, #464 and
+#469, were closed by hand before this PR merged; their gate exemption
+completes via this PR's merge commit, which names both with their
+fingerprints and whose diff touches their recorded locations.)
 
 ## Consequences
 

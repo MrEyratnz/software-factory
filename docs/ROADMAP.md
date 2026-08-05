@@ -67,10 +67,9 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
   on untriaged tech-debt (see the spec section below; ADR 0005)
 - [ ] Release Gate script green per the **single authoritative definition**
   in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (ADR 0005) —
-  all criteria in that section as written there, feature-freeze check
-  included; prerequisites tracked there: #419/#420 (fully-paginated
-  counting), #510 (triage pass), #511 (eval threshold values), #649
-  (anti-laundering backfill audit)
+  all criteria in that section as written there, feature-freeze check and
+  the CLOSED-state prerequisite criterion included (the canonical
+  prerequisite list lives in that criterion — no copy here)
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 
