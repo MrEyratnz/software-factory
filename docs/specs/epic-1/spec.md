@@ -49,8 +49,12 @@ receipt/commit contract enforces them forever.
 
 ## Release Gate for v1.0.0
 
-Decidable, no judgment calls — every criterion below is either a pure label
-query or a mechanical artifact check.
+Decidable — every criterion below is machine-decidable as written: a
+pure label/timeline query or a mechanical artifact check. Where residual
+human judgment exists at all (reviewing the down-rank and
+exemption-evidence report), it is never in the pass/fail computation
+itself — it is witnessed by the mechanical hash acknowledgment, so the
+gate can fail on a missing witness but never on an opinion (#953).
 
 This section is the **single authoritative definition** of the gate — it is
 where `docs/ROADMAP.md` (its preamble and M4) and `.claude/CLAUDE.md` pin the
@@ -86,21 +90,22 @@ visibility — the Release Gate script **reports every `P0`/`P1` →
 `LabeledEvent` timeline) in its output. The sign-off is itself a
 **blocking mechanical predicate**, not an informal step (#934): the
 gate emits its report (down-ranks + exemption evidence, see the close
-audit) with a **content hash**, and the gate FAILS unless the release
-record contains a committed acknowledgment file naming exactly that
-hash — no acknowledgment, stale hash, or unproducible report all fail.
-The artifact is pinned (#938): the report is
-`factory-ops/release/<version>/gate-report.json` — canonical JSON
-(object keys sorted lexicographically, LF line endings, UTF-8, no
-trailing whitespace) — its hash is the **SHA-256 of that file's exact
-bytes**, and the acknowledgment is
-`factory-ops/release/<version>/gate-report.ack` containing that hex
-digest as its only line, committed to the release branch. `/ship`
-commits the acknowledgment after the `release-captain` reviews the
-report — wiring that emit-and-commit step into `/ship` is part of the
-M4 "Release Gate script" work item, which cannot ship without it since
-the gate fails closed on a missing acknowledgment. Automation cannot
-skip it because the hash match is checked mechanically. A down-rank is
+audit) with a **content hash**, and the gate FAILS unless that hash has
+been acknowledged — no acknowledgment, stale hash, or unproducible
+report all fail. The mechanism is pinned to paths the fences already
+sanction (#938, #952): the **Release Gate script (CI) emits**
+`gate-report.json` — canonical JSON (object keys sorted
+lexicographically, LF line endings, UTF-8, no trailing whitespace) — as
+a build artifact of the gate run and prints its **SHA-256 of the exact
+bytes**; the acknowledgment is a `gateReportHash` field carrying that
+digest inside `.factory/state/release-intent.json` — the one file the
+`release-captain`'s `guard-scope` fence already permits it to write, so
+no fence widens and no agent writes outside its lane. The gate script
+verifies the field equals the hash of the report it just produced;
+mismatch or absence fails. `/ship` records the field after the
+`release-captain` reviews the report — wiring that into `/ship` is part
+of the M4 "Release Gate script" work item, which cannot ship without it
+since the gate fails closed on a missing acknowledgment. A down-rank is
 never silent (#909).
 
 - zero open bug issues (ever-carried `bug`) — literal, unwaived (a bug
@@ -241,7 +246,10 @@ never silent (#909).
   (a) requires — a process prerequisite is never deadlocked between the
   two criteria;
 - zero unresolved `.factory/review` findings (debt-reconcile clean);
-- v1.0.0 roadmap items 100% merged-green;
+- every v1.0.0 roadmap item merged-green **except M4's own two terminal
+  boxes** (the gate-holds box and the `/ship` box), which by the
+  merged-green law can only flip after this gate passes and would
+  otherwise make the criterion self-referentially unsatisfiable (#527);
 - coverage ≥95% lines on `hooks/scripts/**` **and `hooks/lib/common.sh`**
   (the library the gate's own paginated counting relies on — an untested
   counting path is the #419/#420 class recurring), measured at **the exact
