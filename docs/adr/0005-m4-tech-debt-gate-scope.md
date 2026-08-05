@@ -82,10 +82,12 @@ security-hardening pass as the P2/P3 dumping ground (scope contradiction).
 
 (The per-finding resolution record for the PR #444 review rounds lives
 in that PR's description, not here — a durable ADR records the
-decision, not its own review's ticket ledger. Two findings, #464 and
-#469, were closed by hand before this PR merged; their gate exemption
-completes via this PR's merge commit, which names both with their
-fingerprints and whose diff touches their recorded locations.)
+decision, not its own review's ticket ledger, and it makes **no claim
+about its own findings' exemption status**: whether any hand-closed
+finding's close qualifies is for the Release Gate script to evaluate
+mechanically post-merge, like every other close — a PR pre-asserting
+its own merge as exempting evidence would be the self-certification
+the gate exists to forbid, #964/#969.)
 
 ## Consequences
 
@@ -112,7 +114,9 @@ fingerprints and whose diff touches their recorded locations.)
   legacy-label rejection, and concrete eval-threshold values (owner: qa,
   tracked as #511) before the nightly-runs criterion is evaluable.
 - Trade-off accepted: v1.0.0 can ship with known non-security P2/P3 debt
-  open. That is honest and bounded (41 P2 + 20 P3 today — the 6
+  open. That is honest and bounded (41 P2 + 20 P3 in the dated
+  2026-07-29 snapshot; the live number is the gate script's to compute —
+  the 6
   security-labeled P2/P3 items block under the security criterion — plus
   whatever triage reclassifies), versus a literal-zero gate that invites
   mass-closing or silent miscounting.

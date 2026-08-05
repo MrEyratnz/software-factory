@@ -490,7 +490,7 @@ ensure_issue "Epic 1: plugin test suite (tracking)" "P1" \
 ensure_issue "Epic 1.1: static validation layer in the commit gate" "P1" \
 "Layer 1 of docs/specs/epic-1/spec.md: manifest + frontmatter schema checks for every command/agent/skill/hook config, \${CLAUDE_PLUGIN_ROOT} path portability, referenced-files-exist, JSON validity — extending tests/scaffold.contract.test.sh, wired into the gate. Owner field: coder."
 ensure_issue "Epic 1.2: hook unit tests + >=95% line coverage gate on hooks/scripts" "P1" \
-"Layer 2 of docs/specs/epic-1/spec.md: stdin JSON fixtures per event type, exit-code + stderr class-tag assertions ([hard-boundary] vs [heuristic]), matcher edge cases, forgery-guard cases, multi-repo -C/cd binding; coverage >=95% lines on hooks/scripts/** and hooks/lib/common.sh enforced as a failing test. Owner field: coder."
+"Layer 2 of docs/specs/epic-1/spec.md: stdin JSON fixtures per event type, exit-code + stderr class-tag assertions ([hard-boundary] vs [heuristic]), matcher edge cases, forgery-guard cases, multi-repo -C/cd binding; coverage >=95% lines on hooks/scripts/** and hooks/lib/common.sh (scope per the Release Gate spec, which governs on drift) enforced as a failing test. Owner field: coder."
 ensure_issue "Epic 1.3: behavioral evals (trigger + outcome) with nightly thresholds" "P1" \
 "Layer 3 of docs/specs/epic-1/spec.md: per skill/command trigger evals (8-10 should / 8-10 near-miss shouldn't, >=3 runs, trigger-rate thresholds) and outcome evals with programmatic assertions plus with-vs-without-plugin baseline lift; headless claude -p harness; thresholds enforced in nightly-eval.yml. Owner field: coder + qa."
 

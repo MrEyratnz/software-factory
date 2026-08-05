@@ -35,7 +35,9 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
   stderr-class (`[hard-boundary]` vs `[heuristic]`) assertions, matcher edge
   cases, forgery-guard cases, multi-repo `-C`/`cd` binding
 - [ ] Coverage threshold ≥95% lines on `hooks/scripts/**` and
-  `hooks/lib/common.sh`, enforced as a failing test in the suite
+  `hooks/lib/common.sh` (scope per the Release Gate in
+  `docs/specs/epic-1/spec.md` — the spec governs on drift), enforced as
+  a failing test in the suite
 - [ ] Behavioral evals: trigger evals per skill/command (8–10 should /
   8–10 near-miss shouldn't, ≥3 runs each, trigger-rate thresholds) via a
   headless `claude -p` harness, results to `factory-ops/qa/`
