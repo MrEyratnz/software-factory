@@ -111,8 +111,8 @@ sized as "committed core" and failed to start — not new capacity claims.
 | #115 | coder App lacks `actions:read` | P1 | **BLOCKED-on-human** | Unchanged. |
 | #228 | Build-loop no-op-guard, depends on #115 | P0 | **BLOCKED-on-human** | Unchanged. |
 
-18 issues tracked total (2 headline committed-core items + 3 carried
-committed-core bug fixes + 1 required non-deferrable action + 10 overflow +
+20 issues tracked total (2 headline committed-core items + 3 carried
+committed-core bug fixes + 1 required non-deferrable action + 11 overflow +
 1 triage-bucket item + 2 blocked-on-human). Only the 5-item committed core
 counts toward this sprint's closeable-capacity claim; #120's reopen is
 executed by this plan itself, not claimed as sprint capacity.

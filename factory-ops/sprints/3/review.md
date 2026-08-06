@@ -104,7 +104,7 @@ All three PRs are real, valuable, TDD-disciplined work (each has its own
 green suite run per the commit contract). The problem is not that they
 happened — it's that **`factory-ops/state/checkpoint.json` still reads
 `sprint: 3`, `sprint_ends_at: "2026-07-30T23:10:00Z"` and lists issues
-`[100, 101, 311, 318, 342, 361, 419, 420, 423, 442, 625-629]`** — five
+`[100, 101, 311, 318, 342, 361, 419, 420, 423, 442, 625-629]`** — four
 commits behind current `main` (`d2e1a83`), with no trace of #725/#731/#878/
 #421 anywhere in it. Anyone reading checkpoint.json as ground truth would
 not know this work happened at all.

@@ -34,7 +34,7 @@ flips, with the date and the gate evidence.
 **Freeze state: OFF** (gate not yet within one sprint of holding — M2 and M3
 are both 0% done by roadmap checkbox, and as of sprint-4 planning **754 open
 `tech-debt` + 12 open `bug`** issues stand between here and M4's "zero open
-bug/tech-debt" gate — up from 221/6 at sprint-2 snapshot and 289 at sprint-3
+bug/tech-debt" gate — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
 review; ground-truth counts re-pulled this pass via the GitHub search API,
 paginated past the 30-item default that undercounts elsewhere in this repo's
 own tooling, see #419/#420 below). The gate is materially **farther** away
@@ -47,8 +47,10 @@ than at sprint-2, not closer — see the sprint-4 headline finding. No new
 paginated): 754 `tech-debt`, 12 `bug`, 16 `security`, 8 `P0`, 45 `P1`, 81
 `P2`, 42 `P3`, 591 `tech-debt` issues carrying no P-label at all. Sprint 3's
 `sprint_ends_at` (2026-07-30T23:10:00Z) passed **six days** ago with no
-review/retro held and no sprint-4 plan written (`factory-ops/sprints/`
-still only has folders `1/`, `2/`, `3/`, and `3/` holds only `plan.md`).
+review/retro held and no sprint-4 plan written as of this session's
+orientation (`factory-ops/sprints/` had only folders `1/`, `2/`, `3/`, and
+`3/` held only `plan.md` — this pass's own ceremony is what adds
+`3/review.md`, `3/retro.md`, and `4/plan.md`).
 `factory-ops/state/checkpoint.json` is still pinned to commit `689e785`
 (2026-08-01) — **5 commits behind current `HEAD`** — so it does not reflect
 sprint 3's actual close-out state. This snapshot re-derives ranking from
@@ -64,7 +66,9 @@ ADR 0005 in its diff, never merged) has been re-reviewed by the reviewer
 station **20 times** since 2026-07-30 (every round `CHANGES_REQUESTED`,
 most recently 2026-08-05T11:43Z, still `mergeable_state: behind`). Per the
 review station's own finding (**#980**, filed today): open `tech-debt` grew
-from 289 at sprint-2 review to **750 in ~6 days** (+461), of which **521**
+from 289 at sprint-2 review to **750 in ~6 days** (+461, #980's frozen
+snapshot — this pass's own re-pull above reads 754/~465, a few hours newer),
+of which **521**
 were created since sprint-2 review ended and ~100 in the 24h window before
 #980 was filed — nearly all authored against this one PR's successive push
 rounds, many self-referential to the PR's own contested claims (e.g. #940,
@@ -139,7 +143,8 @@ closed 2026-07-29T04:30:45Z by PR #405) while its actual fix, **PR #311**,
 remains open and unmerged to this day (`mergeable_state: behind`). This is
 the exact false-closure **#452** was filed to track — #452 is itself still
 open, unresolved, a week later. The reopen action is one API call, but per
-**#474**, **#537**, **#580** it has been "trapped in deferrable overflow
+**#580** (open; **#474** and **#537**, the same finding's earlier filings,
+are already closed) it has been "trapped in deferrable overflow
 with no unconditional owner" across two sprint plans, and **#709** names
 this as a systemic pattern (cheap paperwork fixes starved by higher-effort
 picks). A live security gap reads as closed on every dashboard and every
