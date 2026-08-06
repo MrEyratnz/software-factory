@@ -115,6 +115,26 @@ GitHub alone:
   agent board (a standing judge panel) per `GOVERNANCE.md`; decision standards
   (ADR / RFC / spec-per-epic) per `docs/rfcs/README.md`.
 
+## The v1.0.0 release gate (ADR 0006)
+
+The Release Gate is a thin current-state gate with pure, fixture-tested
+decision cores and human-pinned trust anchors — decided by the sprint-4
+judge-panel board session (ADR 0006,
+`docs/adr/0006-release-gate-synthesis.md`; panel artifacts under
+`.factory/panel/`). `hooks/lib/release-gate/` holds the pure
+`decide(evidence)` gate core and the nightly auditor's `closeLegitimacy`
+predicate, regression-locked by fixtures recorded from real collector
+output under `tests/fixtures/release-gate/`. A nightly `close-audit`
+workflow detects and repairs laundered closes, and its liveness is itself
+a blocking gate criterion. The gate's own code, fixtures, roster hash,
+and disposal allowlists are pinned in
+`factory-ops/release/trust-pin.json`, updatable only by a directly-pushed
+human-signed commit — gate-code changes merge autonomously but take
+release effect only after a human re-pin, and every release carries
+exactly one verified human acknowledgment of the canonical
+`gate-report.json`. Normative criteria: `docs/specs/epic-1/spec.md`
+§ "Release Gate for v1.0.0".
+
 ## Structural safety invariants
 
 - Every guard **fails closed**: no computable tree hash → deny; unset `$HOME`
