@@ -103,17 +103,20 @@ digest inside `.factory/state/release-intent.json` — the one file the
 no fence widens and no agent writes outside its lane. The gate script
 verifies the field equals the hash of the report it just produced;
 mismatch or absence fails. `/ship` records the field after the
-`release-captain` reviews the report. **Two-principal rule (#996, #1014, #1015):** when
-the report contains **any exemption of an issue that ever carried
-`gate:confirmed-high`**, a second acknowledgment must exist that no
+`release-captain` reviews the report. **Two-principal rule (#996, #1014, #1015, #1080, #1081):** when the
+report contains **any exemption of an issue that ever carried
+`security` or `gate:confirmed-high`** (both floors — a security finding
+below confirmed-high must not fall back to the machinery's own
+self-acknowledgment, #1081), a second acknowledgment must exist that no
 factory agent can produce: a commit on the release branch adding
 `factory-ops/release/<version>/confirmed-high.ack` (that path is
 ops-state, writable without any fence change) containing the same
-SHA-256 digest as its only line, where that commit's **GitHub signature
-verification state is `VALID`** and its **author is listed under
-"Human maintainers" in `MAINTAINERS.md`** — both read from the same
-GraphQL (commit signature state + author login), both fail-closed on
-unknown or unverified identities. The binding is the verified
+SHA-256 digest as its only line, where **the account behind the
+verified signature** — `signature.signer.login`, not the settable
+author field (#1080) — **is listed under "Human maintainers" in
+`MAINTAINERS.md`**, the signature verification state is `VALID`, and
+**author, committer, and signer all resolve to that same account**;
+fail-closed on unknown, unverified, or mismatched identities. The binding is the verified
 signature, NOT the committer email: an email is settable by any agent
 with `git config`, and for the record the bot identity regex — stated
 as an anchored **regex, not a glob** — is
@@ -187,17 +190,25 @@ never silent (#909).
   names both the issue and its fingerprint and satisfies the same
   bindings below, standing in for the missing link —
   **and** that merged PR has a **non-empty diff**, **and** the
-  qualifying merged change is a **different PR than the one whose
-  review produced the finding** — evaluated against the **`source-pr:`
-  trailer** the clerk records in every finding body (its required-field
-  list mandates it): the qualifying PR's number must not equal the
-  `source-pr:` value. A finding whose `source-pr:` trailer is missing
-  or unparseable **fail-closes this exemption** — mirroring the
-  grammar-nonconforming-location rule — until #649's backfill audit
-  adds it (in that audit's scope, like location normalization); a PR
-  retiring findings its own review raised is self-certification, the
-  pattern this criterion exists to forbid (#995, operand defined per
-  #1031-review round 24) — **and** — for an issue
+  qualifying merged change is either a **different PR than the one
+  whose review produced the finding** — evaluated against the
+  **`source-pr:` trailer** the clerk records in every finding body (its
+  required-field list mandates it): the qualifying PR's number must not
+  equal the `source-pr:` value — **or**, when the numbers ARE equal
+  (the honest case of a finding filed and genuinely fixed in a later
+  round of the same PR, which a bare equality block would permanently
+  false-red, #1082), the exemption additionally requires **both** the
+  STRICT location branch of binding (ii) (grammar-conforming location,
+  qualifying hunk overlap — never the heuristic floor) **and** the
+  human second principal of the two-principal rule, regardless of the
+  issue's floor labels — a same-PR fix is legitimate only with the
+  independent witness self-certification lacks. A finding whose
+  `source-pr:` trailer is missing or unparseable **fail-closes this
+  exemption** — mirroring the grammar-nonconforming-location rule —
+  until #649's backfill audit adds it (in that audit's scope, like
+  location normalization); a PR retiring findings its own review raised
+  without that witness is self-certification, the pattern this
+  criterion exists to forbid (#995) — **and** — for an issue
   whose body carries a `fingerprint:` trailer (all clerk-filed review
   findings do) — two bindings both hold: (i) the same fingerprint is
   cited in **immutable evidence only** — a commit message of that merged
