@@ -209,15 +209,19 @@ never silent (#909).
   merely starts with a path:line prefix cannot half-match into the
   strict branch (exactly one repo-relative `path:line`,
   which the clerk charter now mandates): a changed **hunk** in that file
-  must **delete or replace at least one pre-existing line inside the
-  recorded line ± 20, in OLD-file coordinates** (the recorded location
-  predates the fix, so the pre-image side of the hunk is the one it can
-  be compared against — #942; deletion count within the window must be
-  ≥ 1, decidable from the same hunk data — so neither a comment tweak
-  at line 1 of a 600-line file, #923, nor a pure nearby INSERTION that
-  touches nothing pre-existing, #964, can vouch for a finding), and the
-  qualifying diff must be non-empty under whitespace-ignoring
-  comparison. Residual risk,
+  must **either delete/replace at least one pre-existing line inside
+  the recorded line ± 20 in OLD-file coordinates** (the recorded
+  location predates the fix, so the pre-image side of the hunk is what
+  it compares against — #942) **or insert at least one line whose
+  insertion point falls inside the same ± 20 window** (a guard added
+  directly above the buggy line is a legitimate, common fix shape that
+  deletes nothing — banning all insertions made such fixes permanently
+  unexemptable, #1031). Both forms are decidable from the same hunk
+  data; a far-away edit — a comment tweak at line 1 of a 600-line file
+  for a finding at line 582, #923 — still cannot vouch, and the
+  residual near-line cosmetic-insertion risk rides the hash-acknowledged
+  exemption report like every other residual. The qualifying diff must
+  be non-empty under whitespace-ignoring comparison. Residual risk,
   stated: a near-line cosmetic edit can still technically satisfy the
   intersection — so the gate output **lists every exemption (a) with
   its hunk-overlap evidence** in the same hash-acknowledged report the

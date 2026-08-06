@@ -19,8 +19,11 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
    either if missing).
 4. For each missing finding, open a GitHub issue labeled `tech-debt` whose body
    carries the required fields — **location** (exactly one repo-relative
-   `file:line`; never multiple paths or a prose range — the Release Gate's
-   fix-touches-location check keys off the first path token), **what it is and
+   `file:line`, matching the Release Gate's anchored full-string grammar
+   in `docs/specs/epic-1/spec.md` — never multiple paths, ranges, or
+   prose suffixes; a non-conforming location makes the finding's close
+   block until #649 normalization, so conform at filing — the spec
+   governs on drift), **what it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
    trailer line `fingerprint: <8-hex>` so the audit stays idempotent.
