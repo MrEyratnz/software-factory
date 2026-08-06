@@ -90,14 +90,17 @@ other work.
 ### 4. A committed-core item's own required first action silently did not happen
 
 Sprint 3's plan named "reopen #120" as an unconditional first action on an
-overflow item, not something deferrable. It was never done — #120 is still
-closed, now with six more days of staleness than sprint 2's review found.
-Already tracked as a pattern, not re-filed: **#474**/**#580** ("#120 reopen
-trapped in deferrable overflow with no unconditional owner" — #580 still
-open, making exactly this point). What this retro adds: the pattern
-predicted by #580 played out precisely as described — a plan can name an
-action "first" in prose without any enforcement distinguishing it from the
-rest of an overflow table a session might never reach.
+overflow item, not something deferrable. It was never done during sprint 3
+itself — #120 stayed closed for six more days of staleness than sprint 2's
+review found, until this same wake's sprint-4 plan finally executed the
+reopen directly (2026-08-05T21:38:54Z) rather than deferring it to an
+overflow row a second time. Already tracked as a pattern, not re-filed:
+**#474**/**#580** ("#120 reopen trapped in deferrable overflow with no
+unconditional owner" — #580 still open, making exactly this point). What
+this retro adds: the pattern predicted by #580 played out precisely as
+described — a plan can name an action "first" in prose without any
+enforcement distinguishing it from the rest of an overflow table a session
+might never reach.
 
 ### 5. Cheap paperwork keeps losing to real work, three sprints running
 

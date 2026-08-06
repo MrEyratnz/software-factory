@@ -52,7 +52,7 @@ orientation (`factory-ops/sprints/` had only folders `1/`, `2/`, `3/`, and
 `3/` held only `plan.md` — this pass's own ceremony is what adds
 `3/review.md`, `3/retro.md`, and `4/plan.md`).
 `factory-ops/state/checkpoint.json` is still pinned to commit `689e785`
-(2026-08-01) — **5 commits behind current `HEAD`** — so it does not reflect
+(2026-08-01) — **4 commits behind current `HEAD`** — so it does not reflect
 sprint 3's actual close-out state. This snapshot re-derives ranking from
 live GitHub state rather than trusting either stale artifact.
 
@@ -135,22 +135,24 @@ will recur every time a genuine top-priority item lands off-cycle.
 can trust its `issues[]` resume list — flagging for the planner, not fixing
 it here (docs/state boundary).
 
-### Verified this pass: #120 has been silently, falsely closed for a week
+### Verified this pass: #120 was silently, falsely closed for a week — now reopened
 
 **#120** (`secrets: inherit` exposes full-scope `FACTORY_PAT` to inbound,
-attacker-triggered stations) shows **closed** (`state_reason: completed`,
+attacker-triggered stations) was found **closed** (`state_reason: completed`,
 closed 2026-07-29T04:30:45Z by PR #405) while its actual fix, **PR #311**,
-remains open and unmerged to this day (`mergeable_state: behind`). This is
+remains open and unmerged to this day (`mergeable_state: behind`). This was
 the exact false-closure **#452** was filed to track — #452 is itself still
-open, unresolved, a week later. The reopen action is one API call, but per
+open, unresolved, a week later. The reopen action was one API call, but per
 **#580** (open; **#474** and **#537**, the same finding's earlier filings,
-are already closed) it has been "trapped in deferrable overflow
+are already closed) it had been "trapped in deferrable overflow
 with no unconditional owner" across two sprint plans, and **#709** names
 this as a systemic pattern (cheap paperwork fixes starved by higher-effort
-picks). A live security gap reads as closed on every dashboard and every
-`/factory-status` check right now. Ranked P0 below — security outranks
-everything at equal priority (rule 1), and a *miscounted* security gap is
-worse than an honestly-open one.
+picks). This same wake's sprint-4 plan executed the reopen directly
+(2026-08-05T21:38:54Z) rather than deferring it a third time, so #120 no
+longer reads closed as of this PR — but it read closed on every dashboard
+and every `/factory-status` check for the entirety of this review. Ranked
+P0 below — security outranks everything at equal priority (rule 1), and a
+*miscounted* security gap is worse than an honestly-open one.
 
 ### P0 — must not wait
 

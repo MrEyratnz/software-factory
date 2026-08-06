@@ -13,7 +13,7 @@
 - **Reviewer:** planner session, verified against live GitHub issue/PR state
   via `gh api`-equivalent (`curl` + `$GH_TOKEN` against the REST/Search
   APIs — `gh` itself is not installed in this runner) rather than taken on
-  trust from `factory-ops/state/checkpoint.json`, which is itself five
+  trust from `factory-ops/state/checkpoint.json`, which is itself four
   commits behind current `main` (see "Trust gaps").
 
 ## Planned vs. shipped
@@ -53,7 +53,7 @@ Overflow (8 items, capacity-driven, only reached if core finishes early):
 | # | Planned outcome | Actual state | Verdict |
 |---|---|---|---|
 | #101 | Review station off `bypassPermissions` | **OPEN** | not started |
-| #120 | `secrets: inherit` removed from inbound stations | **CLOSED — still falsely.** Plan's own "first action: reopen #120" was never executed; issue still shows `closed_at: 2026-07-29T04:30:45Z`, unchanged since before this sprint began. Real fix (PR #311) still open. | **not shipped, and the false-closure got worse** — now six days stale on top of the original miscount |
+| #120 | `secrets: inherit` removed from inbound stations | **Found CLOSED (still falsely) at this review** — `closed_at: 2026-07-29T04:30:45Z`, unchanged since before this sprint began; real fix (PR #311) still open. **Reopened by this same wake's sprint-4 plan** (2026-08-05T21:38:54Z, its required non-deferrable action) — no longer closed as of this PR. | **not shipped as implementation work this sprint; the false-closure was only corrected by this ceremony's own action, not by #311 merging** |
 | #132 | Review job drops `issues:write`/`secrets: inherit` | **OPEN** — PR #318 unchanged, `mergeable_state: dirty`. Now a filed **P0 incident, #978**: zero state delta across 3 consecutive sprints (2026-07-25 to 2026-08-05) | not started — staleness now formally escalated |
 | #342 | Stations exit RED on a usage limit | **OPEN** | not started |
 | #361 | `factory-run.yml` standup step + boundary-check precondition | **OPEN** | not started — directly relevant, since its absence is part of why this six-day gap went uncaught (see retro) |
@@ -111,14 +111,16 @@ not know this work happened at all.
 
 ## Trust gaps
 
-1. **#120 is still falsely closed, now six days longer than sprint 2's
-   review found it.** The sprint 3 plan's own overflow row named "reopen
-   #120" as its required first action; that action was never taken. Real
-   fix (PR #311) is still open, `mergeable_state: behind`. Already tracked:
-   **#452** (the original false-closure), **#474**/**#580** (the "buried in
-   deferrable overflow with no unconditional owner" pattern that explains
-   why the reopen never happened — #474 has since been closed but #580
-   remains open making the same point). Not re-filed.
+1. **#120 was still falsely closed at this review, now six days longer
+   than sprint 2's review found it** — since reopened by this same wake's
+   sprint-4 plan (2026-08-05T21:38:54Z), so it no longer reads closed as of
+   this PR. The sprint 3 plan's own overflow row named "reopen #120" as its
+   required first action; that action was never taken during sprint 3
+   itself. Real fix (PR #311) is still open, `mergeable_state: behind`.
+   Already tracked: **#452** (the original false-closure), **#474**/**#580**
+   (the "buried in deferrable overflow with no unconditional owner" pattern
+   that explains why the sprint-3 reopen never happened — #474 has since
+   been closed but #580 remains open making the same point). Not re-filed.
 2. **`checkpoint.json` staleness compounded by off-plan work with no
    reconciliation mechanism.** Filed this session (immediately preceding
    this review, by the product owner's ground-truth pass): **#979**
