@@ -240,6 +240,62 @@ test('techdebtAudit: all filed → ok', () => {
   assert.equal(audit.missing.length, 0);
 });
 
+// Regression for #471/#688: the tech-debt-clerk (an LLM) hand-derived or
+// paraphrased the 8-hex fingerprint instead of copying `techdebt_lint`'s
+// `normalized.fingerprint` verbatim, so filed issues carried a WRONG
+// fingerprint. techdebtAudit used to treat that as an ordinary "missing"
+// finding with no explanation — inviting a duplicate filing instead of a fix
+// to the existing issue's trailer. It must now name the divergence loudly:
+// which issue, what stale value it carries, and the exact expected value.
+test('techdebtAudit: a filed issue with a WRONG (hand-derived) fingerprint is reported as mismatched, not silently missing', () => {
+  const finding = { location: 'src/payments/charge.ts:88', impact: 'double-charges on retry' };
+  const correctFp = fingerprintFinding(finding);
+
+  // Simulate the clerk's old behavior: it filed an issue clearly ABOUT this
+  // finding (the body names the exact location) but paraphrased/mistyped the
+  // fingerprint trailer instead of copying the connector's own output.
+  const staleFp = 'deadbeef';
+  assert.notEqual(staleFp, correctFp);
+  const openIssues = [{
+    title: 'double-charge risk on retry',
+    body: `Location: src/payments/charge.ts:88\nImpact: double-charges on retry\n\nfingerprint: ${staleFp}`,
+  }];
+
+  const audit = techdebtAudit([finding], openIssues);
+
+  // Still not cleanly reconciled (the trailer really is wrong) ...
+  assert.equal(audit.ok, false);
+  assert.equal(audit.missing.length, 1);
+  // ... but now diagnosed, not just reported as an unexplained gap.
+  assert.equal(audit.mismatched.length, 1);
+  const m = audit.mismatched[0];
+  assert.equal(m.fingerprint, correctFp); // the exact expected value, named
+  assert.ok(m.staleIssue);
+  assert.equal(m.staleIssue.fingerprint, staleFp);
+  assert.equal(m.staleIssue.title, 'double-charge risk on retry');
+  // the same diagnostic is reachable straight off the missing entry too
+  assert.deepEqual(audit.missing[0].staleIssue, m.staleIssue);
+});
+
+// A finding correctly filed with the CANONICAL fingerprint (i.e. the clerk
+// followed the fixed instructions and copied techdebt_lint's output verbatim)
+// must reconcile cleanly on a re-run — no mismatch flagged, no duplicate.
+test('techdebtAudit: a re-run against a correctly-filed finding is clean (no mismatch, no re-file)', () => {
+  const finding = { location: 'src/payments/charge.ts:88', impact: 'double-charges on retry' };
+  const correctFp = fingerprintFinding(finding);
+  const openIssues = [{
+    title: 'double-charge risk on retry',
+    body: `Location: src/payments/charge.ts:88\nImpact: double-charges on retry\n\nfingerprint: ${correctFp}`,
+  }];
+
+  const audit = techdebtAudit([finding], openIssues);
+
+  assert.equal(audit.ok, true);
+  assert.equal(audit.missing.length, 0);
+  assert.equal(audit.mismatched.length, 0);
+  assert.ok(audit.filed.includes(correctFp));
+});
+
 /* ── roadmapCheck ──────────────────────────────────────────────────────── */
 
 test('roadmapCheck: refuses without a merged-green SHA proof', () => {

@@ -248,9 +248,38 @@ export function extractFingerprint(issue) {
 }
 
 /**
+ * Look for an already-open issue that is plainly ABOUT this finding (its
+ * title/body names the finding's own location) but whose fingerprint trailer
+ * does not equal the fingerprint canonically computed here. That is the
+ * signature of a filer that hand-derived or paraphrased the fingerprint
+ * instead of copying `techdebt_lint`'s `normalized.fingerprint` verbatim
+ * (the confirmed root cause of #471/#688) — NOT a genuinely unfiled finding.
+ * Surfacing it distinctly lets a caller fail loud with the exact expected
+ * value ("issue #443 says deadbeef, should be 1a2b3c4d") instead of silently
+ * reporting "still missing" and inviting a duplicate filing.
+ * @returns {{title:string|null, fingerprint:string|null}|null}
+ */
+function findStaleIssue(finding, issues, canonicalFp) {
+  const loc = norm(finding && finding.location);
+  if (!loc) return null;
+  const hit = issues.find((iss) => {
+    const hay = norm(`${iss?.title ?? ''}\n${iss?.body ?? ''}`);
+    if (!hay.includes(loc)) return false;
+    const staleFp = extractFingerprint(iss);
+    return Boolean(staleFp) && staleFp !== canonicalFp;
+  });
+  if (!hit) return null;
+  return { title: hit.title ?? null, fingerprint: extractFingerprint(hit) };
+}
+
+/**
  * @param {Array<object>} findings  this session's review findings
  * @param {Array<{title?:string, body?:string, fingerprint?:string}>} openIssues
- * @returns {{filed:string[], missing:Array<{fingerprint:string, finding:object}>,
+ * @returns {{filed:string[],
+ *            missing:Array<{fingerprint:string, finding:object,
+ *                           staleIssue:{title:string|null, fingerprint:string|null}|null}>,
+ *            mismatched:Array<{fingerprint:string, finding:object,
+ *                              staleIssue:{title:string|null, fingerprint:string|null}}>,
  *            all:Array<{fingerprint:string, filed:boolean}>, ok:boolean}}
  */
 export function techdebtAudit(findings, openIssues) {
@@ -260,6 +289,7 @@ export function techdebtAudit(findings, openIssues) {
 
   const all = [];
   const missing = [];
+  const mismatched = [];
   const seen = new Set();
   for (const finding of list) {
     const fp = fingerprintFinding(finding);
@@ -267,12 +297,18 @@ export function techdebtAudit(findings, openIssues) {
     if (!seen.has(fp)) {
       all.push({ fingerprint: fp, filed: isFiled });
       seen.add(fp);
-      if (!isFiled) missing.push({ fingerprint: fp, finding });
+      if (!isFiled) {
+        const staleIssue = findStaleIssue(finding, issues, fp);
+        const entry = { fingerprint: fp, finding, staleIssue };
+        missing.push(entry);
+        if (staleIssue) mismatched.push(entry);
+      }
     }
   }
   return {
     filed: [...filedSet],
     missing,
+    mismatched,
     all,
     ok: missing.length === 0,
   };

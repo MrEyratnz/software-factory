@@ -25,4 +25,27 @@ ok="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).
 
 n="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).missing.length))}catch(e){process.stdout.write("?")}})')"
 otel_emit factory_techdebt_missing_total gauge "$n" '{}'
-block_stop "$n unfixed review finding(s) are not yet tracked — file each as a \`tech-debt\` issue (run /debt sync) or mark it status:\"fixed\" in .factory/review before ending. (Convention: unfixed findings become tracked tech-debt.)"
+
+# A "missing" finding may actually already have an open issue about it whose
+# fingerprint trailer just doesn't match — the tech-debt-clerk hand-derived or
+# paraphrased the fingerprint instead of copying techdebt_lint's output
+# verbatim (root cause of #471/#688). Filing a duplicate would be wrong; the
+# fix is to correct that issue's trailer. Name the exact expected fingerprint
+# so the diagnostic is actionable instead of a silent "still missing".
+mismatch_msg="$(printf '%s' "$audit" | node -e '
+let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{
+  try {
+    const a = JSON.parse(s);
+    const lines = (a.mismatched || []).map((m) => {
+      const t = m.staleIssue && m.staleIssue.title ? ` "${m.staleIssue.title}"` : "";
+      const stale = m.staleIssue ? m.staleIssue.fingerprint : "?";
+      return `issue${t} carries fingerprint ${stale} for ${m.finding && m.finding.location} but the canonical value is ${m.fingerprint} — fix that issue'"'"'s \`fingerprint:\` trailer, do not file a duplicate.`;
+    });
+    process.stdout.write(lines.join(" "));
+  } catch (e) { process.stdout.write(""); }
+});
+')"
+
+reason="$n unfixed review finding(s) are not yet tracked — file each as a \`tech-debt\` issue (run /debt sync) or mark it status:\"fixed\" in .factory/review before ending. (Convention: unfixed findings become tracked tech-debt.)"
+[ -n "$mismatch_msg" ] && reason="$reason $mismatch_msg"
+block_stop "$reason"

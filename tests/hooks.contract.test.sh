@@ -359,6 +359,24 @@ FP="$(printf '{"location":"src/a.ts:1","impact":"bug"}' | node "$ROOT/connector/
 GHFILED="$(mk_gh_shim '[{"title":"debt","body":"fingerprint: '"$FP"'"}]')"
 ( export PATH="$GHFILED:$PATH"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1 ); [ $? = 0 ] && { PASS=$((PASS+1)); } || { FAIL=$((FAIL+1)); echo "FAIL - filed finding allows stop"; }
 
+# regression #471/#688: an issue that is clearly ABOUT the finding (its body
+# names the finding's own location) but carries a WRONG/hand-derived
+# fingerprint trailer must still block Stop (it is not cleanly reconciled),
+# but the reason must name the exact expected fingerprint and point at fixing
+# that issue's trailer — not just report an unexplained "still missing".
+printf '[{"location":"src/a.ts:1","impact":"bug","provenance":"introduced","suggestedFix":"fix","severity":"high","status":"open"}]' > "$R/.factory/review/r.json"
+GHSTALE="$(mk_gh_shim '[{"title":"pre-existing bug","body":"Location: src/a.ts:1\nImpact: bug\n\nfingerprint: deadbeef"}]')"
+STALE_OUT="$( export PATH="$GHSTALE:$PATH"; printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" 2>&1 1>/dev/null )"; STALE_RC=$?
+[ "$STALE_RC" = 2 ] && { PASS=$((PASS+1)); } || { FAIL=$((FAIL+1)); echo "FAIL - mismatched fingerprint still blocks stop (rc=$STALE_RC)"; }
+case "$STALE_OUT" in
+  *"$FP"*"deadbeef"*|*"deadbeef"*"$FP"*) PASS=$((PASS+1)) ;;
+  *) FAIL=$((FAIL+1)); echo "FAIL - mismatch reason must name both the stale (deadbeef) and expected ($FP) fingerprint, got: $STALE_OUT" ;;
+esac
+case "$STALE_OUT" in
+  *"do not file a duplicate"*|*"duplicate"*) PASS=$((PASS+1)) ;;
+  *) FAIL=$((FAIL+1)); echo "FAIL - mismatch reason must warn against filing a duplicate, got: $STALE_OUT" ;;
+esac
+
 echo "# loop-guard"
 SCRIPT="$S/loop-guard.sh"
 R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
