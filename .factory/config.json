@@ -3,7 +3,7 @@
   "roadmapPath": "docs/ROADMAP.md",
   "adrDir": "docs/adr",
   "releaseBranch": "main",
-  "sourceRegex": "^(bootstrap\\.sh$|hooks/|connector/src/|commands/|agents/|skills/|schemas/|scripts/|\\.claude-plugin/|\\.github/workflows/)",
+  "sourceRegex": "^(bootstrap\\.sh$|hooks/|connector/src/|commands/|agents/|skills/|schemas/|scripts/|\\.claude-plugin/|\\.github/workflows/|\\.github/scripts/)",
   "testRegex": "(^tests/|^connector/test/|^scripts/test-|\\.test\\.mjs$)",
   "testCommandRegex": "(bash tests/run-suite\\.sh|node --test|hooks\\.contract\\.test\\.sh|test-triage-scripts\\.sh)",
   "releaseVerbRegex": "(git tag v|gh release create|npm publish|release-please)",
@@ -19,7 +19,7 @@
     "protectTrustRoots": true
   },
   "gates": {
-    "typecheck": "bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh scripts/*.sh",
+    "typecheck": "bash -n bootstrap.sh hooks/scripts/*.sh hooks/lib/common.sh tests/*.sh scripts/*.sh .github/scripts/*.sh",
     "boundaries": "bash tests/scaffold.contract.test.sh",
     "unit": "cd connector && node --test 'test/**/*.test.mjs'",
     "bdd": "bash tests/hooks.contract.test.sh",

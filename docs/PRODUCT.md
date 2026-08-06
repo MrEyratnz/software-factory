@@ -31,15 +31,226 @@ reopen the v1.0 gate — only a genuine `bug` can enter the frozen milestone,
 and it must be fixed, not deferred. Freeze state is recorded here when it
 flips, with the date and the gate evidence.
 
-**Freeze state: OFF** (gate not within one sprint of holding — M2 and M3 are
-both 0% done. The "221 open `tech-debt` + 6 open `bug`" figures originally
-recorded here were a 2026-07-28 snapshot taken under the since-superseded
-literal-zero gate; the verified 2026-07-29 ground truth is 273 open
-`tech-debt` / 9 open `bug`, and the gate is now the redefined one — ADR 0005,
-authoritative in `docs/specs/epic-1/spec.md` — which is also not close to
-holding). New `idea`/`research` issues discovered this pass (#222, #223) were
-already correctly routed to `v1.1.0` by triage; no freeze-routing action
-needed this snapshot.
+**Freeze state: OFF** (gate not yet within one sprint of holding — M2 and M3
+are both 0% done by roadmap checkbox, and as of sprint-4 planning **754 open
+`tech-debt` + 12 open `bug`** issues stand between here and M4's "zero open
+bug/tech-debt" gate — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
+review; ground-truth counts re-pulled this pass via the GitHub search API,
+paginated past the 30-item default that undercounts elsewhere in this repo's
+own tooling, see #419/#420 below). The gate is materially **farther** away
+than at sprint-2, not closer — see the sprint-4 headline finding. No new
+`idea`/`research` issues required freeze-routing this pass.
+
+## Sprint 4 backlog snapshot (2026-08-05)
+
+769 open issues / 5 open PRs, ground-truth counts (GitHub search API,
+paginated): 754 `tech-debt`, 12 `bug`, 16 `security`, 8 `P0`, 45 `P1`, 81
+`P2`, 42 `P3`, 591 `tech-debt` issues carrying no P-label at all. Sprint 3's
+`sprint_ends_at` (2026-07-30T23:10:00Z) passed **six days** ago with no
+review/retro held and no sprint-4 plan written as of this session's
+orientation (`factory-ops/sprints/` had only folders `1/`, `2/`, `3/`, and
+`3/` held only `plan.md` — this pass's own ceremony is what adds
+`3/review.md`, `3/retro.md`, and `4/plan.md`).
+`factory-ops/state/checkpoint.json` is still pinned to commit `689e785`
+(2026-08-01) — **4 commits behind current `HEAD`** — so it does not reflect
+sprint 3's actual close-out state. This snapshot re-derives ranking from
+live GitHub state rather than trusting either stale artifact.
+
+### Headline finding: the gate's own repair mechanism is the thing breaking it
+
+The dominant fact this sprint is **not** a backlog of real defects — it's a
+single contested, unmerged PR actively manufacturing backlog faster than
+anyone can work it. **PR #444** (`docs(product): redefine M4 tech-debt
+gate-scope from ground-truth counts`, open since 2026-07-29, carrying
+ADR 0005 in its diff, never merged) has been re-reviewed by the reviewer
+station **20 times** since 2026-07-30 (every round `CHANGES_REQUESTED`,
+most recently 2026-08-05T11:43Z, still `mergeable_state: behind`). Per the
+review station's own finding (**#980**, filed today): open `tech-debt` grew
+from 289 at sprint-2 review to **750 in ~6 days** (+461, #980's frozen
+snapshot — this pass's own re-pull above reads 754/~465, a few hours newer),
+of which **521**
+were created since sprint-2 review ended and ~100 in the 24h window before
+#980 was filed — nearly all authored against this one PR's successive push
+rounds, many self-referential to the PR's own contested claims (e.g. #940,
+#911, #963). A meaningful fraction are outright duplicates (#977 restates
+#420 verbatim, joining #328/#419/#610/#698/#864 on the same bug) because the
+idempotency mechanism meant to prevent re-filing is itself broken and
+unfixed (**#471**, **#688** — `tech-debt-clerk` fingerprints diverge from
+`techdebt_audit`'s fingerprints, so every `/review` re-files instead of
+recognizing prior findings, and per #688's own title this **also
+self-blocks the `debt-reconcile` Stop hook on every `/review`**). A PR whose
+entire purpose is to make M4's "zero open bug/tech-debt" gate achievable is,
+through its own unconverged review loop, making the gate's raw count
+~2.6x worse in under a week — the opposite of its intent — while never
+reaching a mergeable state. This is exactly the shape ADR-0009's judge-panel
+process exists for (contested, endlessly re-litigated, not converging on
+ordinary review) — and per `GOVERNANCE.md`, the board convenes every 4th
+sprint, and **sprint 4 (next) is the 4th sprint**. Both the review finding
+(#980) and the mechanism match: **route PR #444 / ADR 0005 to `/judge-panel`
+as sprint 4's board session**, and freeze further adversarial-review rounds
+on that branch until the panel resolves it — continuing to re-review it as
+an ordinary PR is what is causing the damage. This outranks nearly
+everything else below: it is actively working against the standing goal,
+not just failing to advance it.
+
+### Verified this pass: M2's first item is already done in substance
+
+`docs/ROADMAP.md`'s `roadmap_next` names M2's "Static validation layer in
+the commit gate: manifest + frontmatter schema" (line 29) as the next
+unchecked item. I ran `bash tests/scaffold.contract.test.sh` myself: it
+passes clean, including "plugin static validation (frontmatter/manifest
+schema, `${CLAUDE_PLUGIN_ROOT}` portability, referenced-files-exist, JSON
+validity) is clean" plus four regression fixtures that positively prove the
+check fires (malformed JSON, missing frontmatter, hardcoded absolute path,
+dangling script reference). This is PR #375 / commit `3fb17dc` (merged
+2026-07-28), wired into `tests/run-suite.sh`'s boundaries stage. The roadmap
+checkbox at `docs/ROADMAP.md:29` has never been flipped — **flagging for the
+architect** (checkbox flips are `guard-roadmap`-gated on a merged-green
+proof and not the product owner's to make, but the proof already exists).
+Issue **#159** tracks this and, per **#981** (filed today), has been
+"redeferred 3 sprints running" as a low-effort "verify-and-close" item that
+keeps losing to higher-effort picks (**#709** names this exact failure
+pattern generically). Ranked below as a cheap sprint-4 close, and the
+architect action is a same-day unblock, not a sprint-4-sized item.
+
+### Verified this pass: real work landed off-plan, uncheckpointed
+
+Three merged PRs since sprint 3's plan was written are in neither its
+committed core (#442/#419/#420/#423/#100) nor its overflow
+(#101/#120/#132/#342/#361/#459/#94/#95) list: **#731** ("failed sessions
+resume on rerun instead of re-paying from zero", merged 2026-08-04) —
+its source issue **#725** is titled "P0: CI sessions restart from zero
+after a failure" and the sprint-3 plan itself was never updated to reflect
+it as a human-injected top priority; **#421** ("fail the CI run when a
+session lands no real deliverable", merged 2026-08-04); **#878** (staging
+fix for #731's resume helper, merged 2026-08-04). This is legitimate,
+valuable work — not a complaint about it happening — but it explains part
+of why sprint 3's ceremonies never fired: **#979** (filed today) names the
+exact gap — "no mechanism reconciles the active sprint plan when
+human-injected priority work (#725-style) displaces it." That's a process
+fix, not mine to implement, but it's ranked below as P1 because it's the
+same root cause that produced this session's six-day ceremony silence and
+will recur every time a genuine top-priority item lands off-cycle.
+`checkpoint.json` needs reconciliation to current `HEAD` before the planner
+can trust its `issues[]` resume list — flagging for the planner, not fixing
+it here (docs/state boundary).
+
+### Verified this pass: #120 was silently, falsely closed for a week — now reopened
+
+**#120** (`secrets: inherit` exposes full-scope `FACTORY_PAT` to inbound,
+attacker-triggered stations) was found **closed** (`state_reason: completed`,
+closed 2026-07-29T04:30:45Z by PR #405) while its actual fix, **PR #311**,
+remains open and unmerged to this day (`mergeable_state: behind`). This was
+the exact false-closure **#452** was filed to track — #452 is itself still
+open, unresolved, a week later. The reopen action was one API call, but per
+**#580** (open; **#474** and **#537**, the same finding's earlier filings,
+are already closed) it had been "trapped in deferrable overflow
+with no unconditional owner" across two sprint plans, and **#709** names
+this as a systemic pattern (cheap paperwork fixes starved by higher-effort
+picks). This same wake's sprint-4 plan executed the reopen directly
+(2026-08-05T21:38:54Z) rather than deferring it a third time, so #120 no
+longer reads closed as of this PR — but it read closed on every dashboard
+and every `/factory-status` check for the entirety of this review. Ranked
+P0 below — security outranks everything at equal priority (rule 1), and a
+*miscounted* security gap is worse than an honestly-open one.
+
+### P0 — must not wait
+
+| # | Why P0 |
+|---|---|
+| #444 / ADR 0005 | Headline finding above — route to `/judge-panel` as sprint 4's board session; the review loop on this PR is actively growing the M4 gate's blocking count. Not an implementer pick — architect convenes. |
+| #471, #688 | Root cause of the duplication that's inflating the tech-debt count, and #688 also self-blocks `debt-reconcile`'s Stop hook on every `/review` — fixing this is what makes any tech-debt count trustworthy again. |
+| #120 | Falsely shown closed for a week while its real fix (PR #311) sits unmerged — see finding above. Reopen now; close correctly only when #311 merges. |
+| #423 | Blocks #311 (hence #120): PR #311's `secrets: inherit` removal hard-fails the reviewer station's token mint with no fallback. Sprint-3 committed-core item, still open. |
+| #442 | Sprint-3 committed core, P0-labeled, still open: `guard-commit`/`record-green` resolve `PROJECT_DIR` to the main checkout instead of the worktree — the commit gate can check the wrong tree in a worktree-isolated session. |
+| #419, #420 | Sprint-3 committed core, P0-labeled, still open: unbounded `gh issue list` calls in `debt-reconcile.sh` and the `/factory-status` banner cap real counts at the newest 30. This session had to hand-paginate the GitHub search API to get the true 754/12 counts above — proof the bug is live today, not theoretical. |
+| #101, #132 | Security-floor overflow, still open. #132's PR #318 has its own **#978** P0 incident open today: zero state delta across 3 consecutive sprints (2026-07-25 → 2026-08-05, confirmed via the PR's `updated_at`). Per sprint-3 plan's own staleness rule, reassign away from the stalled owner rather than carry a 4th sprint. |
+
+### P1 — sprint 4 core (top of backlog for the planner, ranked)
+
+1. **#444/ADR 0005, #471/#688, #120, #423, #442, #419/#420, #101/#132** — P0
+   above, in that order; the first two stop active damage, the rest are
+   sprint 3's own unclosed committed core plus the falsely-closed security
+   item.
+2. **#159** — cheap: verify-and-close (substance already merged, verified
+   by me this pass — see above). Actually close it this time.
+3. **#979** — no mechanism reconciles the sprint plan when human-injected
+   priority work displaces it; root cause of this sprint's own ceremony
+   silence and of #731/#421/#878 landing uncheckpointed. Feeds the
+   planner's retro.
+4. **#360** — P0-labeled incident, still open: sprint-1's ceremony silence
+   recurred as sprint-3's (this session exists because of it); bundle with
+   #361 (standup step, still open) and #979 as one ceremony-reliability
+   fix rather than three separate items.
+5. **#314** — active-agent role marker has no in-session reset path, locks
+   a session out of all local writes after any review dispatch. Plausible
+   contributor to stalled/silent sessions; worth confirming against the
+   ceremony-silence pattern above.
+6. **#319** — `debt-reconcile`'s Stop hook silently treats a missing `gh`
+   CLI as *zero* open tech-debt (permanently blocking Stop with a false
+   green signal). Verified live in this session's own environment: `gh` is
+   in fact not installed here. Masks the exact gate this repo depends on.
+7. **Hook unit tests** (`docs/ROADMAP.md` M2, next real item after the
+   already-done static-validation layer) — actual Release-Gate substance.
+   Sequenced after the floor above, same logic as sprints 1–3: gate work
+   lands unreliably while the review-loop is actively poisoning the count
+   it's supposed to reduce.
+
+That's a 13-item ranked core (7 P0 + 6 P1), sized similarly to prior
+sprints' floor+core bands. **#138** (coordination-substrate, contested)
+remains routed to `/judge-panel`, unchanged, not decided here — now sharing
+a convening slot naturally with #444/ADR 0005 if the architect chooses to
+run both at sprint 4's board session.
+
+### P2 — real, bucketed by theme (not individually sequenced this sprint)
+
+- **Loop-health cluster (#231, #206)** — unchanged disposition from
+  sprints 2–3: bundle as one item, cron-prod dispatch inversion +
+  durable checkpoint write-back.
+- **#229** — `guard-bash-writes` misdiagnoses read-only trust-root
+  inspection as writes. Unchanged from sprint 3's disposition: real, P1
+  severity, ranked below this sprint's P0/P1 on dependency grounds.
+- **Bootstrap/egress-proxy hardening (#163–#249 range)** — unchanged from
+  sprints 1–3, maps to M3's "Security hardening pass" bullet as one bundled
+  item; explicit P1-severity items inside remain **#179, #180, #195, #202,
+  #238**.
+- **The ~591 zero-priority-signal `tech-debt` issues** — this pool did not
+  shrink from sprint 3's "triage pass 1" effort; it *grew*, almost entirely
+  from the PR #444 review-loop (headline finding above). Re-attempting
+  triage on this pool before the loop is stopped is pouring water into a
+  running tap — sequence the judge-panel routing and #471/#688 fix first,
+  then re-measure before committing further triage capacity.
+- **#177** — single self-hosted runner serializes the factory; throughput
+  constraint, not correctness. Unchanged disposition.
+
+### P3 — unchanged from sprint 1
+
+`#141–143, #146–157`: doc cross-reference drift, routed to `v1.1.0`. PR #139
+(the PR these depended on) has since closed; moot unless a judge-panel
+convening on #138 revives the underlying question.
+
+### Milestone-scope decisions this pass
+
+- No milestone moves. `v1.0.0` set stands.
+- Freeze stays **OFF**, restated above with current evidence — the gate is
+  farther away than at any prior snapshot, not closer.
+- **ADR 0005's M4 gate-scope redefinition is not adopted here.** It is
+  contested (see headline finding) and not the product owner's to accept
+  unilaterally while its own PR carries unresolved, self-referential
+  findings about its own claims (#940, #911, #963). M4 stays defined by
+  `docs/ROADMAP.md`'s literal text until judge-panel resolves it.
+- Left #138 with its standing disposition: `v1.0.0`, P1, routed to
+  `/judge-panel` — unchanged.
+
+### Not touched this pass
+
+PRs #444, #318, #311, #250, #92 are implementer/release-captain/architect
+territory, not product-owner's to merge, close, or convene alone. #444 is
+flagged above only because its review-loop's *output* (the tech-debt count)
+is exactly what this ranking depends on being trustworthy — the decision to
+route it to judge-panel and pause its review cycle is the architect's/
+conductor's to execute, not mine to do unilaterally beyond recording the
+recommendation and evidence here.
 
 ## Sprint 2 backlog snapshot (2026-07-28)
 

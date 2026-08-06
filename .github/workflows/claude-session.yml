@@ -100,12 +100,12 @@ jobs:
           { echo "token=$token"; echo "slug=$slug"; } >> "$GITHUB_OUTPUT"
           echo "::add-mask::$token"
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           token: ${{ steps.ident.outputs.token }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with: { node-version: 22 }
 
       # Pin ≥ 2.1.203: dynamic workflows + the ultracode effort setting need it.
@@ -212,6 +212,58 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "telemetry → $OTEL_ENDPOINT (station=$SESSION_STATION)"
 
+      # Checkpoint/resume across job ATTEMPTS (#725): a session killed by a
+      # usage limit, max-turns, or a runner timeout leaves its transcript
+      # under ~/.claude/projects and its session_id in the result JSON.
+      # Persisting both lets `gh run rerun --failed` RESUME the parked
+      # session instead of re-paying the whole context from zero — the
+      # measured waste this closes was $1-12+ per killed session, several
+      # sessions per limit window. Keys are run_id+attempt-scoped: restore
+      # only ever matches THIS run's earlier attempts, never another run's
+      # session (and GitHub's cache isolation keeps it branch-scoped).
+      # Trade-off, stated: the transcript holds session content (tool
+      # outputs over this repo's files). The Actions cache is repo-internal
+      # and branch-scoped — same trust domain as the checkout itself — and
+      # content capture into TELEMETRY stays off per the observability
+      # contract; this is a deliberate, reviewed exception for self-resume.
+      # The session owns $GITHUB_WORKSPACE and may check out any ref —
+      # including one that predates this helper — so every resume-machinery
+      # step invokes a copy staged OUTSIDE the workspace (#877; observed
+      # live: run 30949392912's review checked out an older PR branch and
+      # the post step 127'd, redding a green job).
+      - name: stage the resume helper outside the mutable workspace
+        run: cp "$GITHUB_WORKSPACE/.github/scripts/session-resume.sh" "$RUNNER_TEMP/session-resume.sh"
+
+      - name: restore prior attempt's session state (resume on rerun)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.claude/projects
+            ~/.dsf-session-state
+          key: session-state-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            session-state-${{ inputs.station }}-${{ github.run_id }}-
+
+      # Snapshot taken BEFORE the session runs, so the post-session gate below
+      # can diff against the session's own starting point instead of the
+      # dispatch SHA — see that step's comment for why the SHA comparison was
+      # wrong (fetch-depth:0 already holds unrelated branch history).
+      # Snapshot spans local heads AND remotes: everything that exists
+      # anywhere at session start is excluded from "this session's own
+      # work", so neither the fetch-depth:0 checkout's bot branches nor a
+      # mid-session DWIM checkout / pull of pre-existing origin history can
+      # count as a deliverable (#564). The gate later diffs local-head
+      # growth against this to find the session's own commits, and checks
+      # the origin remote-ref set separately for "did it reach GitHub".
+      - name: snapshot commit refs before the session runs
+        if: inputs.station == 'factory-run'
+        # set-head: actions/checkout does not create refs/remotes/origin/HEAD,
+        # without which the gate's default-branch detection would silently
+        # fall back to a hardcoded name (#683).
+        run: |
+          git remote set-head origin --auto >/dev/null 2>&1 || true
+          git rev-list --branches --remotes HEAD | sort -u > "$RUNNER_TEMP/refs-before.txt"
+
       - name: run station session
         shell: bash   # pipefail: without it `tee` masks the CLI's exit status
         env:
@@ -224,7 +276,29 @@ jobs:
         run: |
           extra=()
           if [ -n "$ALLOWED_TOOLS" ]; then extra+=(--allowedTools "$ALLOWED_TOOLS"); fi
-          claude -p "$SESSION_PROMPT" \
+          # Resume the previous attempt's parked session when its id AND
+          # transcript survived the cache round-trip (#725); session-resume.sh
+          # prints the id only when both hold. The resume prompt is short by
+          # design — the parked context already contains the full mandate.
+          # Fresh sessions pre-assign their id (--session-id) and ARM the
+          # checkpoint BEFORE launch, so even a hard timeout/SIGKILL that
+          # never writes a result JSON leaves a resumable id+transcript
+          # (#753); the post step clears it only on clean completion (#752).
+          # The head SHA binds the checkpoint to the checkout it was armed
+          # on — a resume against a different SHA would act on a stale
+          # diff (#786), so pre cold-starts on mismatch.
+          sid="$(bash "$RUNNER_TEMP/session-resume.sh" pre "$HOME/.dsf-session-state" "$GITHUB_SHA")"
+          if [ -n "$sid" ]; then
+            echo "resuming parked session $sid (attempt ${{ github.run_attempt }})"
+            extra+=(--resume "$sid")
+            prompt="Continue this parked station session exactly where it stopped. Re-read factory-ops/state/checkpoint.json if you need to re-orient; your original mandate is unchanged."
+          else
+            sid="$(cat /proc/sys/kernel/random/uuid)"
+            bash "$RUNNER_TEMP/session-resume.sh" arm "$HOME/.dsf-session-state" "$sid" "$GITHUB_SHA"
+            extra+=(--session-id "$sid")
+            prompt="$SESSION_PROMPT"
+          fi
+          claude -p "$prompt" \
             --plugin-dir "$GITHUB_WORKSPACE" \
             --settings '{"enabledPlugins":{"dark-software-factory@software-factory":false}}' \
             --permission-mode "${{ inputs.permission_mode }}" \
@@ -233,6 +307,23 @@ jobs:
             --max-turns "${{ inputs.max_turns }}" \
             --output-format json \
             "${extra[@]}" | tee "$RUNNER_TEMP/session-result.json"
+
+      # The checkpoint was armed BEFORE the session launched; this step
+      # CLEARS it on confirmed clean completion only — a finished station
+      # must never be resumed by a rerun of an unrelated failed step
+      # (#752). Killed/parked outcomes keep the armed id for resume.
+      - name: clear the session checkpoint on clean completion
+        if: always()
+        run: bash "$RUNNER_TEMP/session-resume.sh" post "$HOME/.dsf-session-state" "$RUNNER_TEMP/session-result.json"
+
+      - name: save session state (resume on rerun)
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.claude/projects
+            ~/.dsf-session-state
+          key: session-state-${{ inputs.station }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # `claude -p --output-format json` EXITS 0 even when the run failed — the
       # failure lives in the result JSON ("is_error": true, e.g. "Not logged in").
@@ -257,6 +348,36 @@ jobs:
             }
             console.log("station completed: " + (o.num_turns ?? "?") + " turns");
           ' "$f"
+
+      # factory-run's own mandate (see factory-run.yml's prompt) is a commit and
+      # a PR — "producing only a status report is a FAILURE". The is_error guard
+      # above cannot see that failure mode: `claude -p` ends cleanly (end_turn)
+      # even when the session did nothing but orient and stop, so the job goes
+      # green while the loop never advances (observed live: GH Actions run
+      # 30490944976 — oriented, hit a couple of Bash permission_denials on raw
+      # plumbing commands, then answered with a status dashboard and quit; no
+      # commit, no PR, no checkpoint update, four days stale). This check has to
+      # live HERE, not as a follow-up job in factory-run.yml: a job that calls a
+      # reusable workflow via `uses:` cannot hold any other steps, so this is the
+      # only place with access to the actual git workspace the session leaves
+      # behind — whatever local commits/branches it made, pushed or not.
+      # Scoped to the factory-run station only: other stations (review/triage/
+      # nightly-eval) can legitimately end a run with no commit at all.
+      #
+      # Diffs against the pre-session ref snapshot (previous step), NOT the
+      # dispatch SHA: an earlier version of this gate used
+      # `git rev-list --all --not "$base"`, which — on a fetch-depth:0 checkout
+      # that already holds every open PR/bot branch — counted all of that
+      # pre-existing unrelated history as "new" and never fired (CONFIRMED-high
+      # review finding on PR #421, reproduced live: 38 unrelated commits vs the
+      # 1 the session itself made). require-deliverable.sh and its behavioral
+      # test (tests/scaffold.contract.test.sh) encode this scenario directly.
+      - name: fail when factory-run reports success without a real deliverable
+        if: inputs.station == 'factory-run'
+        env:
+          # Layer 4 asks GitHub whether an open PR carries the pushed work.
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/require-deliverable.sh" "$RUNNER_TEMP/refs-before.txt"
 
       # Cost telemetry (efficiency program): usage + duration per station to the
       # job summary and an artifact; the efficiency engineer's ingestion turns
