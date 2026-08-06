@@ -149,9 +149,12 @@ executed by this plan itself, not claimed as sprint capacity.
   re-attempted triage slice** — explicitly multi-sprint; M4 stays unchecked
   regardless of this sprint's slice, and stays unchecked pending the board's
   ADR on what M4 actually requires.
-- **Non-security P2/P3 tech-debt** — per the product owner's prior
-  redefinition (subject to revision by this sprint's board session), does
-  not block M4 pending the ADR.
+- **Non-security P2/P3 tech-debt** — ADR 0005/PR #444 proposes narrowing
+  M4 to security-only tech-debt, but that redefinition is **not adopted**:
+  per `docs/PRODUCT.md`, M4 stays defined by `docs/ROADMAP.md`'s literal
+  text (zero open bug/tech-debt) until this sprint's board session settles
+  it via judge-panel. This item is simply not being worked this sprint —
+  it still counts against the M4 gate as currently defined.
 - **P3 doc drift (#141–143, #146–157)** — unchanged, routed to `v1.1.0`.
 
 ## Reassignment / staleness note
