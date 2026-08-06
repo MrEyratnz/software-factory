@@ -26,7 +26,11 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
    governs on drift), **what it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
-   trailer line `fingerprint: <8-hex>` so the audit stays idempotent.
+   trailer line `fingerprint: <8-hex>` so the audit stays idempotent, and a
+   trailer line `source-pr: <number>` naming the PR whose review produced
+   the finding — the Release Gate's different-PR anti-self-certification
+   clause evaluates against this field, and a finding without it
+   fail-closes that exemption (spec § "Release Gate for v1.0.0").
    **If the finding's verdict is CONFIRMED at high severity, also apply
    `gate:confirmed-high`** — the Release Gate's anti-laundering floor
    (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0"). That label is

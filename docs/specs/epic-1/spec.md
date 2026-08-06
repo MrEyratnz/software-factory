@@ -188,10 +188,16 @@ never silent (#909).
   bindings below, standing in for the missing link —
   **and** that merged PR has a **non-empty diff**, **and** the
   qualifying merged change is a **different PR than the one whose
-  review produced the finding** — the clerk records the source PR
-  number in the finding's provenance, and a PR retiring findings its
-  own review raised is self-certification, the pattern this criterion
-  exists to forbid (#995) — **and** — for an issue
+  review produced the finding** — evaluated against the **`source-pr:`
+  trailer** the clerk records in every finding body (its required-field
+  list mandates it): the qualifying PR's number must not equal the
+  `source-pr:` value. A finding whose `source-pr:` trailer is missing
+  or unparseable **fail-closes this exemption** — mirroring the
+  grammar-nonconforming-location rule — until #649's backfill audit
+  adds it (in that audit's scope, like location normalization); a PR
+  retiring findings its own review raised is self-certification, the
+  pattern this criterion exists to forbid (#995, operand defined per
+  #1031-review round 24) — **and** — for an issue
   whose body carries a `fingerprint:` trailer (all clerk-filed review
   findings do) — two bindings both hold: (i) the same fingerprint is
   cited in **immutable evidence only** — a commit message of that merged
