@@ -6,7 +6,8 @@ autonomous SDLC around it runs in GitHub Actions (ADR 0003). CI is the
 authoritative gate; local hooks are fail-early UX. Never route around a hook.
 
 **Standing goal every session inherits: satisfy the v1.0.0 Release Gate**
-(`docs/ROADMAP.md`; gate definition in `docs/specs/epic-1/spec.md`;
+(`docs/ROADMAP.md`; gate definition in `docs/specs/epic-1/spec.md`
+§ "Release Gate for v1.0.0";
 decision owners in `GOVERNANCE.md`).
 
 ## Orient (in this order, read nothing else first)

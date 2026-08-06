@@ -23,6 +23,18 @@ one roadmap item and drive it red → green → refactor.
    (`commit_lint`). `guard-commit` will refuse the commit unless the message is
    conventional, tests were staged, and a green receipt matches the current
    tree — so run the full suite immediately before committing.
+6. **Cite the fingerprint when fixing tracked debt.** If the issue your PR
+   closes carries a `fingerprint:` trailer (every clerk-filed review finding
+   does), cite that same fingerprint in a **commit message** of the PR —
+   and in this squash-only repo, verify at merge that the citation
+   survives into the **squash commit message** (branch-only commit
+   messages do not reach the default branch and do not count, #966) —
+   the Release Gate's close-laundering exemption
+   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0") accepts only
+   immutable evidence (a post-merge-editable PR body would let a no-op
+   close be laundered later). Forgot? Land a follow-up commit on the
+   default branch naming both the issue and the fingerprint — the
+   remediation path the spec defines.
 
 ## Fences (enforced, by design)
 

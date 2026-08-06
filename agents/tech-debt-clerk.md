@@ -15,12 +15,27 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
 2. Ask the connector which are already filed: `techdebt_audit` takes the
    findings plus the current open `tech-debt` issues and returns, by content
    **fingerprint**, which are missing. Never re-file one that already exists.
-3. Ensure the `tech-debt` label exists (create it if missing).
+3. Ensure the `tech-debt` and `gate:confirmed-high` labels exist (create
+   either if missing).
 4. For each missing finding, open a GitHub issue labeled `tech-debt` whose body
-   carries the required fields — **location** (`file:line`), **what it is and
+   carries the required fields — **location** (exactly one repo-relative
+   `file:line`, matching the Release Gate's anchored full-string grammar
+   in `docs/specs/epic-1/spec.md` — never multiple paths, ranges, or
+   prose suffixes; a non-conforming location makes the finding's close
+   block until #649 normalization, so conform at filing — the spec
+   governs on drift), **what it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
-   trailer line `fingerprint: <8-hex>` so the audit stays idempotent.
+   trailer line `fingerprint: <8-hex>` so the audit stays idempotent, and a
+   trailer line `source-pr: <number>` naming the PR whose review produced
+   the finding — the Release Gate's different-PR anti-self-certification
+   clause evaluates against this field, and a finding without it
+   fail-closes that exemption (spec § "Release Gate for v1.0.0").
+   **If the finding's verdict is CONFIRMED at high severity, also apply
+   `gate:confirmed-high`** — the Release Gate's anti-laundering floor
+   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0"). That label is
+   removed only when the finding's fix merges; re-triaging the issue's
+   `P0`–`P3` label never touches it.
 
 Use `techdebt_lint` to confirm a finding carries every required field before
 filing; if a field is missing, say so rather than filing an incomplete issue.

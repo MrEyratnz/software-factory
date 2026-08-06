@@ -22,6 +22,15 @@ Ambiguity rule: unknown fact → market-researcher researches; ambiguous
 priority → product owner decides; contested design → judge-panel. Log the
 decision and move.
 
+Joint-lane rule (gate/spec scope changes): a milestone-scope decision that
+changes gate or spec wording is authored across two lanes — the product
+owner writes the `docs/PRODUCT.md` rationale; the architect writes the
+spec/ARCHITECTURE/ADR text that expresses it (per the ADR requirement
+below). Both may land in one ADR-backed PR. A fenced agent's charter is
+never widened by that agent's own edit to its file — fence changes are
+architect-authored and recorded here or in the governing ADR, never only
+in the fenced charter itself.
+
 ## The board
 
 The board is an agent body — a **standing judge panel with a fixed roster**:

@@ -20,7 +20,9 @@ Conventional Commit, PR, review, merge — the box flips on merged-green.
    and `-C`/`cd` binding cases explicitly enumerated.
 
 3. **Coverage gate** (implementer; qa owns the threshold)
-   Line coverage over `hooks/scripts/**` via `bashcov`-style instrumentation
+   Line coverage over `hooks/scripts/**` and `hooks/lib/common.sh` (scope
+   per the Release Gate in `docs/specs/epic-1/spec.md` — the spec governs
+   on drift) via `bashcov`-style instrumentation
    or kcov (decision: cheapest tool that runs in CI — researcher confirms
    current options first). Threshold ≥95% enforced as a failing test in
    `tests/run-suite.sh`.

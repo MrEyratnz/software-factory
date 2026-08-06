@@ -4,7 +4,8 @@ Milestones are ordered; within a milestone, tasks are independent unless noted.
 The autonomous loop works this list top-to-bottom, TDD-first, keeping the full
 suite green at every commit. **An item is checked off only when its work merges
 with green tests — never in advance.** (The `guard-roadmap` gate enforces this.)
-Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
+Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`
+§ "Release Gate for v1.0.0".
 
 ## M0 — Foundation
 
@@ -33,8 +34,10 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 - [ ] Hook unit tests: stdin JSON fixtures per event type, exit-code and
   stderr-class (`[hard-boundary]` vs `[heuristic]`) assertions, matcher edge
   cases, forgery-guard cases, multi-repo `-C`/`cd` binding
-- [ ] Coverage threshold ≥95% lines on `hooks/scripts/**`, enforced as a
-  failing test in the suite
+- [ ] Coverage threshold ≥95% lines on `hooks/scripts/**` and
+  `hooks/lib/common.sh` (scope per the Release Gate in
+  `docs/specs/epic-1/spec.md` — the spec governs on drift), enforced as
+  a failing test in the suite
 - [ ] Behavioral evals: trigger evals per skill/command (8–10 should /
   8–10 near-miss shouldn't, ≥3 runs each, trigger-rate thresholds) via a
   headless `claude -p` harness, results to `factory-ops/qa/`
@@ -59,14 +62,25 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 ## M4 — v1.0.0 (milestone v1.0.0)
 
-- [ ] Release Gate script green: zero open `bug`/`tech-debt`, zero unresolved
-  review findings, v1.0.0 roadmap 100% merged-green, coverage + eval
-  thresholds green on `main` for 3 consecutive nightly runs
+- [ ] Tech-debt triage pass (#510) complete, satisfying the fail-closed
+  triage criterion exactly as defined in `docs/specs/epic-1/spec.md`
+  § "Release Gate for v1.0.0" (no restatement here — the spec governs) —
+  required because the Release Gate fails closed
+  on untriaged tech-debt (see the spec section below; ADR 0005)
+- [ ] Release Gate script green per the **single authoritative definition**
+  in `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" (ADR 0005) —
+  all criteria in that section as written there, feature-freeze check and
+  the CLOSED-state prerequisite criterion included (the canonical
+  prerequisite list lives in that criterion — no copy here)
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 
 ## M5 — Post-1.0 (milestone v1.1.0)
 
+- [ ] P2/P3 tech-debt burndown (non-security): work down the open non-security
+  `P2`/`P3` `tech-debt` deferred past the v1.0.0 gate (ADR 0005) — the named
+  deferral home, distinct from M3's security-hardening pass (which is
+  security-scoped and v1.0.0-scoped)
 - [ ] Feature-freeze overflow: `idea`/`research`/retro issues routed here by
   the product owner once the v1.0.0 gate is within one sprint of holding
 - [ ] OTEL traces/spans for the lights-out loop (beyond the shipped metrics-only MVP)
