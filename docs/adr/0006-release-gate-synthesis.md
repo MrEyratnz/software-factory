@@ -53,53 +53,27 @@ the M5 deferral home, and the coverage-floor widening to
 We will define the v1.0.0 Release Gate as a **thin current-state gate**
 with **pure, fixture-tested decision cores**, a **blocking-liveness
 nightly close auditor**, and **human custody over the gate's own trust
-anchors**. `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0"
-shrinks to a short normative statement of the criteria below plus
-pointers to the executable definitions; no other document restates the
-predicate (ADR 0005's single-copy rule stands).
+anchors**. `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" carries the
+single normative copy of the nine criteria (transcribed by this PR);
+no other document — this ADR included — restates the predicate
+(ADR 0005's single-copy rule stands).
 
-### D1 — The gate criteria (decision record; the single maintainable copy is `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0", transcribed by this same PR — the spec governs on divergence, per ADR 0005)
+### D1 — The gate criteria
 
-1. Zero open issues labeled `bug`.
-2. Zero open `tech-debt` issues currently labeled `P0` or `P1`
-   (most-severe governs when several `P0`–`P3` labels are present).
-3. Zero open issues labeled `security`, at any priority (ADR 0005's
-   cross-priority security precedence).
-4. Zero open `tech-debt` issues lacking a valid `P0`–`P3` label —
-   **fail-closed on untriaged**; legacy
-   `priority:*`/`high`/`medium`/`low` labels do not count (#510 clears
-   this).
-5. Zero open issues labeled `gate:confirmed-high` (clerk-applied at
-   filing time as a severity floor; the nightly auditor re-applies any
-   stripped floor label — see D4 — which is what makes a current-state
-   read safe here).
-6. **Auditor liveness (blocking):** a successful `close-audit` run
-   completed **within 24 hours** of the gate run, and the union of all
-   recorded audit windows covers **[2026-07-29, the end of that most
-   recent successful run's window] with no gaps** — the tail between
-   that run and gate time is bounded by the 24-hour freshness bound,
-   not an unreachable "no gaps to gate time" literalism that would fail
-   every daytime release after a midnight audit (#1137). A stale,
-   failed, or gappy auditor fails the gate. This is a standing
-   criterion evaluated at every gate run — never a one-time "deployed"
-   check.
-7. Mechanical artifact checks: coverage ≥95% lines on
-   `hooks/scripts/**`, `hooks/lib/common.sh`, and (new — see
-   Consequences) `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules via `cli.mjs`", #1144), measured at the exact SHA
-   `/ship` builds; three consecutive green `nightly-eval.yml` runs on
-   `main` (thresholds per #511); the single-line
-   `**Freeze state: ON**` marker in `docs/PRODUCT.md`; prerequisite
-   issues **#419, #420, #510, #511 closed** (canonical set — #649 is
-   rescoped, see D8); zero unresolved `.factory/review` findings; every
-   v1.0.0 roadmap item merged-green except M4's own two terminal boxes
-   (#527 carve-out).
-8. **Trust-anchor custody intact** (D5) and **one verified human
-   acknowledgment** (D6). Both are pass/fail criteria, not ceremonies.
-9. **Zero standing contested closes** (D4's parked bucket, #1142): an
-   issue the auditor reopened once and an agent re-closed counts here
-   until a human disposition or a qualifying fix close resolves it —
-   this is the criterion that makes close→reopen→re-close a blocking
-   state rather than an escape, wired into the gate itself.
+The **single maintainable copy of the nine criteria is
+`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0"** (transcribed
+there by this same PR; the spec governs on divergence, per ADR 0005's
+single-copy rule) — they are deliberately **not restated here** (#1170).
+What this ADR *decides* about them, beyond ADR 0005's scope:
+
+- criteria are **current-state only** (the close-audit protects history,
+  not a release-time timeline predicate);
+- **auditor liveness** and **zero standing contested closes** are
+  themselves blocking criteria (D4);
+- **trust-anchor custody** and **one verified human acknowledgment per
+  release** are pass/fail criteria, not ceremonies (D5, D6);
+- prerequisite issues #419, #420, #510, #511 enter as a CLOSED-state
+  check; #649 is rescoped into the auditor bootstrap (D8).
 
 ### D2 — Verdict vocabulary
 
@@ -153,8 +127,9 @@ not as release-time pass/fail predicates. Actions:
   never reopened again for the same event (no reopen wars) — but it
   becomes a **standing contested close**, and any nonzero
   standing-contested-close count is itself a **blocking gate
-  criterion** until a human disposition (via the signed ack's
-  disposition lane) or a qualifying fix close resolves it. Close →
+  criterion** until a human disposition (a pin-covered
+  `factory-ops/release/dispositions/<issue>.json` record — D5(d)
+  defines the lane, #1181) or a qualifying fix close resolves it. Close →
   auditor-reopen → re-close therefore parks an issue in a blocking
   bucket, never past the gate (#1124); it also lands in the report's
   **contested closes** section.
@@ -173,12 +148,25 @@ provide it.
 
 ### D5 — Custody of the gate's own trust anchors (the trust pin)
 
-**What is pinned:** SHA-256 digests of (a) the gate's code paths —
-`connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules via `cli.mjs`", #1144), `hooks/scripts/release-gate.sh`,
-`hooks/scripts/close-audit.sh`; (b) the fixture trees —
-`tests/fixtures/release-gate/**`; (c) the `## Human maintainers` section
-of `MAINTAINERS.md` (the roster hash); and (d) the disposal-allowlist
-files (D7).
+**What is pinned:** SHA-256 digests of (a) the gate's **entire verdict
+path** — `connector/src/release-gate/**` (a peer verdict module under
+`connector/src/`, admitted into ARCHITECTURE's layer table alongside
+`factory-core.mjs` — Rule 1 broadens to "verdicts come only from
+`connector/src` verdict modules via `cli.mjs`", #1144),
+`hooks/scripts/release-gate.sh`, `hooks/scripts/close-audit.sh`, **and
+the dispatch seams those scripts traverse: `connector/src/cli.mjs` and
+`hooks/lib/common.sh`** (#1169 — an unpinned shim on the execution path
+could short-circuit the verdict while every pinned module digest still
+matched); (b) the fixture trees — `tests/fixtures/release-gate/**`;
+(c) the `## Human maintainers` section of `MAINTAINERS.md` (the roster
+hash); and (d) the disposal-allowlist and **disposition** files (D7):
+contested-close dispositions live at
+`factory-ops/release/dispositions/<issue>.json`
+(`{ issue, disposition: fixed|not-a-defect|superseded|duplicate,
+rationale, gateReportHash }`), covered by the pin and readable by
+criterion 9 — this is the concretely-defined lane through which a
+human clears a standing contested close that has no defect to fix
+(#1181).
 
 **Where the pin lives:** `factory-ops/release/trust-pin.json` —
 `{ pinnedAtCommit, digests: {path → sha256}, rosterHash }` — on the

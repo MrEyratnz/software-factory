@@ -81,7 +81,10 @@ prerequisites) — no "not evaluable" meta-states.
    roadmap item merged-green except M4's own two terminal boxes.
 8. Trust-anchor custody intact and one verified human acknowledgment
    per release (ADR 0006 §§ D5–D6 define both mechanically).
-9. Zero standing contested closes (ADR 0006 § D4's parked bucket).
+9. Zero standing contested closes (ADR 0006 § D4's parked bucket;
+   cleared by a qualifying fix close or a human disposition record at
+   `factory-ops/release/dispositions/<issue>.json`, pin-covered per
+   ADR 0006 § D5).
 
 Then `/ship` on the release branch — never from red, release-proof
 minted on the built artifact.
