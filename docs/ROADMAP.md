@@ -59,9 +59,8 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 ## M4 — v1.0.0 (milestone v1.0.0)
 
-- [ ] Release Gate script green: zero open `bug`/`tech-debt`, zero unresolved
-  review findings, v1.0.0 roadmap 100% merged-green, coverage + eval
-  thresholds green on `main` for 3 consecutive nightly runs
+- [ ] Release Gate script green per ADR 0006 § D1 (the nine criteria,
+  scoped per ADR 0005 — no restatement here; the ADR governs)
 - [ ] `/ship` v1.0.0 from the release branch (proof minted on the built
   artifact)
 

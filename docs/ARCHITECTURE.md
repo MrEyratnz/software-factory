@@ -36,7 +36,7 @@ docs/adr/        numbered decisions (the default adrDir); tests/ hermetic hook c
 
 | Layer | Owns | May depend on |
 |---|---|---|
-| `connector/src/factory-core.mjs` | every rule *verdict* (roadmap, commit lint, gates, release plan, tech-debt audit) as pure functions — no I/O, clock, or randomness | nothing |
+|  `connector/src/factory-core.mjs` (+ per-domain peer verdict modules such as `connector/src/release-gate/` — ADR 0006) | every rule *verdict* (roadmap, commit lint, gates, release plan, tech-debt audit) as pure functions — no I/O, clock, or randomness | nothing |
 | `connector/src/server.mjs` (MCP) / `cli.mjs` | read-only tool exposure over stdio; the shell bridge hooks and CI call | factory-core, node stdlib |
 | `hooks/lib` | event-JSON plumbing (`common.sh`), quote-aware parsers, OTEL emit | node stdlib, `cli.mjs` |
 | `hooks/scripts` | allow/deny decisions at tool-use time (exit 0 / exit 2) | `hooks/lib`, `cli.mjs`, git, POSIX sh |
@@ -47,7 +47,7 @@ docs/adr/        numbered decisions (the default adrDir); tests/ hermetic hook c
 
 Rules (each one enforced, not aspirational):
 
-1. **Verdicts come only from factory-core.** Hooks call it via `cli.mjs`
+1. **Verdicts come only from `connector/src` verdict modules** (factory-core and its per-domain peers — ADR 0006 broadened this rule to admit `release-gate/`). Hooks call them via `cli.mjs`
    (`fc …` in `common.sh`); the MCP read path and the enforcement path share
    one implementation and can never disagree.
 2. **The connector never mutates.** `server.mjs` reads files to feed the pure
@@ -123,11 +123,11 @@ committed at `docs/adr/0006-panel/`) **will be** a thin current-state
 gate with pure, fixture-tested decision cores and human-pinned trust
 anchors. None of the following exists yet on this SHA — it is the
 M4 build obligation this section specifies, not a description of built
-infrastructure. Per Rule 1 below, the pure `decide(evidence)` gate core
-and the nightly auditor's `closeLegitimacy` predicate join
-**factory-core** (the single home of rule verdicts — ADR 0006's
-`release-gate` module is a logical seam inside it, exposed to scripts
-via `cli.mjs` like every other verdict), regression-locked by fixtures
+infrastructure. Per Rule 1 above (broadened by ADR 0006), the pure
+`decide(evidence)` gate core and the nightly auditor's
+`closeLegitimacy` predicate form the **`release-gate` verdict module —
+a peer of `factory-core.mjs` under `connector/src/`**, exposed to
+scripts via `cli.mjs` like every other verdict, regression-locked by fixtures
 recorded from real collector output under
 `tests/fixtures/release-gate/`. A nightly `close-audit` workflow
 detects and repairs laundered closes, and its liveness is itself a

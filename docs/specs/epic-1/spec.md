@@ -46,11 +46,12 @@ receipt/commit contract enforces them forever.
       layer 3
 - [ ] Three consecutive nightly runs green on `main` (feeds the Release Gate)
 
-## Release Gate for v1.0.0 (decidable, no judgment calls)
+## Release Gate for v1.0.0
 
-All of, verified by the release manager in one script: zero open `bug` or
-`tech-debt` issues at any priority; zero unresolved `.factory/review` findings
-(debt-reconcile clean); v1.0.0 roadmap items 100% merged-green; coverage and
-eval thresholds green on `main` for 3 consecutive nightly runs; feature freeze
-per `docs/PRODUCT.md`. Then `/ship` on the release branch — never from red,
-release-proof minted on the built artifact.
+**Superseded by ADR 0006** (`docs/adr/0006-release-gate-synthesis.md`
+§ D1, the sprint-4 board decision) — the criteria are ADR 0006's nine,
+scoped per ADR 0005; the literal-zero wording that previously lived
+here is no longer the gate. PR #444 conforms this section's full text;
+until it lands, ADR 0006 governs on any divergence. `/ship` remains the
+only release path — never from red, release-proof minted on the built
+artifact.

@@ -9,7 +9,7 @@ adversarial review rounds while open tech-debt went 289 → 754 in six days
 (~2.6x manufacture-vs-resolve — the sprint-4 headline finding, #980,
 recorded in `docs/PRODUCT.md`). The sprint-4 plan froze ordinary review
 rounds on #444 and routed the contested gate design to a judge panel
-(the ADR-0009 method). Three stance-pinned proposals
+(the judge-panel method: stance-pinned proposals, adversarial ballots, synthesized ADR). Three stance-pinned proposals
 (committed as the record of decision at `docs/adr/0006-panel/proposal-*.json`; originals were produced under the gitignored `.factory/panel/` working dir)
 were judged by three adversarial panelists
 (`docs/adr/0006-panel/ballot-*.json`, committed alongside).
@@ -42,7 +42,7 @@ fixtures unless they are actually recorded).
 The one real laundering incident on record (#120: falsely closed
 `completed` for a week) was healed by a single reopen — evidence that
 detection-and-repair protects every day, while a release-time predicate
-protects one instant. ADR 0005 (in flight on PR #444,
+protects one instant. ADR 0005 (carried in THIS PR so the normative chain exists at merge — PR #444 subsequently conforms only the spec and PRODUCT.md,
 `docs/adr/0005-m4-tech-debt-gate-scope.md`) already settled the gate's
 *scope*: fail-closed triage, security precedence across priority levels,
 the M5 deferral home, and the coverage-floor widening to
@@ -85,7 +85,7 @@ predicate (ADR 0005's single-copy rule stands).
    check.
 7. Mechanical artifact checks: coverage ≥95% lines on
    `hooks/scripts/**`, `hooks/lib/common.sh`, and (new — see
-   Consequences) `connector/src/release-gate/**` (the release-gate module inside factory-core, per ARCHITECTURE Rule 1), measured at the exact SHA
+   Consequences) `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules via `cli.mjs`", #1144), measured at the exact SHA
    `/ship` builds; three consecutive green `nightly-eval.yml` runs on
    `main` (thresholds per #511); the single-line
    `**Freeze state: ON**` marker in `docs/PRODUCT.md`; prerequisite
@@ -95,6 +95,11 @@ predicate (ADR 0005's single-copy rule stands).
    (#527 carve-out).
 8. **Trust-anchor custody intact** (D5) and **one verified human
    acknowledgment** (D6). Both are pass/fail criteria, not ceremonies.
+9. **Zero standing contested closes** (D4's parked bucket, #1142): an
+   issue the auditor reopened once and an agent re-closed counts here
+   until a human disposition or a qualifying fix close resolves it —
+   this is the criterion that makes close→reopen→re-close a blocking
+   state rather than an escape, wired into the gate itself.
 
 ### D2 — Verdict vocabulary
 
@@ -108,7 +113,7 @@ criterion is evaluable on day one, some as `BLOCKED`.
 The gate's `decide(evidence) → verdict` core and the auditor's
 `closeLegitimacy(closeEvidence) → legitimate | illegitimate | contested`
 predicate are **pure reference implementations** in
-the `release-gate` module inside factory-core (`connector/src/release-gate/`, no I/O, no clock, no env — Rule 1: verdicts come only from factory-core, exposed to scripts via `cli.mjs`), fed by a thin
+the `release-gate` verdict module, a peer of `factory-core.mjs` under `connector/src/` (`connector/src/release-gate/`, no I/O, no clock, no env; exposed to scripts via `cli.mjs` like every verdict — Rule 1 broadened per this ADR), fed by a thin
 evidence collector that is the only component touching the network.
 `tests/fixtures/release-gate/` holds one fixture per adversarial
 scenario, named for the review finding that motivated it; the fixture
@@ -169,7 +174,7 @@ provide it.
 ### D5 — Custody of the gate's own trust anchors (the trust pin)
 
 **What is pinned:** SHA-256 digests of (a) the gate's code paths —
-`connector/src/release-gate/**` (the release-gate module inside factory-core, per ARCHITECTURE Rule 1), `hooks/scripts/release-gate.sh`,
+`connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules via `cli.mjs`", #1144), `hooks/scripts/release-gate.sh`,
 `hooks/scripts/close-audit.sh`; (b) the fixture trees —
 `tests/fixtures/release-gate/**`; (c) the `## Human maintainers` section
 of `MAINTAINERS.md` (the roster hash); and (d) the disposal-allowlist
@@ -324,6 +329,11 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
 
 ## Consequences
 
+- **Decision owner: architect** (gate *mechanism* — this ADR's subject;
+  the board synthesis is architect-lane work per GOVERNANCE.md), with
+  the **product-owner** owning gate *scope* per ADR 0005, and the panel
+  artifacts at `docs/adr/0006-panel/` as the review of record. Convened
+  by the conductor under the sprint-4 plan's board directive.
 - **Easier:** the gate becomes implementable this sprint (search-API
   queries + file checks + two small pure modules); every criterion is
   evaluable day one; disputes about gate semantics terminate in a red or
@@ -339,7 +349,7 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
   (branch protection permitting roster humans to push; the gate rejects
   any pin-chain commit touching unsanctioned paths). The auditor is now
   release-critical infrastructure with a liveness SLO.
-- **Coverage floor widens** to `connector/src/release-gate/**` (the release-gate module inside factory-core, per ARCHITECTURE Rule 1) and the two
+- **Coverage floor widens** to `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules via `cli.mjs`", #1144) and the two
   new scripts (`release-gate.sh`, `close-audit.sh`) — recorded here per
   the ADR 0005 precedent; qa owns the threshold.
 - **Accepted residual risks, stated:** a laundered close can be
@@ -362,4 +372,4 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
   fixtures; auditor; `/ship` wiring); the #649 rescope note on that
   issue; the D7 one-time disposition pass; branch-protection
   configuration for the direct-push lane; ARCHITECTURE.md reflects the
-  new `connector/src/release-gate/` seam (factory-core, Rule 1) in the same PR as this ADR.
+  new `connector/src/release-gate/` seam (peer verdict module, Rule 1 as broadened by ADR 0006) in the same PR as this ADR.
