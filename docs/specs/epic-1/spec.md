@@ -59,14 +59,18 @@ prerequisites) — no "not evaluable" meta-states.
 1. Zero open issues labeled `bug`.
 2. Zero open `tech-debt` issues currently labeled `P0` or `P1`
    (most-severe governs when several `P0`–`P3` labels are present).
-3. Zero open issues labeled `security`, at any priority (ADR 0005's
-   cross-priority security precedence).
+3. Zero open issues that have **ever carried** `security` (timeline
+   membership computed at gate time — a label stripped an hour before
+   the gate must not create a pass window the nightly auditor has not
+   yet repaired, #1190), at any priority (ADR 0005's cross-priority
+   security precedence).
 4. Zero open `tech-debt` issues lacking a valid `P0`–`P3` label —
    fail-closed on untriaged; legacy `priority:*`/`high`/`medium`/`low`
    labels do not count (#510 clears this).
-5. Zero open issues labeled `gate:confirmed-high` (clerk-applied floor;
-   the nightly auditor re-applies any stripped floor label, which is
-   what makes a current-state read safe).
+5. Zero open issues that have **ever carried** `gate:confirmed-high`
+   (clerk-applied floor; timeline membership at gate time, same
+   rationale as criterion 3 — the auditor's re-application is repair
+   hygiene, not the safety mechanism, #1190).
 6. Auditor liveness: a successful `close-audit` run within 24 hours of
    the gate run, with recorded audit windows covering [2026-07-29, the
    end of that run's window] gapless; the tail to gate time is bounded

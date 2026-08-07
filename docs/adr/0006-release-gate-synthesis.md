@@ -111,8 +111,12 @@ a human re-pins it (D5).
 
 ### D4 — Close-auditing is a nightly repair job with an executable legitimacy predicate
 
-A nightly `close-audit` workflow scans every close since its last run
-(since 2026-07-29 on the bootstrap run) of issues that carry **or ever
+A nightly `close-audit` workflow scans every close **and every
+floor-label removal event on open issues** (`gate:confirmed-high`,
+`security`, `bug` unlabel events — a strip on a still-open issue is no
+close, and the criterion-5 safety story depends on catching it,
+#1195) since its last run
+(the bootstrap run sweeps the FULL issue history from repo creation once — a gate-relevant issue laundered before 2026-07-29 must not be permanently invisible, #1191; steady-state runs scan since their predecessor) of issues that carry **or ever
 carried** `bug`/`tech-debt`/`security`/`gate:confirmed-high` — the
 ever-carried timeline algebra, interval-computed P0/P1 presence
 (#887/#922), duplicate-chain resolution with floor inheritance (#939),
@@ -149,15 +153,22 @@ provide it.
 ### D5 — Custody of the gate's own trust anchors (the trust pin)
 
 **What is pinned:** SHA-256 digests of (a) the gate's **entire verdict
-path** — `connector/src/release-gate/**` (a peer verdict module under
-`connector/src/`, admitted into ARCHITECTURE's layer table alongside
-`factory-core.mjs` — Rule 1 broadens to "verdicts come only from
-`connector/src` verdict modules via `cli.mjs`", #1144),
-`hooks/scripts/release-gate.sh`, `hooks/scripts/close-audit.sh`, **and
-the dispatch seams those scripts traverse: `connector/src/cli.mjs` and
-`hooks/lib/common.sh`** (#1169 — an unpinned shim on the execution path
-could short-circuit the verdict while every pinned module digest still
-matched); (b) the fixture trees — `tests/fixtures/release-gate/**`;
+path, made entirely self-contained so no shared unpinned seam exists on
+it** (#1169, #1194): `connector/src/release-gate/**` (a peer verdict
+module under `connector/src/`, admitted into ARCHITECTURE's layer table
+alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only
+from `connector/src` verdict modules", #1144) **including its own thin
+dispatcher `connector/src/release-gate/dispatch.mjs`** — the pinned
+entry scripts `hooks/scripts/release-gate.sh` /
+`hooks/scripts/close-audit.sh` invoke `node` directly on the pinned
+dispatcher, never through the shared `cli.mjs`/`common.sh` (which stay
+UNPINNED precisely so routine churn in shared libraries cannot couple
+every maintenance PR to a human re-pin and manufacture rubber-stamp
+fatigue) — **and the evidence collector
+`hooks/scripts/release-gate-collect.sh`**, the one network-touching
+component (the seam all three panel ballots named: an unpinned
+collector could feed a faithful pinned decide() a fabricated
+zero-count evidence file); (b) the fixture trees — `tests/fixtures/release-gate/**`;
 (c) the `## Human maintainers` section of `MAINTAINERS.md` (the roster
 hash); and (d) the disposal-allowlist and **disposition** files (D7):
 contested-close dispositions live at
