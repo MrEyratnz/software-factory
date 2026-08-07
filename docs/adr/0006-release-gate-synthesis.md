@@ -1,6 +1,6 @@
 # ADR 0006 — v1.0.0 Release Gate: thin current-state gate, fixture-tested cores, human-pinned trust anchors
 
-Status: proposed · Date: 2026-08-06
+Status: accepted · Date: 2026-08-06
 
 ## Context
 
@@ -10,9 +10,9 @@ adversarial review rounds while open tech-debt went 289 → 754 in six days
 recorded in `docs/PRODUCT.md`). The sprint-4 plan froze ordinary review
 rounds on #444 and routed the contested gate design to a judge panel
 (the ADR-0009 method). Three stance-pinned proposals
-(`.factory/panel/proposal-{contract-first,security-first,dx-first}.json`)
+(committed as the record of decision at `docs/adr/0006-panel/proposal-*.json`; originals were produced under the gitignored `.factory/panel/` working dir)
 were judged by three adversarial panelists
-(`.factory/panel/ballot-{correctness-security,implementability,product-operability}.json`).
+(`docs/adr/0006-panel/ballot-*.json`, committed alongside).
 Every proposal drew a CONFIRMED fatal flaw on every axis — nine confirmed
 flaws in total — yet the three ballots' `best_spine` fields converge on
 the same synthesis:
@@ -75,13 +75,17 @@ predicate (ADR 0005's single-copy rule stands).
    read safe here).
 6. **Auditor liveness (blocking):** a successful `close-audit` run
    completed **within 24 hours** of the gate run, and the union of all
-   recorded audit windows covers **[2026-07-29, gate time] with no
-   gaps**. A stale, failed, or gappy auditor fails the gate. This is a
-   standing criterion evaluated at every gate run — never a one-time
-   "deployed" check.
+   recorded audit windows covers **[2026-07-29, the end of that most
+   recent successful run's window] with no gaps** — the tail between
+   that run and gate time is bounded by the 24-hour freshness bound,
+   not an unreachable "no gaps to gate time" literalism that would fail
+   every daytime release after a midnight audit (#1137). A stale,
+   failed, or gappy auditor fails the gate. This is a standing
+   criterion evaluated at every gate run — never a one-time "deployed"
+   check.
 7. Mechanical artifact checks: coverage ≥95% lines on
    `hooks/scripts/**`, `hooks/lib/common.sh`, and (new — see
-   Consequences) `hooks/lib/release-gate/**`, measured at the exact SHA
+   Consequences) `connector/src/release-gate/**` (the release-gate module inside factory-core, per ARCHITECTURE Rule 1), measured at the exact SHA
    `/ship` builds; three consecutive green `nightly-eval.yml` runs on
    `main` (thresholds per #511); the single-line
    `**Freeze state: ON**` marker in `docs/PRODUCT.md`; prerequisite
@@ -104,7 +108,7 @@ criterion is evaluable on day one, some as `BLOCKED`.
 The gate's `decide(evidence) → verdict` core and the auditor's
 `closeLegitimacy(closeEvidence) → legitimate | illegitimate | contested`
 predicate are **pure reference implementations** in
-`hooks/lib/release-gate/` (no I/O, no clock, no env), fed by a thin
+the `release-gate` module inside factory-core (`connector/src/release-gate/`, no I/O, no clock, no env — Rule 1: verdicts come only from factory-core, exposed to scripts via `cli.mjs`), fed by a thin
 evidence collector that is the only component touching the network.
 `tests/fixtures/release-gate/` holds one fixture per adversarial
 scenario, named for the review finding that motivated it; the fixture
@@ -141,8 +145,14 @@ not as release-time pass/fail predicates. Actions:
 - `illegitimate` close (e.g. `not planned` on gate-relevant work; a
   floor label stripped from an open issue) → **reopen once per close
   event** with a comment / re-apply the label. A re-closed issue is
-  never reopened again for the same event; its second close lands in
-  the report's **contested closes** section.
+  never reopened again for the same event (no reopen wars) — but it
+  becomes a **standing contested close**, and any nonzero
+  standing-contested-close count is itself a **blocking gate
+  criterion** until a human disposition (via the signed ack's
+  disposition lane) or a qualifying fix close resolves it. Close →
+  auditor-reopen → re-close therefore parks an issue in a blocking
+  bucket, never past the gate (#1124); it also lands in the report's
+  **contested closes** section.
 - `contested` close (e.g. a merged closing PR whose diff fails the
   fingerprint/location bindings — the "Fixes #X on an unrelated PR"
   laundering shape) → reopened once, and if re-closed, surfaced as
@@ -159,7 +169,7 @@ provide it.
 ### D5 — Custody of the gate's own trust anchors (the trust pin)
 
 **What is pinned:** SHA-256 digests of (a) the gate's code paths —
-`hooks/lib/release-gate/**`, `hooks/scripts/release-gate.sh`,
+`connector/src/release-gate/**` (the release-gate module inside factory-core, per ARCHITECTURE Rule 1), `hooks/scripts/release-gate.sh`,
 `hooks/scripts/close-audit.sh`; (b) the fixture trees —
 `tests/fixtures/release-gate/**`; (c) the `## Human maintainers` section
 of `MAINTAINERS.md` (the roster hash); and (d) the disposal-allowlist
@@ -190,12 +200,21 @@ touches paths outside the sanctioned set.
    human re-pins**, having reviewed the diff-since-last-pin that the
    gate report lists (the custody section). A weakened predicate cannot
    green a release by greening its own tests.
-2. Walk the commit history of `trust-pin.json`: **every** commit
-   touching it must have GitHub signature verification state `VALID`,
-   `signature.signer.login` (never the settable author/committer email,
-   #1080) on the roster whose hash the pin itself carries, author =
-   committer = signer, a non-merge commit not associated with any
-   merged PR, and a sanctioned-paths-only diff. Any violation → FAIL.
+2. Walk the commit history of `trust-pin.json` **from the most recent
+   epoch anchor forward** — the epoch anchor is the newest commit
+   touching the pin that satisfies all custody properties below; only
+   commits AFTER it are audited. This makes the walk unbrickable
+   (#1123): a violating commit (a stray squash-merge, an innocent
+   codemod) fails the gate only until the human pushes a fresh
+   epoch-anchoring re-pin that supersedes it — history before an epoch
+   is out of scope by construction, and the epoch commit itself proves
+   human review of everything it pins. Custody properties: GitHub
+   signature verification state `VALID`, `signature.signer.login`
+   (never the settable author/committer email, #1080) on the roster
+   whose hash the pin itself carries, author = committer = signer, a
+   non-merge commit not associated with any merged PR, and a
+   sanctioned-paths-only diff. Any post-epoch violation → FAIL until
+   re-pinned.
 3. The live `## Human maintainers` section's hash equals the pin's
    `rosterHash` → otherwise FAIL. Roster changes ride the same re-pin
    mechanism; the unsatisfiable MAINTAINERS.md-history signature walk
@@ -320,7 +339,7 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
   (branch protection permitting roster humans to push; the gate rejects
   any pin-chain commit touching unsanctioned paths). The auditor is now
   release-critical infrastructure with a liveness SLO.
-- **Coverage floor widens** to `hooks/lib/release-gate/**` and the two
+- **Coverage floor widens** to `connector/src/release-gate/**` (the release-gate module inside factory-core, per ARCHITECTURE Rule 1) and the two
   new scripts (`release-gate.sh`, `close-audit.sh`) — recorded here per
   the ADR 0005 precedent; qa owns the threshold.
 - **Accepted residual risks, stated:** a laundered close can be
@@ -343,4 +362,4 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
   fixtures; auditor; `/ship` wiring); the #649 rescope note on that
   issue; the D7 one-time disposition pass; branch-protection
   configuration for the direct-push lane; ARCHITECTURE.md reflects the
-  new `hooks/lib/release-gate/` seam in the same PR as this ADR.
+  new `connector/src/release-gate/` seam (factory-core, Rule 1) in the same PR as this ADR.

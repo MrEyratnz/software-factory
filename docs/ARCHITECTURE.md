@@ -117,23 +117,30 @@ GitHub alone:
 
 ## The v1.0.0 release gate (ADR 0006)
 
-The Release Gate is a thin current-state gate with pure, fixture-tested
-decision cores and human-pinned trust anchors — decided by the sprint-4
-judge-panel board session (ADR 0006,
-`docs/adr/0006-release-gate-synthesis.md`; panel artifacts under
-`.factory/panel/`). `hooks/lib/release-gate/` holds the pure
-`decide(evidence)` gate core and the nightly auditor's `closeLegitimacy`
-predicate, regression-locked by fixtures recorded from real collector
-output under `tests/fixtures/release-gate/`. A nightly `close-audit`
-workflow detects and repairs laundered closes, and its liveness is itself
-a blocking gate criterion. The gate's own code, fixtures, roster hash,
+The Release Gate (decided by the sprint-4 judge-panel board session —
+ADR 0006, `docs/adr/0006-release-gate-synthesis.md`; panel artifacts
+committed at `docs/adr/0006-panel/`) **will be** a thin current-state
+gate with pure, fixture-tested decision cores and human-pinned trust
+anchors. None of the following exists yet on this SHA — it is the
+M4 build obligation this section specifies, not a description of built
+infrastructure. Per Rule 1 below, the pure `decide(evidence)` gate core
+and the nightly auditor's `closeLegitimacy` predicate join
+**factory-core** (the single home of rule verdicts — ADR 0006's
+`release-gate` module is a logical seam inside it, exposed to scripts
+via `cli.mjs` like every other verdict), regression-locked by fixtures
+recorded from real collector output under
+`tests/fixtures/release-gate/`. A nightly `close-audit` workflow
+detects and repairs laundered closes, and its liveness is itself a
+blocking gate criterion. The gate's own code, fixtures, roster hash,
 and disposal allowlists are pinned in
-`factory-ops/release/trust-pin.json`, updatable only by a directly-pushed
-human-signed commit — gate-code changes merge autonomously but take
-release effect only after a human re-pin, and every release carries
-exactly one verified human acknowledgment of the canonical
-`gate-report.json`. Normative criteria: `docs/specs/epic-1/spec.md`
-§ "Release Gate for v1.0.0".
+`factory-ops/release/trust-pin.json`, updatable only by a
+directly-pushed human-signed commit — gate-code changes merge
+autonomously but take release effect only after a human re-pin, and
+every release carries exactly one verified human acknowledgment of the
+canonical `gate-report.json`. Normative criteria: **ADR 0006 § D1**
+until PR #444 conforms `docs/specs/epic-1/spec.md` § "Release Gate for
+v1.0.0" to it (that section predates the board decision until then;
+ADR 0006 governs on any divergence).
 
 ## Structural safety invariants
 
