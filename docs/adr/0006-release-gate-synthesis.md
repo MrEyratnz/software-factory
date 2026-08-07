@@ -5,7 +5,7 @@ Status: accepted · Date: 2026-08-06
 ## Context
 
 PR #444's Release Gate section grew to ~280 normative lines over 26
-adversarial review rounds while open tech-debt went 289 → 754 in six days
+adversarial review rounds while open tech-debt went 289 (sprint-2 review count; the dated 2026-07-29 label snapshot in ADR 0005 reads 273 — different query surfaces, both recorded) → 754 in six days
 (~2.6x manufacture-vs-resolve — the sprint-4 headline finding, #980,
 recorded in `docs/PRODUCT.md`). The sprint-4 plan froze ordinary review
 rounds on #444 and routed the contested gate design to a judge panel
@@ -15,7 +15,7 @@ were judged by three adversarial panelists
 (`docs/adr/0006-panel/ballot-*.json`, committed alongside).
 Every proposal drew a CONFIRMED fatal flaw on every axis — nine confirmed
 flaws in total — yet the three ballots' `best_spine` fields converge on
-the same synthesis:
+complementary synthesis elements (two ballots name dx-first's backbone as strongest, one names security-first's custody principle — the synthesis takes both):
 
 - **dx-first's backbone** — a small current-state gate plus ONE verified
   human acknowledgment per release — is the only shape with demonstrated
@@ -58,7 +58,7 @@ shrinks to a short normative statement of the criteria below plus
 pointers to the executable definitions; no other document restates the
 predicate (ADR 0005's single-copy rule stands).
 
-### D1 — The gate criteria (all over current state, fully paginated)
+### D1 — The gate criteria (decision record; the single maintainable copy is `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0", transcribed by this same PR — the spec governs on divergence, per ADR 0005)
 
 1. Zero open issues labeled `bug`.
 2. Zero open `tech-debt` issues currently labeled `P0` or `P1`

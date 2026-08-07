@@ -137,10 +137,11 @@ and disposal allowlists are pinned in
 directly-pushed human-signed commit — gate-code changes merge
 autonomously but take release effect only after a human re-pin, and
 every release carries exactly one verified human acknowledgment of the
-canonical `gate-report.json`. Normative criteria: **ADR 0006 § D1**
-until PR #444 conforms `docs/specs/epic-1/spec.md` § "Release Gate for
-v1.0.0" to it (that section predates the board decision until then;
-ADR 0006 governs on any divergence).
+canonical `gate-report.json`. Normative criteria:
+`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" — the single
+maintainable copy per ADR 0005's rule, transcribed there by the same PR
+that landed this ADR; **the spec governs on any divergence**, with
+ADR 0006 recording the mechanism decision behind it.
 
 ## Structural safety invariants
 
