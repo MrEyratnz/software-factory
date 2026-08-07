@@ -47,7 +47,12 @@ jobs:
       # files, which means reading this run's job logs (`gh run view --log`).
       actions: read
     uses: ./.github/workflows/claude-session.yml
-    secrets: inherit
+    # Trusted, scheduled/dispatch station: needs the FACTORY_PAT fallback the
+    # same as every other trusted caller (#120).
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
     with:
       station: nightly-eval
       environment: qa
