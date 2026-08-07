@@ -277,6 +277,51 @@ test('techdebtAudit: a filed issue with a WRONG (hand-derived) fingerprint is re
   assert.deepEqual(audit.missing[0].staleIssue, m.staleIssue);
 });
 
+// Regression for #1056: findStaleIssue used an unanchored substring test, so
+// an unfiled finding at "src/a.ts:1" matched a correctly-filed issue about
+// "src/a.ts:10" (":1" is a substring of ":10") and got misdiagnosed as a
+// stale/hand-derived duplicate of that unrelated issue — which would make
+// debt-reconcile instruct the clerk to overwrite a GOOD issue's fingerprint
+// trailer and never file the real finding. The location match must be
+// anchored on a file:line token boundary.
+test('techdebtAudit: prefix collision — unfiled finding at file.ts:1 is not mismatched against an unrelated issue about file.ts:10', () => {
+  const filedFinding = { location: 'server.ts:42', impact: 'unrelated, correctly-filed bug' };
+  const filedFp = fingerprintFinding(filedFinding);
+  const openIssues = [{
+    title: 'unrelated bug',
+    body: `Location: server.ts:42\n\nfingerprint: ${filedFp}`,
+  }];
+
+  const unfiledFinding = { location: 'server.ts:4', impact: 'a completely different problem' };
+  const audit = techdebtAudit([unfiledFinding], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.mismatched.length, 0); // must be reported as plain missing, not mismatched
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
+// Regression for #1056: two distinct findings at the SAME file:line (routine
+// for a 3-lens panel — a line can have more than one problem) must not cause
+// the unfiled one to be flagged "mismatched" against the other's correctly
+// filed issue just because they share a location.
+test('techdebtAudit: same-location collision — a correctly-filed sibling finding does not mark another finding at the same line as mismatched', () => {
+  const findingA = { location: 'src/payments/charge.ts:88', impact: 'double-charges on retry' };
+  const findingB = { location: 'src/payments/charge.ts:88', impact: 'also leaks a DB connection' };
+  const fpA = fingerprintFinding(findingA);
+
+  const openIssues = [{
+    title: 'double-charge risk on retry',
+    body: `Location: src/payments/charge.ts:88\nImpact: double-charges on retry\n\nfingerprint: ${fpA}`,
+  }];
+
+  const audit = techdebtAudit([findingA, findingB], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.missing[0].finding.impact, 'also leaks a DB connection');
+  assert.equal(audit.mismatched.length, 0); // B is genuinely unfiled, not a stale duplicate of A's issue
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
 // A finding correctly filed with the CANONICAL fingerprint (i.e. the clerk
 // followed the fixed instructions and copied techdebt_lint's output verbatim)
 // must reconcile cleanly on a re-run — no mismatch flagged, no duplicate.

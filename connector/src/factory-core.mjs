@@ -172,6 +172,21 @@ function fnv1a(str) {
 
 const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * True if `loc` (an already-`norm`-ed "file:line") appears in `hay` as a
+ * whole location token, not as a substring of a longer one — "server.ts:4"
+ * must NOT match inside "server.ts:42". Guards both edges: the char after
+ * the match can't extend the line number, and the char before can't be part
+ * of a longer path segment feeding into it.
+ */
+const hasLocationToken = (hay, loc) => {
+  if (!loc) return false;
+  const re = new RegExp(`(?:^|[^a-z0-9_])${escapeRegExp(loc)}(?!\\d)`);
+  return re.test(hay);
+};
+
 /**
  * A finding's identity is its location + the invariant substance of the
  * problem (impact), NOT its wording of a title (which a re-review may reword).
@@ -257,16 +272,26 @@ export function extractFingerprint(issue) {
  * Surfacing it distinctly lets a caller fail loud with the exact expected
  * value ("issue #443 says deadbeef, should be 1a2b3c4d") instead of silently
  * reporting "still missing" and inviting a duplicate filing.
+ * A same-location false positive is still possible even with an anchored
+ * match: a 3-lens panel routinely finds more than one problem on the same
+ * line, and each gets its own fingerprint (location+impact). `siblingFps`
+ * — every canonical fingerprint among THIS session's findings — lets us
+ * recognize when the co-located issue is already correctly filed for one of
+ * those *other* findings, so it isn't misread as a stale/hand-derived
+ * trailer for the current one.
+ * @param {Set<string>} siblingFps
  * @returns {{title:string|null, fingerprint:string|null}|null}
  */
-function findStaleIssue(finding, issues, canonicalFp) {
+function findStaleIssue(finding, issues, canonicalFp, siblingFps) {
   const loc = norm(finding && finding.location);
   if (!loc) return null;
   const hit = issues.find((iss) => {
     const hay = norm(`${iss?.title ?? ''}\n${iss?.body ?? ''}`);
-    if (!hay.includes(loc)) return false;
+    if (!hasLocationToken(hay, loc)) return false;
     const staleFp = extractFingerprint(iss);
-    return Boolean(staleFp) && staleFp !== canonicalFp;
+    if (!staleFp || staleFp === canonicalFp) return false;
+    if (siblingFps.has(staleFp)) return false; // correctly filed for a different finding
+    return true;
   });
   if (!hit) return null;
   return { title: hit.title ?? null, fingerprint: extractFingerprint(hit) };
@@ -286,6 +311,7 @@ export function techdebtAudit(findings, openIssues) {
   const list = Array.isArray(findings) ? findings : [];
   const issues = Array.isArray(openIssues) ? openIssues : [];
   const filedSet = new Set(issues.map(extractFingerprint).filter(Boolean));
+  const siblingFps = new Set(list.map(fingerprintFinding));
 
   const all = [];
   const missing = [];
@@ -298,7 +324,7 @@ export function techdebtAudit(findings, openIssues) {
       all.push({ fingerprint: fp, filed: isFiled });
       seen.add(fp);
       if (!isFiled) {
-        const staleIssue = findStaleIssue(finding, issues, fp);
+        const staleIssue = findStaleIssue(finding, issues, fp, siblingFps);
         const entry = { fingerprint: fp, finding, staleIssue };
         missing.push(entry);
         if (staleIssue) mismatched.push(entry);
