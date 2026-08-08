@@ -98,8 +98,10 @@ the gate exists to forbid, #964/#969.)
 - The gate stays decidable with no judgment calls, across three mechanical
   bucket kinds: label queries over **open** issues (including the
   anti-laundering floor via the clerk-applied `gate:confirmed-high`
-  label), the close-laundering query over **closed** issues
-  (`stateReason` + merged-PR cross-reference, spec-defined), and the
+  label), closed-issue laundering detection — **moved by ADR 0006 § D1
+  to the nightly close-audit workflow**, whose liveness and standing
+  contested-close bucket the gate consumes as criteria 6 and 9 instead
+  of running its own closed-issue query at gate time — and the
   artifact checks (coverage, nightly evals, the freeze marker) as
   mechanical file/CI checks. Fail-closed on triage converts "triage the 188
   unlabeled issues" from a side condition into a structural property — the

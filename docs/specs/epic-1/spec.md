@@ -79,8 +79,11 @@ prerequisites) — no "not evaluable" meta-states.
    `hooks/scripts/**`, `hooks/lib/common.sh`, and
    `connector/src/release-gate/**`, measured at the exact SHA `/ship`
    builds; three consecutive green `nightly-eval.yml` runs on `main`
-   (thresholds per #511); the single-line `**Freeze state: ON**` marker
-   in `docs/PRODUCT.md`; zero unresolved `.factory/review` findings
+   (thresholds per #511); a line in `docs/PRODUCT.md` that **begins
+   with** the marker token `**Freeze state: ON**` (leading-token match:
+   the date and gate evidence PRODUCT.md's convention appends after the
+   token are allowed and expected — a whole-line exact match would fail
+   a correctly-frozen repo, #1250); zero unresolved `.factory/review` findings
    (prerequisite issues #419, #420, #510, #511 are NOT part of this
    criterion's FAIL set — while any is open the verdict is **BLOCKED**,
    naming them, per the precedence rule: BLOCKED beats FAIL beats PASS,

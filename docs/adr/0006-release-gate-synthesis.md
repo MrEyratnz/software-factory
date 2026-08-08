@@ -362,7 +362,7 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
   (branch protection permitting roster humans to push; the gate rejects
   any pin-chain commit touching unsanctioned paths). The auditor is now
   release-critical infrastructure with a liveness SLO.
-- **Coverage floor widens** to `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules via `cli.mjs`", #1144) and the two
+- **Coverage floor widens** to `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules", #1144; the release verdict of record runs only via the pinned dispatcher per D3/D5, never `cli.mjs`) and the two
   new scripts (`release-gate.sh`, `close-audit.sh`) — recorded here per
   the ADR 0005 precedent; qa owns the threshold.
 - **Accepted residual risks, stated:** a laundered close can be
