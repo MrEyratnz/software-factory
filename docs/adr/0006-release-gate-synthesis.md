@@ -172,9 +172,14 @@ it** (#1169, #1194): `connector/src/release-gate/**` (a peer verdict
 module under `connector/src/`, admitted into ARCHITECTURE's layer table
 alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only
 from `connector/src` verdict modules", #1144) **including its own thin
-dispatcher `connector/src/release-gate/dispatch.mjs`** — the pinned
-entry scripts `hooks/scripts/release-gate.sh` /
-`hooks/scripts/close-audit.sh` invoke `node` directly on the pinned
+dispatcher `connector/src/release-gate/dispatch.mjs` and the entry
+scripts `hooks/scripts/release-gate.sh` /
+`hooks/scripts/close-audit.sh` themselves** — pinned trivial wrappers
+that are *members of this enumerated digest set (a)*, not merely
+described as pinned (#1265: the enumeration is authoritative over any
+prose adjective; an entry script outside the digest set is an unpinned
+seam that could run `node` on a forged module and D5.1 would never
+notice) — which invoke `node` directly on the pinned
 dispatcher, never through the shared `cli.mjs`/`common.sh` (which stay
 UNPINNED precisely so routine churn in shared libraries cannot couple
 every maintenance PR to a human re-pin and manufacture rubber-stamp

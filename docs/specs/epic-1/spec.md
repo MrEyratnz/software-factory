@@ -51,8 +51,11 @@ receipt/commit contract enforces them forever.
 This section is the **single maintainable copy of the gate predicate**
 (ADR 0005's single-copy rule; the spec governs on any divergence).
 Mechanism and rationale: ADR 0006 (`docs/adr/0006-release-gate-synthesis.md`,
-the sprint-4 board decision); scope: ADR 0005. All criteria are over
-current state, from fully-paginated queries; the gate returns PASS,
+the sprint-4 board decision); scope: ADR 0005. Criteria range over
+currently-**open** issues, from fully-paginated queries —
+timeline-computed where a criterion says **ever carried** (criteria 3
+and 5 examine label history at gate time, #1266), current-label
+otherwise; the gate returns PASS,
 FAIL (naming failed criteria with evidence), or BLOCKED (naming open
 prerequisites) — no "not evaluable" meta-states.
 
