@@ -33,8 +33,9 @@ flips, with the date and the gate evidence.
 
 **Freeze state: OFF** (gate not yet within one sprint of holding — M2 and M3
 are both 0% done by roadmap checkbox, and as of sprint-4 planning **754 open
-`tech-debt` + 12 open `bug`** issues stand between here and M4's "zero open
-bug/tech-debt" gate — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
+`tech-debt` + 12 open `bug`** issues stood between here and the then-literal M4 gate (superseded:
+the adopted gate — spec § "Release Gate for v1.0.0" — blocks on open
+bug/P0-P1/ever-security/ever-confirmed-high/untriaged, not raw counts) — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
 review; ground-truth counts re-pulled this pass via the GitHub search API,
 paginated past the 30-item default that undercounts elsewhere in this repo's
 own tooling, see #419/#420 below). The gate is materially **farther** away
@@ -471,8 +472,11 @@ gaps). None block the loop today. **Milestone-scope decision:** these map to
 ROADMAP M3's "Security hardening pass" bullet as one batch, not 30
 individually-sequenced sprint-1 items — bundle them into that M3 work item
 when it's picked up rather than re-ranking each one every sprint. Left
-unmilestoned for now; M4's Release Gate ("zero open bug/tech-debt") already
-guarantees they get swept before ship.
+unmilestoned for now. (Correction under the adopted gate, #1223: the
+retired literal reading would have swept these before ship; the
+adopted scope — spec § "Release Gate for v1.0.0" — blocks only open
+bug/P0-P1/ever-security/ever-confirmed-high/untriaged, so non-security
+P2/P3 in this batch can ship open and route to the M5 burndown.)
 
 ### P3 — doc/spec cross-reference drift on an unmerged PR (15 issues)
 

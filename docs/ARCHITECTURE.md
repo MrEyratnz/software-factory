@@ -47,9 +47,15 @@ docs/adr/        numbered decisions (the default adrDir); tests/ hermetic hook c
 
 Rules (each one enforced, not aspirational):
 
-1. **Verdicts come only from `connector/src` verdict modules** (factory-core and its per-domain peers — ADR 0006 broadened this rule to admit `release-gate/`). Hooks call them via `cli.mjs`
-   (`fc …` in `common.sh`); the MCP read path and the enforcement path share
-   one implementation and can never disagree.
+1. **Verdicts come only from `connector/src` verdict modules** (factory-core
+   and its per-domain peers — ADR 0006 broadened this rule to admit
+   `release-gate/`). Hooks call factory-core via `cli.mjs` (`fc …` in
+   `common.sh`); the MCP read path and the enforcement path share one
+   implementation and can never disagree. **Exception, by design
+   (#1219):** the release-gate peer's verdict of record runs only via
+   its pinned dispatcher (ADR 0006 § D5) — `cli.mjs` may serve an
+   advisory read of the same pinned module but never the release
+   verdict, so custody and Rule 1 cannot conflict.
 2. **The connector never mutates.** `server.mjs` reads files to feed the pure
    core — no writes, no command execution. All mutation lives in the
    command/agent/hook layer under normal permissions.
@@ -126,18 +132,16 @@ M4 build obligation this section specifies, not a description of built
 infrastructure. Per Rule 1 above (broadened by ADR 0006), the pure
 `decide(evidence)` gate core and the nightly auditor's
 `closeLegitimacy` predicate form the **`release-gate` verdict module —
-a peer of `factory-core.mjs` under `connector/src/`**, exposed to
-scripts via `cli.mjs` like every other verdict, regression-locked by fixtures
+a peer of `factory-core.mjs` under `connector/src/`**. Its verdict of
+record is produced ONLY by the pinned entry scripts running `node` on
+the pinned `connector/src/release-gate/dispatch.mjs`; `cli.mjs` may
+expose a read-only advisory view but never the release verdict (Rule
+1's "can never disagree" applies to the advisory view tracking the
+pinned module — there is no second verdict path, #1219).
+Regression-locked by fixtures
 recorded from real collector output under
-`tests/fixtures/release-gate/`. A nightly `close-audit` workflow
-detects and repairs laundered closes, and its liveness is itself a
-blocking gate criterion. The gate's own code, fixtures, roster hash,
-and disposal allowlists are pinned in
-`factory-ops/release/trust-pin.json`, updatable only by a
-directly-pushed human-signed commit — gate-code changes merge
-autonomously but take release effect only after a human re-pin, and
-every release carries exactly one verified human acknowledgment of the
-canonical `gate-report.json`. Normative criteria:
+`tests/fixtures/release-gate/`. A nightly `close-audit` workflow detects and repairs laundered closes (its liveness and the custody/ack rules are gate criteria — see the spec; no restatement here, #1221). The gate's own trust anchors are pinned per ADR 0006 § D5 (no
+mechanism restatement here, #1221). Normative criteria:
 `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" — the single
 maintainable copy per ADR 0005's rule, transcribed there by the same PR
 that landed this ADR; **the spec governs on any divergence**, with
