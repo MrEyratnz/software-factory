@@ -4,12 +4,34 @@ name: cron-rerun
 # 2026-07-29..08-07: ~14 session-limit windows each killed in-flight station
 # jobs, and every recovery was a human-side sleep script firing
 # `gh run rerun --failed` after the reset. This cron does exactly that —
-# hourly, deterministically, with zero model tokens: find recent failed
-# station runs whose failure carries the limit signature, and rerun their
-# failed jobs. Cheap by construction: #725/#731's checkpoint/resume means a
-# rerun RESUMES the parked session instead of re-paying it. Genuine (non-
-# limit) failures are never matched, and an attempt cap stops any loop on a
-# persistently failing run.
+# hourly, deterministically, with zero model tokens.
+#
+# Review-hardened design (#1233-#1237):
+# - Window spans 8 DAYS and attempts are PACED (one per >=6h backoff, cap
+#   12): the motivating incident was a ~72h WEEKLY limit — a 26h window
+#   with hourly attempts would have exhausted itself ~66h before the
+#   reset and never recovered (#1235).
+# - The limit signature is anchored to the session's OWN structured
+#   output, never free-form log text, so reviewed diffs / inbound issue
+#   bodies quoting limit phrases cannot be mistaken for the signal
+#   (#1233). Verified against real limit-killed runs (31195410937,
+#   31129191775): a limit kill fails the `claude -p` step itself, whose
+#   log carries the result JSON ({"is_error":true,..."api_error_status":
+#   429,"result":"You've hit your session limit ..."}); when the CLI
+#   instead exits 0 with is_error set, claude-session's guard fails with
+#   "##[error]Station failed: <result>" (that is how ::error:: renders
+#   in stored logs). Both anchors are matched, covering the session/
+#   weekly phrasing plus rate_limit_error / 429 (#1234). Residual,
+#   accepted: a genuinely-failing run whose log plants one of these
+#   exact structured lines wastes bounded, paced reruns — it cannot
+#   green anything, since a rerun of a real failure just fails again.
+# - claude-code-review.yml is deliberately NOT in the loop: it has no
+#   checkpoint/resume, so a rerun re-pays the whole review (#1236).
+# - factory-run.yml is deliberately NOT in the loop: cron-prod already
+#   owns factory-run recovery via checkpoint re-dispatch; rerunning the
+#   old run as well would double-resume stale state (#1237).
+# - Reruns RESUME parked sessions via the #725/#731 checkpoint machinery,
+#   so recovery costs near-zero marginal tokens.
 
 on:
   schedule:
@@ -51,8 +73,6 @@ jobs:
           FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
           FALLBACK: ${{ github.token }}
         run: |
-          # Prefer the App token, then a PAT, then the workflow token (which
-          # holds actions:write from the permissions block above).
           token="${APP_TOKEN:-${FACTORY_PAT:-$FALLBACK}}"
           echo "token=$token" >> "$GITHUB_OUTPUT"
           echo "::add-mask::$token"
@@ -61,34 +81,51 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ident.outputs.token }}
           REPO: ${{ github.repository }}
-          # A run at its Nth attempt has been rerun N-1 times already; stop
-          # retrying past this many attempts — a run that still fails then is
-          # not limit-weather, it needs eyes.
-          MAX_ATTEMPTS: "6"
+          # 12 paced attempts x >=6h backoff spans >=72h of active limit —
+          # sized to the recorded weekly-limit incident, not a 5h window.
+          MAX_ATTEMPTS: "12"
+          BACKOFF_HOURS: "6"
         run: |
           set -uo pipefail
-          since="$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          since="$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          backoff_before="$(date -u -d "$BACKOFF_HOURS hours ago" +%Y-%m-%dT%H:%M:%SZ)"
           rerun_count=0
+          list_errors=0
 
-          for wf in on-pr.yml factory-run.yml nightly-eval.yml on-issue.yml claude-code-review.yml; do
-            runs="$(gh run list --repo "$REPO" --workflow="$wf" \
-              --status failure --created ">$since" \
-              --json databaseId,attempt --jq '.[] | "\(.databaseId) \(.attempt)"' 2>/dev/null || true)"
+          for wf in on-pr.yml nightly-eval.yml on-issue.yml; do
+            if ! runs="$(gh run list --repo "$REPO" --workflow="$wf" \
+              --status failure --created ">$since" --limit 100 \
+              --json databaseId,attempt,updatedAt \
+              --jq '.[] | "\(.databaseId) \(.attempt) \(.updatedAt)"')"; then
+              # A listing failure must be LOUD: a dead babysitter that
+              # exits green is the one failure this factory cannot see.
+              echo "::warning::gh run list failed for $wf — this cron may be blind this cycle"
+              list_errors=$((list_errors + 1))
+              continue
+            fi
             [ -z "$runs" ] && continue
 
-            while read -r run_id run_attempt; do
+            while read -r run_id run_attempt updated_at; do
               [ -z "$run_id" ] && continue
               if [ "${run_attempt:-1}" -ge "$MAX_ATTEMPTS" ]; then
-                echo "run $run_id at attempt $run_attempt >= $MAX_ATTEMPTS — leaving for a human"
+                echo "run $run_id at attempt $run_attempt >= $MAX_ATTEMPTS — leaving for a human" \
+                  | tee -a "$GITHUB_STEP_SUMMARY"
                 continue
               fi
-              # The limit signature: the session result the failed job logged.
-              # Matches "You've hit your session limit" / "weekly limit" /
-              # 429-style api_error results — and nothing else, so genuine
-              # red suites and infra failures are never blind-retried.
+              # Pace: skip runs whose last attempt is younger than the
+              # backoff — hourly hammering exhausts the cap inside an
+              # active limit window instead of surviving it.
+              if [ "$(printf '%s\n' "$updated_at" "$backoff_before" | sort | tail -1)" = "$updated_at" ]; then
+                continue
+              fi
+              # Structured signature ONLY (see header): either the CLI's
+              # result JSON on the failed step, or claude-session's guard
+              # annotation as it renders in stored logs — never arbitrary
+              # log content.
               if gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null \
-                   | grep -qiE "hit your (session|weekly) limit"; then
-                echo "run $run_id ($wf, attempt $run_attempt): limit signature — rerunning failed jobs"
+                   | grep -qiE '("is_error":true|##\[error\]Station failed:).*((hit your (session|weekly) limit)|rate_limit_error|"api_error_status":429)'; then
+                echo "run $run_id ($wf, attempt $run_attempt): limit signature — rerunning failed jobs" \
+                  | tee -a "$GITHUB_STEP_SUMMARY"
                 gh run rerun "$run_id" --repo "$REPO" --failed \
                   && rerun_count=$((rerun_count + 1)) \
                   || echo "::warning::rerun of $run_id failed (may already be re-running)"
@@ -96,5 +133,11 @@ jobs:
             done <<< "$runs"
           done
 
-          echo "rerun_count=$rerun_count"
-          echo "reran $rerun_count limit-killed run(s); resumed sessions pick up from their checkpoints"
+          {
+            echo "rerun_count=$rerun_count"
+            echo "list_errors=$list_errors"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$list_errors" -gt 0 ]; then
+            echo "::error::$list_errors workflow listing(s) failed — treating a possibly-blind babysitter cycle as red"
+            exit 1
+          fi

@@ -891,12 +891,60 @@ if [ -f "$RERUN_WF" ]; then
   grep -q "run rerun" "$RERUN_WF" && grep -q -- "--failed" "$RERUN_WF" \
     && ok "$RERUN_WF reruns only the FAILED jobs (resume picks up the parked session)" \
     || bad "$RERUN_WF never calls gh run rerun --failed (#1140)"
-  grep -qiE "limit" "$RERUN_WF" \
-    && ok "$RERUN_WF matches the limit signature before rerunning — real failures are not retried blindly" \
-    || bad "$RERUN_WF has no limit-signature filter — it would rerun genuine failures forever (#1140)"
-  grep -qE "runAttempt|run_attempt|attempt" "$RERUN_WF" \
+
+  # The signature must be ANCHORED to the session's own structured output —
+  # a free-form log grep matches quoted limit text in reviewed diffs and
+  # inbound issue bodies (#1233) — and must cover the API rate-limit shapes
+  # as well as the session/weekly phrasing (#1234). Two anchors, verified
+  # against real limit-killed runs: the CLI result JSON on the failed step
+  # ("is_error":true) and claude-session's guard annotation as stored logs
+  # render it (##[error]Station failed:) — NOT the ::error:: source form,
+  # which never appears in downloaded logs.
+  grep -q '"is_error":true' "$RERUN_WF" && grep -q '##\\\[error\\\]Station failed:' "$RERUN_WF" \
+    && ok "$RERUN_WF anchors the limit signature to structured session output (#1233)" \
+    || bad "$RERUN_WF greps free-form log text — planted limit phrases would trigger reruns (#1233)"
+  grep -q "rate_limit_error" "$RERUN_WF" && grep -q "429" "$RERUN_WF" \
+    && ok "$RERUN_WF also matches the API rate_limit_error/429 shapes (#1234)" \
+    || bad "$RERUN_WF misses the rate_limit_error/429 API shapes (#1234)"
+
+  # A ~72h weekly limit is the motivating incident: attempts must be PACED
+  # (backoff between attempts) with a cap sized to outlast the window, and
+  # the scan window must span days, not hours (#1235).
+  grep -qE "MAX_ATTEMPTS" "$RERUN_WF" \
     && ok "$RERUN_WF caps rerun attempts — no infinite retry of a persistent failure" \
     || bad "$RERUN_WF has no attempt cap (#1140)"
+  grep -qE "BACKOFF" "$RERUN_WF" \
+    && ok "$RERUN_WF paces attempts with a backoff — the cap survives a multi-day limit window (#1235)" \
+    || bad "$RERUN_WF hammers hourly with no backoff — a weekly limit exhausts the cap before reset (#1235)"
+  grep -qE "[0-9]+ days ago" "$RERUN_WF" \
+    && ok "$RERUN_WF scans a multi-day window (weekly limits outlive a single day) (#1235)" \
+    || bad "$RERUN_WF scan window is too short for a weekly limit (#1235)"
+
+  # Workflows that must NOT be in the loop: claude-code-review has no
+  # checkpoint/resume so a rerun re-pays the full review (#1236), and
+  # factory-run recovery is owned by cron-prod's checkpoint re-dispatch —
+  # rerunning the old run as well double-resumes stale state (#1237).
+  grep -qE "for wf in[^;]*claude-code-review" "$RERUN_WF" \
+    && bad "$RERUN_WF reruns claude-code-review — no resume there, every rerun re-pays the review (#1236)" \
+    || ok "$RERUN_WF leaves claude-code-review out of the rerun loop (#1236)"
+  grep -qE "for wf in[^;]*factory-run" "$RERUN_WF" \
+    && bad "$RERUN_WF reruns factory-run — cron-prod already owns that recovery; double-resume (#1237)" \
+    || ok "$RERUN_WF leaves factory-run recovery to cron-prod (#1237)"
+
+  # Hygiene the first review flagged: listing failures must be loud, not
+  # swallowed (#1238); the run listing must not rely on the gh default page
+  # size (#1239); attempt-cap exhaustion must surface in the step summary
+  # so a human sees the parked run (#1240).
+  grep -qE "list_errors" "$RERUN_WF" \
+    && ok "$RERUN_WF surfaces gh run list failures instead of swallowing them (#1238)" \
+    || bad "$RERUN_WF swallows listing errors — a blind babysitter cycle exits green (#1238)"
+  grep -qE -- "--limit [0-9]+" "$RERUN_WF" \
+    && ok "$RERUN_WF sets an explicit run-list page size (#1239)" \
+    || bad "$RERUN_WF relies on gh's default page size — busy windows silently truncate (#1239)"
+  grep -q "GITHUB_STEP_SUMMARY" "$RERUN_WF" \
+    && ok "$RERUN_WF writes attempt-cap exhaustion to the step summary (#1240)" \
+    || bad "$RERUN_WF exhausts the cap silently — nobody learns the run is parked for a human (#1240)"
+
   grep -qE "actions:[[:space:]]*write" "$RERUN_WF" \
     && ok "$RERUN_WF holds actions:write (required to rerun runs)" \
     || bad "$RERUN_WF lacks actions: write — reruns would 403 (#1140)"
