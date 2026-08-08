@@ -47,13 +47,32 @@ byte for byte.
 ### Fixing a mismatched fingerprint on an already-open issue
 
 `techdebt_audit`'s response may include a `mismatched` entry (or a `missing`
-entry with a non-null `staleIssue`): an open issue already exists about that
-finding's `location`, but its `fingerprint:` trailer does not equal the
-`fingerprint` the audit just computed. That is a previously-filed issue whose
-trailer was hand-derived incorrectly — **do not file a duplicate.** Instead,
-edit that issue's body, replacing the stale trailer with
-`fingerprint: <the exact value from techdebt_audit's `fingerprint` field for
-that entry>`, and leave everything else in the issue as-is.
+entry with a non-null `staleIssue`): an open issue already exists whose text
+matches this finding's `location`, but its `fingerprint:` trailer does not
+equal the `fingerprint` the audit just computed. The `staleIssue` entry is
+**possibly the same finding** with a hand-derived trailer — location-only
+matching cannot prove that on its own; a 3-lens panel routinely finds more
+than one problem on the same line, and a genuinely different finding can
+legitimately live at the same `file:line`. **Do not blindly edit the trailer.**
+
+Before touching that issue:
+
+1. Read the candidate issue's full title/body and compare its stated
+   problem (impact/what-it-is) against **this** finding's impact — not just
+   the location.
+2. If they clearly describe the **same problem**, edit that issue's body,
+   replacing the stale trailer with `fingerprint: <the exact value from
+   techdebt_audit's `fingerprint` field for that entry>`, and leave
+   everything else in the issue as-is. Do not re-file.
+3. If they do **not** clearly describe the same problem — different impact,
+   different root cause, only the location coincides — treat this finding as
+   genuinely unfiled: file a fresh issue for it (per the steps above) instead
+   of editing the candidate issue's trailer.
+
+When in doubt, do not overwrite: filing a fresh issue is recoverable (a later
+run can still reconcile it); overwriting a good issue's trailer to point at
+the wrong finding corrupts that issue **and** drops the real one it was
+about.
 
 Use `techdebt_lint` to confirm a finding carries every required field before
 filing; if a field is missing, say so rather than filing an incomplete issue.

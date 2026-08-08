@@ -179,11 +179,15 @@ const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * whole location token, not as a substring of a longer one — "server.ts:4"
  * must NOT match inside "server.ts:42". Guards both edges: the char after
  * the match can't extend the line number, and the char before can't be part
- * of a longer path segment feeding into it.
+ * of a longer path segment feeding into it — which means path/filename
+ * characters ('/', '.', '-') must NOT count as a valid boundary, or a
+ * location that is only a path/filename SUFFIX of a longer one false-matches
+ * (issue #1183): "utils.ts:10" would otherwise match inside
+ * "test-utils.ts:10", and "index.ts:5" inside "src/pages/index.ts:5".
  */
 const hasLocationToken = (hay, loc) => {
   if (!loc) return false;
-  const re = new RegExp(`(?:^|[^a-z0-9_])${escapeRegExp(loc)}(?!\\d)`);
+  const re = new RegExp(`(?:^|[^a-z0-9_./-])${escapeRegExp(loc)}(?!\\d)`);
   return re.test(hay);
 };
 
@@ -263,22 +267,48 @@ export function extractFingerprint(issue) {
 }
 
 /**
+ * True if the candidate issue's text plausibly describes the SAME problem as
+ * `finding` — not merely the same location. Co-location is not proof of
+ * identity: a 3-lens panel routinely finds more than one, unrelated problem
+ * on the same line, and a prior session may have correctly filed a different
+ * finding at that exact file:line (issue #1184). Compares the finding's
+ * normalized impact (or title, as a fallback) against the issue's normalized
+ * text — either an exact substring match (the common case: a re-review or a
+ * hand-typo'd fingerprint keeps the same impact wording) or, for a looser
+ * paraphrase, a majority of the impact's distinguishing (>3 char) words
+ * appearing in the issue text.
+ */
+function sameProblem(finding, hay) {
+  const impact = norm(finding && finding.impact) || norm(finding && finding.title);
+  if (!impact) return false;
+  if (hay.includes(impact)) return true;
+  const words = impact.split(' ').filter((w) => w.length > 3);
+  if (words.length === 0) return false;
+  const matched = words.filter((w) => hay.includes(w));
+  return matched.length / words.length >= 0.7;
+}
+
+/**
  * Look for an already-open issue that is plainly ABOUT this finding (its
- * title/body names the finding's own location) but whose fingerprint trailer
- * does not equal the fingerprint canonically computed here. That is the
- * signature of a filer that hand-derived or paraphrased the fingerprint
- * instead of copying `techdebt_lint`'s `normalized.fingerprint` verbatim
- * (the confirmed root cause of #471/#688) — NOT a genuinely unfiled finding.
- * Surfacing it distinctly lets a caller fail loud with the exact expected
- * value ("issue #443 says deadbeef, should be 1a2b3c4d") instead of silently
- * reporting "still missing" and inviting a duplicate filing.
- * A same-location false positive is still possible even with an anchored
- * match: a 3-lens panel routinely finds more than one problem on the same
- * line, and each gets its own fingerprint (location+impact). `siblingFps`
- * — every canonical fingerprint among THIS session's findings — lets us
- * recognize when the co-located issue is already correctly filed for one of
- * those *other* findings, so it isn't misread as a stale/hand-derived
- * trailer for the current one.
+ * title/body names the finding's own location AND describes the same
+ * problem) but whose fingerprint trailer does not equal the fingerprint
+ * canonically computed here. That is the signature of a filer that
+ * hand-derived or paraphrased the fingerprint instead of copying
+ * `techdebt_lint`'s `normalized.fingerprint` verbatim (the confirmed root
+ * cause of #471/#688) — NOT a genuinely unfiled finding. Surfacing it
+ * distinctly lets a caller fail loud with the exact expected value ("issue
+ * #443 says deadbeef, should be 1a2b3c4d") instead of silently reporting
+ * "still missing" and inviting a duplicate filing.
+ * Location alone is not enough to diagnose "same finding, wrong
+ * fingerprint" — it only proves co-location, not identity (issue #1184).
+ * Two guards corroborate on substance before flagging a mismatch:
+ * `siblingFps` — every canonical fingerprint among THIS session's findings —
+ * recognizes when the co-located issue is already correctly filed for one of
+ * those *other* findings; `sameProblem` additionally requires the candidate
+ * issue's text to plausibly describe the same problem (not just share a
+ * location), which also covers a genuinely different finding filed at the
+ * same file:line by a PRIOR session (not in `list`, so `siblingFps` alone
+ * can't catch it).
  * @param {Set<string>} siblingFps
  * @returns {{title:string|null, fingerprint:string|null}|null}
  */
@@ -291,6 +321,7 @@ function findStaleIssue(finding, issues, canonicalFp, siblingFps) {
     const staleFp = extractFingerprint(iss);
     if (!staleFp || staleFp === canonicalFp) return false;
     if (siblingFps.has(staleFp)) return false; // correctly filed for a different finding
+    if (!sameProblem(finding, hay)) return false; // co-located but a different problem
     return true;
   });
   if (!hit) return null;

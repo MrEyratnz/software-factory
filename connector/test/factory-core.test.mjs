@@ -341,6 +341,74 @@ test('techdebtAudit: a re-run against a correctly-filed finding is clean (no mis
   assert.ok(audit.filed.includes(correctFp));
 });
 
+// Regression for #1183: hasLocationToken's leading boundary regex
+// (?:^|[^a-z0-9_]) treats '/', '.', '-' as valid boundary characters, so a
+// location that is a path/filename SUFFIX of a longer one in an open issue
+// false-matches — "utils.ts:10" matches inside "test-utils.ts:10" because
+// '-' is (wrongly) accepted immediately before the token.
+test('techdebtAudit: filename-suffix collision — finding at utils.ts:10 is not mismatched against an issue about test-utils.ts:10', () => {
+  const filedFinding = { location: 'test-utils.ts:10', impact: 'unrelated, correctly-filed bug' };
+  const filedFp = fingerprintFinding(filedFinding);
+  const openIssues = [{
+    title: 'unrelated bug',
+    body: `Location: test-utils.ts:10\n\nfingerprint: ${filedFp}`,
+  }];
+
+  const unfiledFinding = { location: 'utils.ts:10', impact: 'a completely different problem' };
+  const audit = techdebtAudit([unfiledFinding], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.mismatched.length, 0); // must be reported as plain missing, not mismatched
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
+// Regression for #1183: same boundary bug, path-prefix form — "index.ts:5"
+// matches inside "src/pages/index.ts:5" because '/' is (wrongly) accepted
+// immediately before the token.
+test('techdebtAudit: path-suffix collision — finding at index.ts:5 is not mismatched against an issue about src/pages/index.ts:5', () => {
+  const filedFinding = { location: 'src/pages/index.ts:5', impact: 'unrelated, correctly-filed bug' };
+  const filedFp = fingerprintFinding(filedFinding);
+  const openIssues = [{
+    title: 'unrelated bug',
+    body: `Location: src/pages/index.ts:5\n\nfingerprint: ${filedFp}`,
+  }];
+
+  const unfiledFinding = { location: 'index.ts:5', impact: 'a completely different problem' };
+  const audit = techdebtAudit([unfiledFinding], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.mismatched.length, 0); // must be reported as plain missing, not mismatched
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
+// Regression for #1184: siblingFps is built only from THIS session's
+// findings (list.map(fingerprintFinding)), so findStaleIssue's guard only
+// protects against same-session collisions. A genuinely different finding
+// filed at the same file:line by a PRIOR session (correctly, with the
+// correct fingerprint for ITS OWN finding) must not be misdiagnosed as a
+// stale/hand-derived duplicate of THIS session's unrelated finding just
+// because they share a location — location co-location alone is not proof
+// of "same finding, wrong fingerprint".
+test('techdebtAudit: cross-session same-location — a genuinely different finding is not mismatched against a correctly-filed PRIOR finding at the same location', () => {
+  const priorFinding = { location: 'src/payments/charge.ts:88', impact: 'double-charge on retry' };
+  const priorFp = fingerprintFinding(priorFinding);
+  const openIssues = [{
+    title: 'double-charge risk on retry',
+    body: `Location: src/payments/charge.ts:88\nImpact: double-charge on retry\n\nfingerprint: ${priorFp}`,
+  }];
+
+  // This session sees ONLY the new, different finding at the same line — the
+  // prior finding is not in `list` (a different, earlier session filed it),
+  // so the same-session siblingFps guard alone cannot protect this case.
+  const newFinding = { location: 'src/payments/charge.ts:88', impact: 'leaks a DB connection' };
+  const audit = techdebtAudit([newFinding], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.missing[0].finding.impact, 'leaks a DB connection');
+  assert.equal(audit.mismatched.length, 0); // must remain plain missing, not misdiagnosed as mismatched
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
 /* ── roadmapCheck ──────────────────────────────────────────────────────── */
 
 test('roadmapCheck: refuses without a merged-green SHA proof', () => {
