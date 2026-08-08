@@ -1,30 +1,26 @@
 name: cron-rerun
 
 # The limit-window babysitter, automated (#1140). Operational record
-# 2026-07-29..08-07: ~14 session-limit windows each killed in-flight station
-# jobs, and every recovery was a human-side sleep script firing
+# 2026-07-29..08-08: ~15 session-limit windows each killed in-flight
+# station jobs, and every recovery was a human-side sleep script firing
 # `gh run rerun --failed` after the reset. This cron does exactly that —
 # hourly, deterministically, with zero model tokens.
 #
-# Review-hardened design (#1233-#1237):
-# - Window spans 8 DAYS and attempts are PACED (one per >=6h backoff, cap
-#   12): the motivating incident was a ~72h WEEKLY limit — a 26h window
-#   with hourly attempts would have exhausted itself ~66h before the
-#   reset and never recovered (#1235).
-# - The limit signature is anchored to the session's OWN structured
-#   output, never free-form log text, so reviewed diffs / inbound issue
-#   bodies quoting limit phrases cannot be mistaken for the signal
-#   (#1233). Verified against real limit-killed runs (31195410937,
-#   31129191775): a limit kill fails the `claude -p` step itself, whose
-#   log carries the result JSON ({"is_error":true,..."api_error_status":
-#   429,"result":"You've hit your session limit ..."}); when the CLI
-#   instead exits 0 with is_error set, claude-session's guard fails with
-#   "##[error]Station failed: <result>" (that is how ::error:: renders
-#   in stored logs). Both anchors are matched, covering the session/
-#   weekly phrasing plus rate_limit_error / 429 (#1234). Residual,
-#   accepted: a genuinely-failing run whose log plants one of these
-#   exact structured lines wastes bounded, paced reruns — it cannot
-#   green anything, since a rerun of a real failure just fails again.
+# Review-hardened design (#1233-#1237, #1276-#1282):
+# - Every decision predicate lives in
+#   .github/scripts/cron-rerun-decide.sh, and the contract tests execute
+#   THAT script against fixture logs and (attempt, updatedAt) tuples —
+#   behavioral proof, not token greps (#1276/#1277).
+# - The limit signature anchors to the session's own structured output
+#   (see the decide script's header), verified against real limit-killed
+#   runs 31195410937/31129191775; free-form limit phrases never match
+#   (#1233/#1234). Residual, accepted: a run whose own output plants an
+#   exact anchor line wastes bounded, paced reruns — it cannot green
+#   anything, since a rerun of a real failure just fails again.
+# - Cadence: the first rerun is immediate (a session limit resets within
+#   hours, #1281); later attempts are paced one per BACKOFF_HOURS with
+#   the cap sized so coverage spans a FULL 7-day weekly limit (#1279),
+#   and the scan window is sized past the cap horizon (#1235).
 # - claude-code-review.yml is deliberately NOT in the loop: it has no
 #   checkpoint/resume, so a rerun re-pays the whole review (#1236).
 # - factory-run.yml is deliberately NOT in the loop: cron-prod already
@@ -50,13 +46,12 @@ jobs:
   rerun:
     if: vars.FACTORY_HALT != 'true'
     runs-on: ubuntu-latest
-    # The orchestrator App token: rerunning another workflow's run needs a
-    # credential whose actions:write actually bites (and whose activity is
-    # attributable) — same identity model as cron-prod's dispatch.
+    # Rerunning another workflow's run needs a credential whose
+    # actions:write actually bites and whose activity is attributable.
     environment: orchestrator
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: mint the orchestrator app token
         id: app
@@ -72,6 +67,11 @@ jobs:
           APP_TOKEN: ${{ steps.app.outputs.token }}
           FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
           FALLBACK: ${{ github.token }}
+        # Prefers the orchestrator App token, then FACTORY_PAT, then the
+        # workflow token. UNLIKE cron-prod this does not hard-fail
+        # without the App (#1287): a rerun attempted with a weaker token
+        # 403s loudly on the rerun call itself, which is safer than a
+        # babysitter that silently never runs.
         run: |
           token="${APP_TOKEN:-${FACTORY_PAT:-$FALLBACK}}"
           echo "token=$token" >> "$GITHUB_OUTPUT"
@@ -81,14 +81,16 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ident.outputs.token }}
           REPO: ${{ github.repository }}
-          # 12 paced attempts x >=6h backoff spans >=72h of active limit —
-          # sized to the recorded weekly-limit incident, not a 5h window.
-          MAX_ATTEMPTS: "12"
+          # 30 paced attempts x 6h backoff spans ~180h — past a full
+          # 7-day weekly limit (#1279). The 8-day scan window below is
+          # sized past that cap horizon.
+          MAX_ATTEMPTS: "30"
           BACKOFF_HOURS: "6"
         run: |
           set -uo pipefail
+          decide=".github/scripts/cron-rerun-decide.sh"
           since="$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-          backoff_before="$(date -u -d "$BACKOFF_HOURS hours ago" +%Y-%m-%dT%H:%M:%SZ)"
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           rerun_count=0
           list_errors=0
 
@@ -107,23 +109,24 @@ jobs:
 
             while read -r run_id run_attempt updated_at; do
               [ -z "$run_id" ] && continue
-              if [ "${run_attempt:-1}" -ge "$MAX_ATTEMPTS" ]; then
-                echo "run $run_id at attempt $run_attempt >= $MAX_ATTEMPTS — leaving for a human" \
+              verdict="$(bash "$decide" decide "$run_attempt" "$updated_at" "$MAX_ATTEMPTS" "$BACKOFF_HOURS" "$now")"
+              if [ "$verdict" = "park" ]; then
+                echo "::warning::run $run_id ($wf) reached attempt $run_attempt >= $MAX_ATTEMPTS — parked for a human" \
                   | tee -a "$GITHUB_STEP_SUMMARY"
                 continue
               fi
-              # Pace: skip runs whose last attempt is younger than the
-              # backoff — hourly hammering exhausts the cap inside an
-              # active limit window instead of surviving it.
-              if [ "$(printf '%s\n' "$updated_at" "$backoff_before" | sort | tail -1)" = "$updated_at" ]; then
+              [ "$verdict" = "young" ] && continue
+              # Buffer the log to a file before classifying: pipefail +
+              # grep -q on a streaming fetch can SIGPIPE a large
+              # multi-job log and drop a real kill (#1283), and a fetch
+              # failure must be loud, not an implicit "not a limit"
+              # (#1284).
+              logf="$RUNNER_TEMP/run-$run_id.log"
+              if ! gh run view "$run_id" --repo "$REPO" --log-failed > "$logf" 2>/dev/null; then
+                echo "::warning::could not fetch the failed-job log for run $run_id — cannot classify it this cycle"
                 continue
               fi
-              # Structured signature ONLY (see header): either the CLI's
-              # result JSON on the failed step, or claude-session's guard
-              # annotation as it renders in stored logs — never arbitrary
-              # log content.
-              if gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null \
-                   | grep -qiE '("is_error":true|##\[error\]Station failed:).*((hit your (session|weekly) limit)|rate_limit_error|"api_error_status":429)'; then
+              if bash "$decide" signature "$logf"; then
                 echo "run $run_id ($wf, attempt $run_attempt): limit signature — rerunning failed jobs" \
                   | tee -a "$GITHUB_STEP_SUMMARY"
                 gh run rerun "$run_id" --repo "$REPO" --failed \

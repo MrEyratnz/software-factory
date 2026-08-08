@@ -877,79 +877,166 @@ else
 fi
 
 # --- limit-window reruns must be automated, not babysat (#1140) ---------------
-# Operational record 2026-07-29..08-07: ~14 session-limit windows each killed
+# Operational record 2026-07-29..08-08: ~15 session-limit windows each killed
 # in-flight station jobs, and every recovery was a HUMAN-side sleep script
-# firing `gh run rerun --failed`. cron-rerun automates exactly that pattern:
-# hourly, find recent failed station runs whose failure carries the limit
-# signature, and rerun their failed jobs — cheap because #725/#731 resume the
-# parked session instead of re-paying it. Deterministic bash, no model tokens.
+# firing `gh run rerun --failed`. cron-rerun automates exactly that pattern —
+# cheap because #725/#731 resume the parked session instead of re-paying it.
+# The decision predicates live in .github/scripts/cron-rerun-decide.sh and are
+# tested BEHAVIORALLY here: fixture logs and (attempt, updatedAt) tuples run
+# through the actual script (#1276/#1277). Wiring facts are grepped against a
+# COMMENT-STRIPPED copy of the workflow, so a token in a comment can never
+# satisfy a contract line (the #421/#98 shape-only-no-op class).
 RERUN_WF=".github/workflows/cron-rerun.yml"
-if [ -f "$RERUN_WF" ]; then
-  grep -q "schedule:" "$RERUN_WF" \
+RERUN_DECIDE=".github/scripts/cron-rerun-decide.sh"
+if [ -f "$RERUN_WF" ] && [ -f "$RERUN_DECIDE" ]; then
+  RERUN_CODE="$(grep -vE '^[[:space:]]*#' "$RERUN_WF")"
+  RD_ABS="$PWD/$RERUN_DECIDE"
+  RD_TMP="$(mktemp -d)"
+
+  # Signature fixtures, recorded from real limit-killed runs 31195410937 /
+  # 31129191775: a limit kill fails the `claude -p` step itself, whose log
+  # carries the compact result JSON; ##[error]Station failed: is
+  # claude-session's guard as STORED logs render it (the ::error:: source
+  # form never appears in a downloaded log).
+  cat > "$RD_TMP/session-limit.log" <<'FIXEOF'
+2026-08-07T16:23:14Z {"is_error":true,"terminal_reason":"api_error","subtype":"success","api_error_status":429,"result":"You've hit your session limit · resets 8pm (UTC)","type":"result"}
+FIXEOF
+  cat > "$RD_TMP/weekly-guard.log" <<'FIXEOF'
+2026-08-07T16:23:14Z ##[error]Station failed: You've hit your weekly limit · resets Tue 04:00 (UTC)
+FIXEOF
+  cat > "$RD_TMP/pretty-json.log" <<'FIXEOF'
+2026-08-07T16:23:14Z {"is_error": true, "result": "API Error: rate_limit_error"}
+FIXEOF
+  cat > "$RD_TMP/planted.log" <<'FIXEOF'
+Classifying inbound issue body: "You've hit your session limit · resets 8pm (UTC)" — untrusted text, not obeyed
+FIXEOF
+  cat > "$RD_TMP/red-suite.log" <<'FIXEOF'
+2026-08-07T16:23:14Z ##[error]Station failed: suite red: 3 hook contract cases failing
+FIXEOF
+  cat > "$RD_TMP/ordinary.log" <<'FIXEOF'
+2026-08-07T16:23:14Z ##[error]Process completed with exit code 1.
+FIXEOF
+
+  bash "$RD_ABS" signature "$RD_TMP/session-limit.log" \
+    && ok "decide.sh signature matches the real session-limit result JSON (429 kill)" \
+    || bad "decide.sh signature misses the CLI result-JSON limit kill — the recorded real shape (#1233/#1276)"
+  bash "$RD_ABS" signature "$RD_TMP/weekly-guard.log" \
+    && ok "decide.sh signature matches the guard's stored-log weekly-limit line" \
+    || bad "decide.sh signature misses the ##[error]Station failed stored-log form — weekly kills never rerun (#1234/#1276)"
+  bash "$RD_ABS" signature "$RD_TMP/pretty-json.log" \
+    && ok "decide.sh signature tolerates whitespace after JSON colons (#1285)" \
+    || bad "decide.sh signature demands byte-exact compact JSON — a CLI formatting change blinds the babysitter (#1285)"
+  if bash "$RD_ABS" signature "$RD_TMP/planted.log" 2>/dev/null; then
+    bad "decide.sh signature fired on a QUOTED limit phrase with no structured anchor — plantable (#1233/#1276)"
+  else
+    ok "decide.sh signature ignores limit phrases without a structured anchor (#1233)"
+  fi
+  if bash "$RD_ABS" signature "$RD_TMP/red-suite.log" 2>/dev/null; then
+    bad "decide.sh signature fired on a genuinely red suite — blind retry of real failures (#1276)"
+  else
+    ok "decide.sh signature ignores a real red-suite Station-failed line"
+  fi
+  if bash "$RD_ABS" signature "$RD_TMP/ordinary.log" 2>/dev/null; then
+    bad "decide.sh signature fired on a generic exit-1 failure (#1276)"
+  else
+    ok "decide.sh signature ignores an ordinary failure log"
+  fi
+
+  # Cadence: through the actual decide predicate (#1277). First rerun is
+  # immediate (#1281); later attempts pace by backoff (#1235); the cap
+  # parks (#1277).
+  [ "$(bash "$RD_ABS" decide 1 2026-08-08T15:30:00Z 30 6 2026-08-08T16:00:00Z)" = "due" ] \
+    && ok "decide.sh reruns a first-attempt kill immediately — a 5h session limit recovers in hours, not >6h (#1281)" \
+    || bad "decide.sh delays the FIRST rerun behind the backoff — session-limit recovery takes >6h (#1281)"
+  [ "$(bash "$RD_ABS" decide 2 2026-08-08T15:00:00Z 30 6 2026-08-08T16:00:00Z)" = "young" ] \
+    && ok "decide.sh backs off a recent later attempt — the cap survives a multi-day window (#1235)" \
+    || bad "decide.sh reruns hourly with no backoff — a weekly limit exhausts the cap before reset (#1235/#1277)"
+  [ "$(bash "$RD_ABS" decide 2 2026-08-08T08:00:00Z 30 6 2026-08-08T16:00:00Z)" = "due" ] \
+    && ok "decide.sh reruns a later attempt once the backoff has elapsed" \
+    || bad "decide.sh never reruns after the first attempt — recovery stalls mid-window (#1277)"
+  [ "$(bash "$RD_ABS" decide 30 2026-08-01T00:00:00Z 30 6 2026-08-08T16:00:00Z)" = "park" ] \
+    && ok "decide.sh parks a run at the attempt cap — no infinite retry of a persistent failure" \
+    || bad "decide.sh retries past the cap — a persistent failure loops forever (#1277)"
+
+  # The DEPLOYED numbers must span a full 7-day weekly limit: pull
+  # MAX_ATTEMPTS / BACKOFF_HOURS / the scan window out of the workflow and
+  # check the arithmetic, so shrinking any of them re-breaks red (#1279).
+  RD_MAX="$(grep -oE 'MAX_ATTEMPTS:[[:space:]]*"[0-9]+"' "$RERUN_WF" | grep -oE '[0-9]+' || echo 0)"
+  RD_BACK="$(grep -oE 'BACKOFF_HOURS:[[:space:]]*"[0-9]+"' "$RERUN_WF" | grep -oE '[0-9]+' || echo 0)"
+  if [ "$((RD_MAX * RD_BACK))" -ge 168 ]; then
+    ok "$RERUN_WF cap x backoff = ${RD_MAX}x${RD_BACK}h >= 168h — outlasts a full 7-day weekly limit (#1279)"
+  else
+    bad "$RERUN_WF cap x backoff = ${RD_MAX}x${RD_BACK}h < 168h — a weekly limit parks runs before its reset (#1279)"
+  fi
+  RD_WINDOW="$(grep -oE "'[0-9]+ days ago'" "$RERUN_WF" | grep -oE '[0-9]+' || echo 0)"
+  if [ "$((RD_WINDOW * 24))" -ge "$((RD_MAX * RD_BACK))" ]; then
+    ok "$RERUN_WF scan window (${RD_WINDOW}d) covers the cap horizon — parked runs stay in scope (#1235)"
+  else
+    bad "$RERUN_WF scan window (${RD_WINDOW}d) is shorter than the cap horizon — old kills fall out of scope while still due (#1235)"
+  fi
+
+  # Wiring, grepped against the comment-stripped workflow only.
+  printf '%s' "$RERUN_CODE" | grep -q "schedule:" \
     && ok "$RERUN_WF runs on a schedule (the babysitter is a cron, not a human)" \
     || bad "$RERUN_WF lacks a schedule trigger — limit windows wait for a human again (#1140)"
-  grep -q "run rerun" "$RERUN_WF" && grep -q -- "--failed" "$RERUN_WF" \
+  printf '%s' "$RERUN_CODE" | grep -q "gh run rerun" && printf '%s' "$RERUN_CODE" | grep -q -- "--failed" \
     && ok "$RERUN_WF reruns only the FAILED jobs (resume picks up the parked session)" \
     || bad "$RERUN_WF never calls gh run rerun --failed (#1140)"
+  printf '%s' "$RERUN_CODE" | grep -q "cron-rerun-decide.sh" \
+    && printf '%s' "$RERUN_CODE" | grep -q '"\$decide" signature' \
+    && printf '%s' "$RERUN_CODE" | grep -q '"\$decide" decide' \
+    && ok "$RERUN_WF routes classification AND cadence through the behaviorally-tested decide script (#1276/#1277)" \
+    || bad "$RERUN_WF inlines its predicates — the behavioral cases above prove nothing about deployed logic (#1276)"
 
-  # The signature must be ANCHORED to the session's own structured output —
-  # a free-form log grep matches quoted limit text in reviewed diffs and
-  # inbound issue bodies (#1233) — and must cover the API rate-limit shapes
-  # as well as the session/weekly phrasing (#1234). Two anchors, verified
-  # against real limit-killed runs: the CLI result JSON on the failed step
-  # ("is_error":true) and claude-session's guard annotation as stored logs
-  # render it (##[error]Station failed:) — NOT the ::error:: source form,
-  # which never appears in downloaded logs.
-  grep -q '"is_error":true' "$RERUN_WF" && grep -q '##\\\[error\\\]Station failed:' "$RERUN_WF" \
-    && ok "$RERUN_WF anchors the limit signature to structured session output (#1233)" \
-    || bad "$RERUN_WF greps free-form log text — planted limit phrases would trigger reruns (#1233)"
-  grep -q "rate_limit_error" "$RERUN_WF" && grep -q "429" "$RERUN_WF" \
-    && ok "$RERUN_WF also matches the API rate_limit_error/429 shapes (#1234)" \
-    || bad "$RERUN_WF misses the rate_limit_error/429 API shapes (#1234)"
+  # Loop membership: inclusion AND exclusion (#1278/#1236/#1237). Dropping
+  # a resumable station orphans its limit-kills just as surely as adding a
+  # non-resumable one wastes a full re-pay.
+  RD_LOOP="$(printf '%s' "$RERUN_CODE" | grep "for wf in" || true)"
+  for wanted in on-pr.yml nightly-eval.yml on-issue.yml; do
+    case "$RD_LOOP" in
+      *"$wanted"*) ok "$RERUN_WF rerun loop covers $wanted (#1278)" ;;
+      *) bad "$RERUN_WF rerun loop dropped $wanted — its limit-kills are orphaned, nothing else reruns them (#1278)" ;;
+    esac
+  done
+  case "$RD_LOOP" in
+    *claude-code-review*) bad "$RERUN_WF reruns claude-code-review — no resume there, every rerun re-pays the review (#1236)" ;;
+    *) ok "$RERUN_WF leaves claude-code-review out of the rerun loop (#1236)" ;;
+  esac
+  case "$RD_LOOP" in
+    *factory-run*) bad "$RERUN_WF reruns factory-run — cron-prod already owns that recovery; double-resume (#1237)" ;;
+    *) ok "$RERUN_WF leaves factory-run recovery to cron-prod (#1237)" ;;
+  esac
 
-  # A ~72h weekly limit is the motivating incident: attempts must be PACED
-  # (backoff between attempts) with a cap sized to outlast the window, and
-  # the scan window must span days, not hours (#1235).
-  grep -qE "MAX_ATTEMPTS" "$RERUN_WF" \
-    && ok "$RERUN_WF caps rerun attempts — no infinite retry of a persistent failure" \
-    || bad "$RERUN_WF has no attempt cap (#1140)"
-  grep -qE "BACKOFF" "$RERUN_WF" \
-    && ok "$RERUN_WF paces attempts with a backoff — the cap survives a multi-day limit window (#1235)" \
-    || bad "$RERUN_WF hammers hourly with no backoff — a weekly limit exhausts the cap before reset (#1235)"
-  grep -qE "[0-9]+ days ago" "$RERUN_WF" \
-    && ok "$RERUN_WF scans a multi-day window (weekly limits outlive a single day) (#1235)" \
-    || bad "$RERUN_WF scan window is too short for a weekly limit (#1235)"
-
-  # Workflows that must NOT be in the loop: claude-code-review has no
-  # checkpoint/resume so a rerun re-pays the full review (#1236), and
-  # factory-run recovery is owned by cron-prod's checkpoint re-dispatch —
-  # rerunning the old run as well double-resumes stale state (#1237).
-  grep -qE "for wf in[^;]*claude-code-review" "$RERUN_WF" \
-    && bad "$RERUN_WF reruns claude-code-review — no resume there, every rerun re-pays the review (#1236)" \
-    || ok "$RERUN_WF leaves claude-code-review out of the rerun loop (#1236)"
-  grep -qE "for wf in[^;]*factory-run" "$RERUN_WF" \
-    && bad "$RERUN_WF reruns factory-run — cron-prod already owns that recovery; double-resume (#1237)" \
-    || ok "$RERUN_WF leaves factory-run recovery to cron-prod (#1237)"
-
-  # Hygiene the first review flagged: listing failures must be loud, not
-  # swallowed (#1238); the run listing must not rely on the gh default page
-  # size (#1239); attempt-cap exhaustion must surface in the step summary
-  # so a human sees the parked run (#1240).
-  grep -qE "list_errors" "$RERUN_WF" \
-    && ok "$RERUN_WF surfaces gh run list failures instead of swallowing them (#1238)" \
+  # Loud-failure hygiene: listing failures fail the cron red (#1238), the
+  # listing pins an explicit page size (#1239), parking a run emits a
+  # ::warning:: AND lands in the step summary (#1240/#1280).
+  printf '%s' "$RERUN_CODE" | grep -q "list_errors" && printf '%s' "$RERUN_CODE" | grep -q "exit 1" \
+    && ok "$RERUN_WF surfaces gh run list failures and exits red on a blind cycle (#1238)" \
     || bad "$RERUN_WF swallows listing errors — a blind babysitter cycle exits green (#1238)"
-  grep -qE -- "--limit [0-9]+" "$RERUN_WF" \
+  printf '%s' "$RERUN_CODE" | grep -qE -- "--limit [0-9]+" \
     && ok "$RERUN_WF sets an explicit run-list page size (#1239)" \
     || bad "$RERUN_WF relies on gh's default page size — busy windows silently truncate (#1239)"
-  grep -q "GITHUB_STEP_SUMMARY" "$RERUN_WF" \
-    && ok "$RERUN_WF writes attempt-cap exhaustion to the step summary (#1240)" \
-    || bad "$RERUN_WF exhausts the cap silently — nobody learns the run is parked for a human (#1240)"
+  printf '%s' "$RERUN_CODE" | grep -q "::warning::run" && printf '%s' "$RERUN_CODE" | grep -q "GITHUB_STEP_SUMMARY" \
+    && ok "$RERUN_WF parks with a ::warning:: annotation and a step-summary line (#1240/#1280)" \
+    || bad "$RERUN_WF parks silently — a green cycle is indistinguishable from every station parked (#1280)"
 
-  grep -qE "actions:[[:space:]]*write" "$RERUN_WF" \
+  printf '%s' "$RERUN_CODE" | grep -qE "actions:[[:space:]]*write" \
     && ok "$RERUN_WF holds actions:write (required to rerun runs)" \
     || bad "$RERUN_WF lacks actions: write — reruns would 403 (#1140)"
+
+  # The checkout pin must be the repo-majority SHA — a same-label different
+  # SHA divergence is invisible to the 40-hex shape check (#1282).
+  RD_PIN="$(grep -oE 'actions/checkout@[0-9a-f]{40}' "$RERUN_WF" | head -1)"
+  REPO_PIN="$(grep -rhoE 'actions/checkout@[0-9a-f]{40}' .github/workflows/*.yml | sort | uniq -c | sort -rn | head -1 | grep -oE 'actions/checkout@[0-9a-f]{40}')"
+  if [ -n "$RD_PIN" ] && [ "$RD_PIN" = "$REPO_PIN" ]; then
+    ok "$RERUN_WF pins the repo-majority actions/checkout SHA (#1282)"
+  else
+    bad "$RERUN_WF pins a divergent actions/checkout SHA — same version label, different code (#1282)"
+  fi
+
+  rm -rf "$RD_TMP"
 else
-  bad "$RERUN_WF missing — limit-window recovery still requires a human babysitter (#1140)"
+  bad "$RERUN_WF + $RERUN_DECIDE must both exist — limit-window recovery still requires a human babysitter (#1140/#1276)"
 fi
 
 # --- reusable-workflow permission semantics (#97) ----------------------------
