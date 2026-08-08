@@ -46,11 +46,74 @@ receipt/commit contract enforces them forever.
       layer 3
 - [ ] Three consecutive nightly runs green on `main` (feeds the Release Gate)
 
-## Release Gate for v1.0.0 (decidable, no judgment calls)
+## Release Gate for v1.0.0
 
-All of, verified by the release manager in one script: zero open `bug` or
-`tech-debt` issues at any priority; zero unresolved `.factory/review` findings
-(debt-reconcile clean); v1.0.0 roadmap items 100% merged-green; coverage and
-eval thresholds green on `main` for 3 consecutive nightly runs; feature freeze
-per `docs/PRODUCT.md`. Then `/ship` on the release branch — never from red,
-release-proof minted on the built artifact.
+This section is the **single maintainable copy of the gate predicate**
+(ADR 0005's single-copy rule; the spec governs on any divergence).
+Mechanism and rationale: ADR 0006 (`docs/adr/0006-release-gate-synthesis.md`,
+the sprint-4 board decision); scope: ADR 0005. Criteria range over
+currently-**open** issues, from fully-paginated queries —
+timeline-computed where a criterion says **ever carried** (criteria 3
+and 5 examine label history at gate time, #1266), current-label
+otherwise; the gate returns PASS,
+FAIL (naming failed criteria with evidence), or BLOCKED (naming open
+prerequisites) — no "not evaluable" meta-states.
+
+1. Zero open issues labeled `bug`.
+2. Zero open `tech-debt` issues currently labeled `P0` or `P1`
+   (most-severe governs when several `P0`–`P3` labels are present).
+3. Zero open issues that have **ever carried** `security` (timeline
+   membership computed at gate time — a label stripped an hour before
+   the gate must not create a pass window the nightly auditor has not
+   yet repaired, #1190), at any priority (ADR 0005's cross-priority
+   security precedence).
+4. Zero open `tech-debt` issues lacking a valid `P0`–`P3` label —
+   fail-closed on untriaged; legacy `priority:*`/`high`/`medium`/`low`
+   labels do not count (#510 clears this).
+5. Zero open issues that have **ever carried** `gate:confirmed-high`
+   (clerk-applied floor; timeline membership at gate time, same
+   rationale as criterion 3 — the auditor's re-application is repair
+   hygiene, not the safety mechanism, #1190).
+6. Auditor liveness: a successful `close-audit` run within 24 hours of
+   the gate run, with recorded audit windows covering [2026-07-29, the
+   end of that run's window] gapless; the tail to gate time is bounded
+   by the freshness rule.
+7. Mechanical artifact checks: coverage ≥95% lines on
+   `hooks/scripts/**`, `hooks/lib/common.sh`, and
+   `connector/src/release-gate/**`, measured at the exact SHA `/ship`
+   builds; three consecutive green `nightly-eval.yml` runs on `main`
+   (thresholds per #511); a line in `docs/PRODUCT.md` that **begins
+   with** the marker token `**Freeze state: ON**` (leading-token match:
+   the date and gate evidence PRODUCT.md's convention appends after the
+   token are allowed and expected — a whole-line exact match would fail
+   a correctly-frozen repo, #1250); zero unresolved `.factory/review` findings
+   (prerequisite issues #419, #420, #510, #511 are NOT part of this
+   criterion's FAIL set — while any is open the verdict is **BLOCKED**,
+   naming them, per the precedence rule: BLOCKED beats FAIL beats PASS,
+   #1213); every v1.0.0
+   roadmap item merged-green except M4's own two terminal boxes.
+8. Trust-anchor custody intact and one verified human acknowledgment
+   per release, both checkable (#1301): (a) every digest in
+   `factory-ops/release/trust-pin.json` equals the SHA-256 of the
+   corresponding pinned file at the gate SHA, the live
+   `## Human maintainers` section hashes to the pin's `rosterHash`,
+   and every commit touching a pinned path since `pinnedAtCommit` is a
+   directly-pushed, roster-key-signed commit touching only sanctioned
+   paths — any mismatch is FAIL; (b) `factory-ops/release/<version>/
+   gate.ack` exists on the release branch, in a commit satisfying the
+   same signature rules, whose single line equals the SHA-256 of the
+   gate report's **acked canonical form** (canonical bytes with the
+   criterion-8 entry masked to `"pending-ack"` — a report cannot
+   attest its own acknowledgment) — absent or mismatched is FAIL.
+   Rationale and custody mechanism: ADR 0006 §§ D5–D6.
+9. Zero standing contested closes, checkable (#1301): the parked
+   bucket of the latest successful close-audit run (criterion 6's run)
+   is empty. A parked entry exits ONLY by the issue being reopened and
+   re-closed with a qualifying fix (the auditor reclassifies it), or
+   by a human disposition record at
+   `factory-ops/release/dispositions/<issue>.json` covered by the
+   trust pin. FAIL names every standing entry. Rationale: ADR 0006
+   § D4.
+
+Then `/ship` on the release branch — never from red, release-proof
+minted on the built artifact.
