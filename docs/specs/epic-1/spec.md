@@ -93,11 +93,27 @@ prerequisites) — no "not evaluable" meta-states.
    #1213); every v1.0.0
    roadmap item merged-green except M4's own two terminal boxes.
 8. Trust-anchor custody intact and one verified human acknowledgment
-   per release (ADR 0006 §§ D5–D6 define both mechanically).
-9. Zero standing contested closes (ADR 0006 § D4's parked bucket;
-   cleared by a qualifying fix close or a human disposition record at
-   `factory-ops/release/dispositions/<issue>.json`, pin-covered per
-   ADR 0006 § D5).
+   per release, both checkable (#1301): (a) every digest in
+   `factory-ops/release/trust-pin.json` equals the SHA-256 of the
+   corresponding pinned file at the gate SHA, the live
+   `## Human maintainers` section hashes to the pin's `rosterHash`,
+   and every commit touching a pinned path since `pinnedAtCommit` is a
+   directly-pushed, roster-key-signed commit touching only sanctioned
+   paths — any mismatch is FAIL; (b) `factory-ops/release/<version>/
+   gate.ack` exists on the release branch, in a commit satisfying the
+   same signature rules, whose single line equals the SHA-256 of the
+   gate report's **acked canonical form** (canonical bytes with the
+   criterion-8 entry masked to `"pending-ack"` — a report cannot
+   attest its own acknowledgment) — absent or mismatched is FAIL.
+   Rationale and custody mechanism: ADR 0006 §§ D5–D6.
+9. Zero standing contested closes, checkable (#1301): the parked
+   bucket of the latest successful close-audit run (criterion 6's run)
+   is empty. A parked entry exits ONLY by the issue being reopened and
+   re-closed with a qualifying fix (the auditor reclassifies it), or
+   by a human disposition record at
+   `factory-ops/release/dispositions/<issue>.json` covered by the
+   trust pin. FAIL names every standing entry. Rationale: ADR 0006
+   § D4.
 
 Then `/ship` on the release branch — never from red, release-proof
 minted on the built artifact.

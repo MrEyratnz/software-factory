@@ -42,8 +42,10 @@ fixtures unless they are actually recorded).
 The one real laundering incident on record (#120: falsely closed
 `completed` for a week) was healed by a single reopen — evidence that
 detection-and-repair protects every day, while a release-time predicate
-protects one instant. ADR 0005 (carried in THIS PR so the normative chain exists at merge — PR #444 subsequently conforms only the spec and PRODUCT.md,
-`docs/adr/0005-m4-tech-debt-gate-scope.md`) already settled the gate's
+protects one instant. ADR 0005 (carried in THIS PR so the normative chain exists at merge,
+as is the spec transcription — PR #444 subsequently conforms only
+residual PRODUCT.md remnants and retires its own accreted spec prose,
+per D8; `docs/adr/0005-m4-tech-debt-gate-scope.md`) already settled the gate's
 *scope*: fail-closed triage, security precedence across priority levels,
 the M5 deferral home, and the coverage-floor widening to
 `hooks/lib/common.sh`. This ADR settles the gate's *mechanism*.
@@ -261,10 +263,19 @@ force; the auditor-liveness evidence; and the **custody section**
 (pinned digests, pin-chain verification results, and the list of every
 commit touching pinned paths since `pinnedAtCommit`).
 
+**The acked canonical form (#1290):** the digest the human signs is
+computed over the report's canonical bytes **with the criterion-8
+entry masked to the fixed sentinel `"pending-ack"`** — criterion 8
+*is* the acknowledgment, so a hash over a report that already shows
+criterion 8 satisfied is self-referential and no PASS would ever be
+reachable. No other field is excluded: everything else in the report
+is fixed before the ack exists, so the masked-canonical bytes are
+stable from emission through signing.
+
 The gate FAILS unless `factory-ops/release/<version>/gate.ack` exists on
-the release branch containing exactly that SHA-256 digest as its only
-line, in a **directly-pushed commit satisfying the same signature rules
-as the pin chain** (D5.2). The acknowledgment is **unconditional — it
+the release branch containing exactly that acked-canonical-form SHA-256
+digest as its only line, in a **directly-pushed commit satisfying the
+same signature rules as the pin chain** (D5.2). The acknowledgment is **unconditional — it
 fires on every release, including one with an empty ledger** — so no
 agent-computed trigger can route around the witness. Agent
 self-acknowledgment tiers (`gateReportHash` written by the
@@ -299,13 +310,18 @@ to bookkeeping; they satisfy no criterion.
 - **This ADR merges first**, as the board decision of record; the
   sprint-4 review freeze holds and the panel is the review of record —
   no further ordinary adversarial rounds on the gate design.
-- **PR #444 then reduces to conform, docs-only:** ADR 0005 lands
-  unchanged (its scope decisions — fail-closed triage, cross-priority
-  security, the M5 deferral home, the `common.sh` coverage widening,
-  the joint-lane rule — all **stand**); the spec's "Release Gate for
-  v1.0.0" section shrinks from ~280 lines to the short normative form
-  of D1–D7 with pointers to the executable definitions;
-  `docs/PRODUCT.md` keeps rationale and points at the spec. The
+- **PR #444 then reduces to conform, docs-only:** ADR 0005's scope
+  decisions — fail-closed triage, cross-priority security, the M5
+  deferral home, the `common.sh` coverage widening, the joint-lane
+  rule — all **stand**. The normative artifacts land **in the same PR
+  as this ADR** (#1296: one owner, no race): ADR 0005 itself is
+  carried here so the decision chain exists at merge, and the spec's
+  "Release Gate for v1.0.0" section is transcribed here to the
+  nine-criterion normative form (#1305 — nine criteria, not "D1–D7")
+  per D1's transcription rule. #444 conforms only what remains on its
+  branch — residual `docs/PRODUCT.md` remnants and retiring its
+  accreted spec prose in favor of the already-landed normative copy —
+  and `docs/PRODUCT.md` keeps rationale and points at the spec. The
   accreted close-audit prose is **superseded by this ADR**, and its
   26-round finding ledger becomes the requirements source the fixtures
   are transcribed from (per D3's provenance rule).

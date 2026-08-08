@@ -1,6 +1,8 @@
 # ADR 0005 — Scope the v1.0.0 tech-debt gate: fail-closed on triage, security outranks priority
 
-Status: accepted · Date: 2026-08-05
+Status: accepted · Date: 2026-08-05 · Amended: 2026-08-08 (conformed
+to ADR 0006, the sprint-4 board synthesis — its forward references to
+0006 and to spec criteria 6/9 date from this amendment, #1297)
 
 ## Context
 
