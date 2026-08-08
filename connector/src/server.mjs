@@ -238,7 +238,15 @@ const TOOLS = {
     description:
       'Given this session\'s review findings and the open `tech-debt` issues, ' +
       'return which findings are already filed and which are missing — a pure ' +
-      'fingerprint set-diff that makes filing idempotent and drop-proof.',
+      'fingerprint set-diff that makes filing idempotent and drop-proof. A ' +
+      '"missing" entry may carry a `staleIssue` (also surfaced in ' +
+      '`mismatched`) naming an already-open issue that plausibly describes ' +
+      'the same problem (matched on location AND impact substance, not ' +
+      'location alone) but whose fingerprint trailer diverges from the ' +
+      'canonical value — confirm the issue is actually about the same ' +
+      'problem before fixing its trailer to the named fingerprint; if it is ' +
+      'not clearly the same problem, file a fresh issue instead of editing ' +
+      'that one.',
     inputSchema: {
       type: 'object',
       required: ['findings'],
