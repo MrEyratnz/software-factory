@@ -26,7 +26,7 @@ fi
 # The factory's own workflows (not the pre-existing repo CI). Every one must:
 # be guarded by the FACTORY_HALT kill switch, declare an explicit permissions
 # block (least privilege), and pin every `uses:` action to a full 40-hex SHA.
-FACTORY_WORKFLOWS="claude-session factory-run cron-prod on-issue on-pr nightly-eval project-sync"
+FACTORY_WORKFLOWS="claude-session factory-run cron-prod cron-rerun on-issue on-pr nightly-eval project-sync"
 for wf in $FACTORY_WORKFLOWS; do
   f=".github/workflows/$wf.yml"
   if [ ! -f "$f" ]; then bad "$f missing"; continue; fi
@@ -874,6 +874,34 @@ YAML
   rm -rf "$CEILING_FIXTURE"
 else
   ok "pyyaml unavailable locally — ceiling-vs-credential check deferred to CI"
+fi
+
+# --- limit-window reruns must be automated, not babysat (#1140) ---------------
+# Operational record 2026-07-29..08-07: ~14 session-limit windows each killed
+# in-flight station jobs, and every recovery was a HUMAN-side sleep script
+# firing `gh run rerun --failed`. cron-rerun automates exactly that pattern:
+# hourly, find recent failed station runs whose failure carries the limit
+# signature, and rerun their failed jobs — cheap because #725/#731 resume the
+# parked session instead of re-paying it. Deterministic bash, no model tokens.
+RERUN_WF=".github/workflows/cron-rerun.yml"
+if [ -f "$RERUN_WF" ]; then
+  grep -q "schedule:" "$RERUN_WF" \
+    && ok "$RERUN_WF runs on a schedule (the babysitter is a cron, not a human)" \
+    || bad "$RERUN_WF lacks a schedule trigger — limit windows wait for a human again (#1140)"
+  grep -q "run rerun" "$RERUN_WF" && grep -q -- "--failed" "$RERUN_WF" \
+    && ok "$RERUN_WF reruns only the FAILED jobs (resume picks up the parked session)" \
+    || bad "$RERUN_WF never calls gh run rerun --failed (#1140)"
+  grep -qiE "limit" "$RERUN_WF" \
+    && ok "$RERUN_WF matches the limit signature before rerunning — real failures are not retried blindly" \
+    || bad "$RERUN_WF has no limit-signature filter — it would rerun genuine failures forever (#1140)"
+  grep -qE "runAttempt|run_attempt|attempt" "$RERUN_WF" \
+    && ok "$RERUN_WF caps rerun attempts — no infinite retry of a persistent failure" \
+    || bad "$RERUN_WF has no attempt cap (#1140)"
+  grep -qE "actions:[[:space:]]*write" "$RERUN_WF" \
+    && ok "$RERUN_WF holds actions:write (required to rerun runs)" \
+    || bad "$RERUN_WF lacks actions: write — reruns would 403 (#1140)"
+else
+  bad "$RERUN_WF missing — limit-window recovery still requires a human babysitter (#1140)"
 fi
 
 # --- reusable-workflow permission semantics (#97) ----------------------------

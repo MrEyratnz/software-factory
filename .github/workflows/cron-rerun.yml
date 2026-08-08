@@ -1,0 +1,100 @@
+name: cron-rerun
+
+# The limit-window babysitter, automated (#1140). Operational record
+# 2026-07-29..08-07: ~14 session-limit windows each killed in-flight station
+# jobs, and every recovery was a human-side sleep script firing
+# `gh run rerun --failed` after the reset. This cron does exactly that —
+# hourly, deterministically, with zero model tokens: find recent failed
+# station runs whose failure carries the limit signature, and rerun their
+# failed jobs. Cheap by construction: #725/#731's checkpoint/resume means a
+# rerun RESUMES the parked session instead of re-paying it. Genuine (non-
+# limit) failures are never matched, and an attempt cap stops any loop on a
+# persistently failing run.
+
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cron-rerun
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  rerun:
+    if: vars.FACTORY_HALT != 'true'
+    runs-on: ubuntu-latest
+    # The orchestrator App token: rerunning another workflow's run needs a
+    # credential whose actions:write actually bites (and whose activity is
+    # attributable) — same identity model as cron-prod's dispatch.
+    environment: orchestrator
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: mint the orchestrator app token
+        id: app
+        if: vars.APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: resolve the rerun identity
+        id: ident
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
+          FALLBACK: ${{ github.token }}
+        run: |
+          # Prefer the App token, then a PAT, then the workflow token (which
+          # holds actions:write from the permissions block above).
+          token="${APP_TOKEN:-${FACTORY_PAT:-$FALLBACK}}"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$token"
+
+      - name: rerun limit-killed station runs
+        env:
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+          REPO: ${{ github.repository }}
+          # A run at its Nth attempt has been rerun N-1 times already; stop
+          # retrying past this many attempts — a run that still fails then is
+          # not limit-weather, it needs eyes.
+          MAX_ATTEMPTS: "6"
+        run: |
+          set -uo pipefail
+          since="$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          rerun_count=0
+
+          for wf in on-pr.yml factory-run.yml nightly-eval.yml on-issue.yml claude-code-review.yml; do
+            runs="$(gh run list --repo "$REPO" --workflow="$wf" \
+              --status failure --created ">$since" \
+              --json databaseId,attempt --jq '.[] | "\(.databaseId) \(.attempt)"' 2>/dev/null || true)"
+            [ -z "$runs" ] && continue
+
+            while read -r run_id run_attempt; do
+              [ -z "$run_id" ] && continue
+              if [ "${run_attempt:-1}" -ge "$MAX_ATTEMPTS" ]; then
+                echo "run $run_id at attempt $run_attempt >= $MAX_ATTEMPTS — leaving for a human"
+                continue
+              fi
+              # The limit signature: the session result the failed job logged.
+              # Matches "You've hit your session limit" / "weekly limit" /
+              # 429-style api_error results — and nothing else, so genuine
+              # red suites and infra failures are never blind-retried.
+              if gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null \
+                   | grep -qiE "hit your (session|weekly) limit"; then
+                echo "run $run_id ($wf, attempt $run_attempt): limit signature — rerunning failed jobs"
+                gh run rerun "$run_id" --repo "$REPO" --failed \
+                  && rerun_count=$((rerun_count + 1)) \
+                  || echo "::warning::rerun of $run_id failed (may already be re-running)"
+              fi
+            done <<< "$runs"
+          done
+
+          echo "rerun_count=$rerun_count"
+          echo "reran $rerun_count limit-killed run(s); resumed sessions pick up from their checkpoints"
