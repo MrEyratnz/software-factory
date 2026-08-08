@@ -80,8 +80,11 @@ prerequisites) — no "not evaluable" meta-states.
    `connector/src/release-gate/**`, measured at the exact SHA `/ship`
    builds; three consecutive green `nightly-eval.yml` runs on `main`
    (thresholds per #511); the single-line `**Freeze state: ON**` marker
-   in `docs/PRODUCT.md`; prerequisite issues #419, #420, #510, #511
-   closed; zero unresolved `.factory/review` findings; every v1.0.0
+   in `docs/PRODUCT.md`; zero unresolved `.factory/review` findings
+   (prerequisite issues #419, #420, #510, #511 are NOT part of this
+   criterion's FAIL set — while any is open the verdict is **BLOCKED**,
+   naming them, per the precedence rule: BLOCKED beats FAIL beats PASS,
+   #1213); every v1.0.0
    roadmap item merged-green except M4's own two terminal boxes.
 8. Trust-anchor custody intact and one verified human acknowledgment
    per release (ADR 0006 §§ D5–D6 define both mechanically).

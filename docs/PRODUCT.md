@@ -240,8 +240,11 @@ convening on #138 revives the underlying question.
   normative gate definition is `docs/specs/epic-1/spec.md` § "Release
   Gate for v1.0.0" (scope per ADR 0005, mechanism per ADR 0006). The
   reservation recorded here at planning time is resolved by that board
-  decision — this line was conformed by the ADR 0006 landing PR so no
-  document contradicts the gate at merge (#1192).
+  decision — and note the lane: the reservation's OWN text conditioned
+  adoption on "until judge-panel resolves it," so this conform executes
+  the product owner's recorded condition rather than crossing into the
+  scope lane (#1212); the edit was made by the ADR 0006 landing PR so
+  no document contradicts the gate at merge (#1192).
 - Left #138 with its standing disposition: `v1.0.0`, P1, routed to
   `/judge-panel` — unchanged.
 

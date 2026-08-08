@@ -66,8 +66,12 @@ there by this same PR; the spec governs on divergence, per ADR 0005's
 single-copy rule) — they are deliberately **not restated here** (#1170).
 What this ADR *decides* about them, beyond ADR 0005's scope:
 
-- criteria are **current-state only** (the close-audit protects history,
-  not a release-time timeline predicate);
+- criteria read current or gate-time timeline state **exactly as the
+  spec specifies per criterion** — "current-state only" rejects
+  release-time CLOSE-laundering predicates (closed-issue history is the
+  auditor's job, D4), NOT the floors' ever-carried membership, which
+  the spec's criteria 3/5 deliberately compute at gate time (#1190,
+  #1210);
 - **auditor liveness** and **zero standing contested closes** are
   themselves blocking criteria (D4);
 - **trust-anchor custody** and **one verified human acknowledgment per
@@ -80,14 +84,24 @@ What this ADR *decides* about them, beyond ADR 0005's scope:
 The gate returns `PASS`, `FAIL` (naming the failed criteria with
 evidence references), or `BLOCKED` (naming the open prerequisite
 issues). "Not evaluable until #X" prose meta-states are abolished; every
-criterion is evaluable on day one, some as `BLOCKED`.
+criterion is evaluable on day one, some as `BLOCKED`. Precedence:
+**BLOCKED beats FAIL beats PASS** — an open prerequisite yields BLOCKED
+and is excluded from FAIL computation, so one state never drives two
+verdicts (#1213).
 
 ### D3 — Pure cores, real-evidence fixtures, fixture-only amendments
 
 The gate's `decide(evidence) → verdict` core and the auditor's
 `closeLegitimacy(closeEvidence) → legitimate | illegitimate | contested`
 predicate are **pure reference implementations** in
-the `release-gate` verdict module, a peer of `factory-core.mjs` under `connector/src/` (`connector/src/release-gate/`, no I/O, no clock, no env; exposed to scripts via `cli.mjs` like every verdict — Rule 1 broadened per this ADR), fed by a thin
+the `release-gate` verdict module, a peer of `factory-core.mjs` under
+`connector/src/` (`connector/src/release-gate/`, no I/O, no clock, no
+env). **The verdict-of-record invocation path is exactly one:** the
+pinned entry scripts run `node` on the pinned
+`connector/src/release-gate/dispatch.mjs` (#1208) — `cli.mjs` MAY
+additionally expose a read-only advisory view for humans and MCP, but
+no verdict produced through `cli.mjs` is ever the release verdict, so
+its unpinned status is harmless by construction. Fed by a thin
 evidence collector that is the only component touching the network.
 `tests/fixtures/release-gate/` holds one fixture per adversarial
 scenario, named for the review finding that motivated it; the fixture
