@@ -62,6 +62,13 @@ prerequisites) — no "not evaluable" meta-states.
 1. Zero open issues labeled `bug`.
 2. Zero open `tech-debt` issues currently labeled `P0` or `P1`
    (most-severe governs when several `P0`–`P3` labels are present).
+   An open `tech-debt` issue whose `P0`/`P1` label was removed or
+   replaced with `P2`/`P3` since the epoch anchor **counts as still
+   `P0`/`P1` for this criterion** unless a pin-covered human
+   disposition record (criterion 9's lane) covers the down-rank — a
+   relabel the day before release must not create a pass no fix
+   earned; the report-only down-rank row is display, not the brake
+   (#1152).
 3. Zero open issues that have **ever carried** `security` (timeline
    membership computed at gate time — a label stripped an hour before
    the gate must not create a pass window the nightly auditor has not
@@ -97,14 +104,30 @@ prerequisites) — no "not evaluable" meta-states.
    `factory-ops/release/trust-pin.json` equals the SHA-256 of the
    corresponding pinned file at the gate SHA, the live
    `## Human maintainers` section hashes to the pin's `rosterHash`,
-   and every commit touching a pinned path since `pinnedAtCommit` is a
-   directly-pushed, roster-key-signed commit touching only sanctioned
-   paths — any mismatch is FAIL; (b) `factory-ops/release/<version>/
-   gate.ack` exists on the release branch, in a commit satisfying the
-   same signature rules, whose single line equals the SHA-256 of the
-   gate report's **acked canonical form** (canonical bytes with the
-   criterion-8 entry masked to `"pending-ack"` — a report cannot
-   attest its own acknowledgment) — absent or mismatched is FAIL.
+   and every commit **touching the custody-lane files**
+   (`trust-pin.json`, `gate.ack`, the disposal allowlist, and
+   `factory-ops/release/dispositions/**`) since the epoch anchor is a
+   directly-pushed, roster-key-signed commit touching only those
+   sanctioned paths — any mismatch is FAIL. The custody walk is
+   scoped to the custody lane ONLY: gate code and fixtures merge
+   through the normal autonomous PR flow, and their integrity is
+   enforced solely by the digest-match clause above (a change takes
+   release effect only after a human re-pin) — a walk over all pinned
+   paths would FAIL uncurably on the first ordinary gate-code PR, the
+   brickability #1123 forbids; (b) `factory-ops/release/<version>/
+   gate-report.json` exists as the **frozen report snapshot** —
+   committed canonical bytes; the verdict of record reads the
+   snapshot, never a re-emitted report — and `factory-ops/release/
+   <version>/gate.ack` exists on the release branch, in a commit
+   satisfying the same signature rules, whose single line equals the
+   SHA-256 of that snapshot's **acked canonical form** (snapshot
+   bytes with the criterion-8 entry masked to `"pending-ack"` — a
+   report cannot attest its own acknowledgment). Absent or mismatched
+   is FAIL. Autonomous activity between snapshot and `/ship` cannot
+   flip the digest (the snapshot is frozen, #1317); what happens
+   after the snapshot is witnessed by the nightly auditor and the
+   next release's ledger, and the snapshot itself must satisfy
+   criterion 6's freshness bound at gate time.
    Rationale and custody mechanism: ADR 0006 §§ D5–D6.
 9. Zero standing contested closes, checkable (#1301): the parked
    bucket of the latest successful close-audit run (criterion 6's run)

@@ -69,6 +69,9 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 - [ ] Feature-freeze overflow: `idea`/`research`/retro issues routed here by
   the product owner once the v1.0.0 gate is within one sprint of holding
+- [ ] P2/P3 tech-debt burndown (non-security): the deferral home ADR 0005
+  names for debt the v1.0.0 gate does not block on — tracked scope, not
+  amnesty (#1321)
 - [ ] OTEL traces/spans for the lights-out loop (beyond the shipped metrics-only MVP)
 - [ ] Prometheus/Grafana dashboards over the factory metrics
 - [ ] Ledger-scraping sidecar

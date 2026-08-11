@@ -145,9 +145,9 @@ not as release-time pass/fail predicates. Actions:
   floor label stripped from an open issue) → **reopen once per close
   event** with a comment / re-apply the label. A re-closed issue is
   never reopened again for the same event (no reopen wars) — but it
-  becomes a **standing contested close**, and any nonzero
-  standing-contested-close count is itself a **blocking gate
-  criterion** until a human disposition (a pin-covered
+  becomes a **standing contested close**, feeding the parked bucket
+  **spec criterion 9 gates on** (the predicate lives there, not here,
+  #1131) until a human disposition (a pin-covered
   `factory-ops/release/dispositions/<issue>.json` record — D5(d)
   defines the lane, #1181) or a qualifying fix close resolves it. Close →
   auditor-reopen → re-close therefore parks an issue in a blocking
@@ -216,34 +216,38 @@ because it is the entire point: a commit no agent can forge. CI still
 runs on the push; the gate itself rejects any pin-chain commit that
 touches paths outside the sanctioned set.
 
-**What the gate checks (all fail-closed):**
+**Custody mechanism.** The pass/fail predicate is **spec criterion 8
+— the single normative copy; on any divergence the spec governs
+(D1's rule, #1131)**. What follows records HOW each of its clauses is
+computed, without restating thresholds:
 
-1. Recompute the pinned paths' digests at the release SHA; any mismatch
-   with `trust-pin.json` → FAIL ("gate code changed since last human
-   pin"). Gate-code and fixture changes therefore merge through the
-   normal autonomous PR flow, but **take release effect only after a
-   human re-pins**, having reviewed the diff-since-last-pin that the
-   gate report lists (the custody section). A weakened predicate cannot
-   green a release by greening its own tests.
-2. Walk the commit history of `trust-pin.json` **from the most recent
-   epoch anchor forward** — the epoch anchor is the newest commit
-   touching the pin that satisfies all custody properties below; only
-   commits AFTER it are audited. This makes the walk unbrickable
-   (#1123): a violating commit (a stray squash-merge, an innocent
-   codemod) fails the gate only until the human pushes a fresh
-   epoch-anchoring re-pin that supersedes it — history before an epoch
-   is out of scope by construction, and the epoch commit itself proves
-   human review of everything it pins. Custody properties: GitHub
-   signature verification state `VALID`, `signature.signer.login`
-   (never the settable author/committer email, #1080) on the roster
-   whose hash the pin itself carries, author = committer = signer, a
-   non-merge commit not associated with any merged PR, and a
-   sanctioned-paths-only diff. Any post-epoch violation → FAIL until
-   re-pinned.
-3. The live `## Human maintainers` section's hash equals the pin's
-   `rosterHash` → otherwise FAIL. Roster changes ride the same re-pin
-   mechanism; the unsatisfiable MAINTAINERS.md-history signature walk
-   is **rejected** and replaced by this pin.
+1. *Digest match* — the pinned paths' digests are recomputed at the
+   release SHA against `trust-pin.json`. Gate-code and fixture
+   changes merge through the normal autonomous PR flow but **take
+   release effect only after a human re-pins**, having reviewed the
+   diff-since-last-pin the gate report lists (the custody section). A
+   weakened predicate cannot green a release by greening its own
+   tests. This clause — not the custody walk — is the sole integrity
+   mechanism for gate code (#1123).
+2. *Custody walk* — over commits touching the **custody-lane files
+   only** (the pin, the ack, the disposal allowlist, the disposition
+   records), **from the most recent epoch anchor forward** — the
+   epoch anchor is the newest commit touching the pin that satisfies
+   all custody properties below; only commits AFTER it are audited.
+   This makes the walk unbrickable (#1123): a violating commit fails
+   the gate only until the human pushes a fresh epoch-anchoring
+   re-pin that supersedes it — history before an epoch is out of
+   scope by construction, and the epoch commit itself proves human
+   review of everything it pins. Custody properties: GitHub signature
+   verification state `VALID`, `signature.signer.login` (never the
+   settable author/committer email, #1080) on the roster whose hash
+   the pin itself carries, author = committer = signer, a non-merge
+   commit not associated with any merged PR, and a
+   sanctioned-paths-only diff.
+3. *Roster hash* — the live `## Human maintainers` section is hashed
+   and compared to the pin's `rosterHash`. Roster changes ride the
+   same re-pin mechanism; the unsatisfiable MAINTAINERS.md-history
+   signature walk is **rejected** and replaced by this pin.
 
 **Genesis:** the first pin commit self-declares the roster it hashes;
 its authenticity rests on the cryptographic signature of the operator's
@@ -263,14 +267,28 @@ force; the auditor-liveness evidence; and the **custody section**
 (pinned digests, pin-chain verification results, and the list of every
 commit touching pinned paths since `pinnedAtCommit`).
 
+**The frozen snapshot (#1317):** the emitted report is committed as
+`factory-ops/release/<version>/gate-report.json` — a frozen,
+content-addressed artifact. **The human signs the snapshot and the
+verdict of record verifies against the snapshot's bytes, never a
+re-emitted report.** Without this, the digest livelocks: the report
+carries inherently live data (the close ledger, auditor-liveness
+evidence, the custody commit list), so any autonomous close or
+nightly run between signature and `/ship` would flip a re-emitted
+hash and FAIL a legitimately-acked release — PASS would be reachable
+only by quiescing the factory. Activity after the snapshot is not
+unwitnessed: the nightly auditor classifies it continuously and it
+heads the next release's ledger; the snapshot itself must satisfy
+criterion 6's freshness bound at gate time.
+
 **The acked canonical form (#1290):** the digest the human signs is
-computed over the report's canonical bytes **with the criterion-8
+computed over the snapshot's canonical bytes **with the criterion-8
 entry masked to the fixed sentinel `"pending-ack"`** — criterion 8
 *is* the acknowledgment, so a hash over a report that already shows
 criterion 8 satisfied is self-referential and no PASS would ever be
-reachable. No other field is excluded: everything else in the report
-is fixed before the ack exists, so the masked-canonical bytes are
-stable from emission through signing.
+reachable. The mask is the only transformation; the snapshot's other
+bytes are frozen at commit time (#1317), so the acked form is stable
+from snapshot through signing by construction.
 
 The gate FAILS unless `factory-ops/release/<version>/gate.ack` exists on
 the release branch containing exactly that acked-canonical-form SHA-256
@@ -335,8 +353,15 @@ to bookkeeping; they satisfy no criterion.
   audit) plus the D7 disposition lane; #649 closes when that bootstrap
   run succeeds.
 
-**Explicitly rejected:** ever-carried timeline algebra as release-time
-pass/fail predicates (it survives as auditor classification logic); the
+**Explicitly rejected:** general ever-carried timeline algebra as
+release-time pass/fail predicates (it survives as auditor
+classification logic **and as the three narrow timeline predicates
+the spec itself names: ever-carried `security` (criterion 3),
+ever-carried `gate:confirmed-high` (criterion 5), and
+undispositioned P0/P1 down-ranks of open issues (criterion 2,
+#1152) — the down-rank predicate was added after review confirmed
+that a report-only down-rank row left relabeling an open P1 to P2 as
+a one-eye-blink false-green bypass**); the
 fixture-governs-itself amendment loop without human custody
 (contract-first's confirmed flaw); a ledger-conditional human witness
 and per-exemption witnessing (security-first's confirmed flaws); a
