@@ -26,6 +26,14 @@ ok="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).
 n="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).missing.length))}catch(e){process.stdout.write("?")}})')"
 otel_emit factory_techdebt_missing_total gauge "$n" '{}'
 
+# A "missing" finding may actually be a mismatched-fingerprint duplicate (see
+# below) rather than a genuine gap. Count those separately so the "file each"
+# instruction below names only the findings that truly need a NEW issue —
+# otherwise it would tell the clerk to "file" the same finding the mismatch
+# detail simultaneously tells it NOT to duplicate-file (#1257/#1262).
+m="$(printf '%s' "$audit" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(String((JSON.parse(s).mismatched||[]).length))}catch(e){process.stdout.write("0")}})')"
+to_file=$((n - m))
+
 # A "missing" finding may actually already have an open issue about it whose
 # fingerprint trailer just doesn't match — the tech-debt-clerk hand-derived or
 # paraphrased the fingerprint instead of copying techdebt_lint's output
@@ -46,6 +54,15 @@ let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{
 });
 ')"
 
-reason="$n unfixed review finding(s) are not yet tracked — file each as a \`tech-debt\` issue (run /debt sync) or mark it status:\"fixed\" in .factory/review before ending. (Convention: unfixed findings become tracked tech-debt.)"
-[ -n "$mismatch_msg" ] && reason="$reason $mismatch_msg"
+reason=""
+if [ "$to_file" -gt 0 ]; then
+  reason="$to_file unfixed review finding(s) are not yet tracked — file each as a \`tech-debt\` issue (run /debt sync) or mark it status:\"fixed\" in .factory/review before ending. (Convention: unfixed findings become tracked tech-debt.)"
+fi
+if [ -n "$mismatch_msg" ]; then
+  if [ -n "$reason" ]; then
+    reason="$reason Separately: $mismatch_msg"
+  else
+    reason="$mismatch_msg"
+  fi
+fi
 block_stop "$reason"

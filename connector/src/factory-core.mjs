@@ -192,6 +192,19 @@ const hasLocationToken = (hay, loc) => {
 };
 
 /**
+ * True if `phrase` appears in `hay` anchored on whole-word/token boundaries,
+ * not as a raw substring — "leak" must NOT match inside "leaking" (issue
+ * #1256). Same boundary technique as `hasLocationToken`, but for prose text
+ * rather than a "file:line" token, so path characters ('/', '.', '-') are
+ * ordinary word characters here, not boundary exclusions.
+ */
+const hasWordBoundaryMatch = (hay, phrase) => {
+  if (!phrase) return false;
+  const re = new RegExp(`(?:^|[^a-z0-9_])${escapeRegExp(phrase)}(?![a-z0-9_])`);
+  return re.test(hay);
+};
+
+/**
  * A finding's identity is its location + the invariant substance of the
  * problem (impact), NOT its wording of a title (which a re-review may reword).
  * That keeps the fingerprint stable so the same defect never double-files.
@@ -277,15 +290,29 @@ export function extractFingerprint(issue) {
  * hand-typo'd fingerprint keeps the same impact wording) or, for a looser
  * paraphrase, a majority of the impact's distinguishing (>3 char) words
  * appearing in the issue text.
+ *
+ * Both checks are anchored on whole-word/token boundaries via
+ * `hasWordBoundaryMatch`, not raw substring — a raw `String.includes` lets a
+ * short word coincidentally match inside a longer, unrelated word ("leak" is
+ * a substring of "leaking") and lets a high shared-word ratio slip through
+ * even when the one unmatched word is exactly what makes the two problems
+ * different ("...on startup path" vs "...on shutdown path" is 4-of-5 shared
+ * words). Issue #1256/#1263: both false positives corrupted a correctly-filed
+ * issue's fingerprint trailer instead of filing the real, different finding.
+ * The fuzzy ratio path has an additional guard: it only fires with at least
+ * 3 distinctive (>3 char) words to go on — a match on 1-2 short words is not
+ * enough signal — and requires MORE than 0.8 of them to match, since 0.8
+ * (4-of-5) is the exact ratio a genuinely different problem can produce when
+ * only the one word that actually distinguishes it fails to match.
  */
 function sameProblem(finding, hay) {
   const impact = norm(finding && finding.impact) || norm(finding && finding.title);
   if (!impact) return false;
-  if (hay.includes(impact)) return true;
+  if (hasWordBoundaryMatch(hay, impact)) return true;
   const words = impact.split(' ').filter((w) => w.length > 3);
-  if (words.length === 0) return false;
-  const matched = words.filter((w) => hay.includes(w));
-  return matched.length / words.length >= 0.7;
+  if (words.length < 3) return false;
+  const matched = words.filter((w) => hasWordBoundaryMatch(hay, w));
+  return matched.length / words.length > 0.8;
 }
 
 /**

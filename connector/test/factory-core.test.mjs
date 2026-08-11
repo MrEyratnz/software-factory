@@ -409,6 +409,75 @@ test('techdebtAudit: cross-session same-location — a genuinely different findi
   assert.equal(audit.missing[0].staleIssue, null);
 });
 
+// Regression for #1256: sameProblem's exact-phrase fast path used raw
+// `String.includes`, not a word-boundary match, so a short impact's lone
+// distinctive word could match as a SUBSTRING of an unrelated word in the
+// candidate issue's text — "leak" is a substring of "leaking" — and the
+// finding got misdiagnosed as a stale duplicate of a completely different,
+// correctly-filed issue at the same location.
+test('techdebtAudit: coincidental substring overlap ("leak" inside "leaking") is not mismatched (issue #1256 repro A)', () => {
+  const finding = { location: 'src/net/socket.ts:30', impact: 'fd leak' };
+  const correctFp = fingerprintFinding(finding);
+
+  const staleFp = 'baadf00d';
+  assert.notEqual(staleFp, correctFp);
+  const openIssues = [{
+    title: 'unrelated memory leaking issue in socket handler',
+    body: `Location: src/net/socket.ts:30\nImpact: memory is leaking under sustained load, unrelated to fd handling\n\nfingerprint: ${staleFp}`,
+  }];
+
+  const audit = techdebtAudit([finding], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.mismatched.length, 0); // 'leak' as a substring of 'leaking' is not proof of the same problem
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
+// Regression for #1256/#1263: sameProblem's fuzzy ratio path counted a raw
+// substring match per word, and its 0.7 bar let 4-of-5 shared words (0.8)
+// through even when the ONE unmatched word is exactly what makes the two
+// problems different ("startup" vs "shutdown" — same file:line, same shape
+// of sentence, different bug). This is the borderline case the fuzzy branch
+// exists to decide, and it was untested before this regression.
+test('techdebtAudit: high word-overlap ratio with a differing key word (startup vs shutdown) is not mismatched (issue #1256/#1263 repro B)', () => {
+  const priorFinding = { location: 'src/db/pool.ts:12', impact: 'leaks database connection on shutdown path' };
+  const priorFp = fingerprintFinding(priorFinding);
+  const openIssues = [{
+    title: 'connection leak on shutdown',
+    body: `Location: src/db/pool.ts:12\nImpact: leaks database connection on shutdown path\n\nfingerprint: ${priorFp}`,
+  }];
+
+  const newFinding = { location: 'src/db/pool.ts:12', impact: 'leaks database connection on startup path' };
+  const audit = techdebtAudit([newFinding], openIssues);
+
+  assert.equal(audit.missing.length, 1);
+  assert.equal(audit.missing[0].finding.impact, 'leaks database connection on startup path');
+  // 4/5 shared words is not proof of the same problem when the differing word changes it
+  assert.equal(audit.mismatched.length, 0);
+  assert.equal(audit.missing[0].staleIssue, null);
+});
+
+// Keeps the legitimate mismatched case (same problem, hand-typo'd/paraphrased
+// fingerprint) working after tightening sameProblem — the exact-phrase path
+// must still fire when the impact text genuinely IS present, word-boundary
+// anchored, in the candidate issue.
+test('techdebtAudit: exact-phrase re-review match still flags a legitimate mismatch after the #1256 tightening', () => {
+  const finding = { location: 'src/auth/session.ts:14', impact: 'session token not invalidated on logout' };
+  const correctFp = fingerprintFinding(finding);
+
+  const staleFp = 'cafef00d';
+  assert.notEqual(staleFp, correctFp);
+  const openIssues = [{
+    title: 'session token not invalidated on logout',
+    body: `Location: src/auth/session.ts:14\nImpact: session token not invalidated on logout\n\nfingerprint: ${staleFp}`,
+  }];
+
+  const audit = techdebtAudit([finding], openIssues);
+
+  assert.equal(audit.mismatched.length, 1);
+  assert.equal(audit.mismatched[0].staleIssue.fingerprint, staleFp);
+});
+
 /* ── roadmapCheck ──────────────────────────────────────────────────────── */
 
 test('roadmapCheck: refuses without a merged-green SHA proof', () => {
