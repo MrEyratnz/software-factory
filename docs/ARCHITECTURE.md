@@ -39,7 +39,7 @@ docs/adr/        numbered decisions (the default adrDir); tests/ hermetic hook c
 |  `connector/src/factory-core.mjs` (+ per-domain peer verdict modules such as `connector/src/release-gate/` — ADR 0006) | every rule *verdict* (roadmap, commit lint, gates, release plan, tech-debt audit) as pure functions — no I/O, clock, or randomness | nothing |
 | `connector/src/server.mjs` (MCP) / `cli.mjs` | read-only tool exposure over stdio; the shell bridge hooks and CI call | factory-core, node stdlib |
 | `hooks/lib` | event-JSON plumbing (`common.sh`), quote-aware parsers, OTEL emit | node stdlib, `cli.mjs` |
-| `hooks/scripts` | allow/deny decisions at tool-use time (exit 0 / exit 2) | `hooks/lib`, `cli.mjs`, git, POSIX sh |
+| `hooks/scripts` | allow/deny decisions at tool-use time (exit 0 / exit 2) | `hooks/lib`, `cli.mjs`, git, POSIX sh; the release-gate entry scripts additionally run `node` directly on the pinned `connector/src/release-gate/dispatch.mjs` (the pinned lane, ADR 0006 § D5 — never via `cli.mjs`, #1366) |
 | `commands/`, `agents/`, `skills/` | the workflow prose: stations, roles, methodology | connector tools, hook-visible state |
 | `templates/`, `schemas/` | what gets stamped into target repos; the config contract | nothing at runtime |
 | `.github/workflows` | the authoritative re-enforcement boundary + the factory ops orchestrator | the same test commands, pinned CLI |
@@ -135,9 +135,14 @@ infrastructure. Per Rule 1 above (broadened by ADR 0006), the pure
 a peer of `factory-core.mjs` under `connector/src/`**. Its verdict of
 record is produced ONLY by the pinned entry scripts running `node` on
 the pinned `connector/src/release-gate/dispatch.mjs`; `cli.mjs` may
-expose a read-only advisory view but never the release verdict (Rule
-1's "can never disagree" applies to the advisory view tracking the
-pinned module — there is no second verdict path, #1219).
+expose a read-only advisory view but never the release verdict. The
+advisory view is **untrusted by construction** (#1364): `cli.mjs` is
+unpinned and agent-writable, so the advisory CAN diverge from the
+pinned module — which is why it carries no release authority and no
+consumer may treat it as the verdict; Rule 1's "can never disagree"
+holds for factory-core's shared hook/MCP paths, and for release-gate
+the guarantee is narrower and structural — there is exactly one
+verdict-of-record path, the pinned one (#1219).
 Regression-locked by fixtures
 recorded from real collector output under
 `tests/fixtures/release-gate/`. A nightly `close-audit` workflow detects and repairs laundered closes (its liveness and the custody/ack rules are gate criteria — see the spec; no restatement here, #1221). The gate's own trust anchors are pinned per ADR 0006 § D5 (no

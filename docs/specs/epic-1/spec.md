@@ -63,12 +63,15 @@ prerequisites) — no "not evaluable" meta-states.
 2. Zero open `tech-debt` issues currently labeled `P0` or `P1`
    (most-severe governs when several `P0`–`P3` labels are present).
    An open `tech-debt` issue whose `P0`/`P1` label was removed or
-   replaced with `P2`/`P3` since the epoch anchor **counts as still
-   `P0`/`P1` for this criterion** unless a pin-covered human
-   disposition record (criterion 9's lane) covers the down-rank — a
-   relabel the day before release must not create a pass no fix
-   earned; the report-only down-rank row is display, not the brake
-   (#1152).
+   replaced with `P2`/`P3` since the **2026-07-29 baseline** (the
+   same fixed baseline criteria 3/5 and the D6 report ledger use —
+   NOT the epoch anchor, which advances on every re-pin and would
+   silently un-count any down-rank older than the newest pin, #1363)
+   **counts as still `P0`/`P1` for this criterion** unless a
+   pin-covered human disposition record (criterion 9's lane) covers
+   the down-rank — a relabel the day before release must not create a
+   pass no fix earned; the report-only down-rank row is display, not
+   the brake (#1152).
 3. Zero open issues that have **ever carried** `security` (timeline
    membership computed at gate time — a label stripped an hour before
    the gate must not create a pass window the nightly auditor has not
@@ -106,9 +109,15 @@ prerequisites) — no "not evaluable" meta-states.
    `## Human maintainers` section hashes to the pin's `rosterHash`,
    and every commit **touching the custody-lane files**
    (`trust-pin.json`, `gate.ack`, the disposal allowlist, and
-   `factory-ops/release/dispositions/**`) since the epoch anchor is a
-   directly-pushed, roster-key-signed commit touching only those
-   sanctioned paths — any mismatch is FAIL. The custody walk is
+   `factory-ops/release/dispositions/**`) since the epoch anchor
+   satisfies ALL custody properties (#1365): GitHub signature
+   verification state `VALID`; `signature.signer.login` — never the
+   settable author/committer email (#1080) — present on the roster
+   whose hash the pin carries; author = committer = signer; a
+   non-merge commit not associated with any merged PR (a squash
+   merge is web-flow-signed and must not satisfy custody); and a
+   diff touching only the sanctioned custody-lane paths — any
+   violation is FAIL. The custody walk is
    scoped to the custody lane ONLY: gate code and fixtures merge
    through the normal autonomous PR flow, and their integrity is
    enforced solely by the digest-match clause above (a change takes
