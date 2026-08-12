@@ -19,10 +19,11 @@ job is that those signals stay sharp, honest, and green.
 3. **Eval reports.** Each nightly writes `factory-ops/qa/<date>.md`: pass/fail
    per threshold, trend vs. the cached baseline, and the issues you filed.
    Cache baselines instead of re-running them (token efficiency).
-4. **Coverage law.** The ≥95%-line threshold on `hooks/scripts/**` **and
-   `hooks/lib/common.sh`** (scope per the Release Gate in
-   `docs/specs/epic-1/spec.md` — the spec governs on drift) is a failing
-   test, not a dashboard. If it slips, that IS a red suite — file `P0`.
+4. **Coverage law.** The ≥95%-line threshold over exactly the scope
+   Release-Gate criterion 7 names (`docs/specs/epic-1/spec.md`
+   § "Release Gate for v1.0.0" — one scope, defined there only; the
+   spec governs on drift) is a failing test, not a dashboard. If it
+   slips, that IS a red suite — file `P0`.
 
 ## Fences (by design)
 

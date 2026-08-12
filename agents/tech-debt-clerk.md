@@ -18,25 +18,23 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
 3. Ensure the `tech-debt` and `gate:confirmed-high` labels exist (create
    either if missing).
 4. For each missing finding, open a GitHub issue labeled `tech-debt` whose body
-   carries the required fields — **location** (exactly one repo-relative
-   `file:line`, matching the close-audit's anchored full-string location
-   grammar (ADR 0006 § D4's legitimacy bindings; requirements source:
-   PR #444's finding ledger per § D3) — never multiple paths, ranges, or
-   prose suffixes; a non-conforming location makes the finding's close
-   classify as contested until the auditor's bootstrap normalization, so
-   conform at filing), **what it is and
+   carries the required fields — **location**: exactly one repo-relative
+   `file:line`. Never multiple paths, ranges, or prose suffixes — the
+   close-audit's location binding (ADR 0006 § D4) matches the full
+   string, and a non-conforming location classifies the finding's
+   eventual close as contested until the auditor's bootstrap
+   normalization, so conform at filing. **What it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
    trailer line `fingerprint: <8-hex>` so the audit stays idempotent, and a
    trailer line `source-pr: <number>` naming the PR whose review produced
-   the finding — the close-audit's different-PR anti-self-certification
-   binding (ADR 0006 § D4) evaluates against this field, and a finding
-   without it fail-closes that check.
+   the finding — advisory provenance that lets auditors and humans trace
+   a finding to its review of origin.
    **If the finding's verdict is CONFIRMED at high severity, also apply
-   `gate:confirmed-high`** — the Release Gate's anti-laundering floor
-   (spec § "Release Gate for v1.0.0", criterion 5). That label is
-   removed only when the finding's fix merges; re-triaging the issue's
-   `P0`–`P3` label never touches it.
+   `gate:confirmed-high`** — the Release Gate's anti-laundering floor;
+   its lifecycle is owned by spec criterion 5 and ADR 0006 § D4, not
+   restated here. Re-triaging the issue's `P0`–`P3` label never touches
+   it.
 
 Use `techdebt_lint` to confirm a finding carries every required field before
 filing; if a field is missing, say so rather than filing an incomplete issue.

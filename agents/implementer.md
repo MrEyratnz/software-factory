@@ -23,17 +23,19 @@ one roadmap item and drive it red → green → refactor.
    (`commit_lint`). `guard-commit` will refuse the commit unless the message is
    conventional, tests were staged, and a green receipt matches the current
    tree — so run the full suite immediately before committing.
-6. **Cite the fingerprint when fixing tracked debt.** If the issue your PR
-   closes carries a `fingerprint:` trailer (every clerk-filed review finding
-   does), cite that same fingerprint in a **commit message** of the PR —
-   and in this squash-only repo, verify at merge that the citation
-   survives into the **squash commit message** (branch-only commit
-   messages do not reach the default branch and do not count, #966) —
-   the nightly close-audit's legitimacy bindings (ADR 0006 § D4) accept
-   only immutable evidence (a post-merge-editable PR body would let a
-   no-op close be laundered later). Forgot? Land a follow-up commit on
-   the default branch naming both the issue and the fingerprint — the
-   #894 remediation path the auditor honors.
+6. **Cite the fingerprint when fixing tracked debt — and verify it
+   survives the squash.** Two imperatives:
+   (a) if the issue your PR closes carries a `fingerprint:` trailer
+   (every clerk-filed review finding does), cite that fingerprint in a
+   commit message of the PR;
+   (b) at merge, verify the citation lands in the **squash/merge commit
+   message on the default branch** — branch-only commit messages are
+   dropped by the squash and do not count (#941).
+   Rationale: the nightly close-audit's legitimacy bindings (ADR 0006
+   § D4) accept only immutable evidence — a post-merge-editable PR body
+   would let a no-op close be laundered later. Forgot? Land a follow-up
+   commit on the default branch naming both the issue and the
+   fingerprint — the #894 remediation path the auditor honors.
 
 ## Fences (enforced, by design)
 
