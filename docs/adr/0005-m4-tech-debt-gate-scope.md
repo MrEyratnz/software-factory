@@ -1,6 +1,8 @@
 # ADR 0005 — Scope the v1.0.0 tech-debt gate: fail-closed on triage, security outranks priority
 
-Status: accepted · Date: 2026-08-05
+Status: accepted · Date: 2026-08-05 · Amended: 2026-08-08 (conformed
+to ADR 0006, the sprint-4 board synthesis — its forward references to
+0006 and to spec criteria 6/9 date from this amendment, #1297)
 
 ## Context
 
@@ -98,16 +100,21 @@ the gate exists to forbid, #964/#969.)
 - The gate stays decidable with no judgment calls, across three mechanical
   bucket kinds: label queries over **open** issues (including the
   anti-laundering floor via the clerk-applied `gate:confirmed-high`
-  label), the close-laundering query over **closed** issues
-  (`stateReason` + merged-PR cross-reference, spec-defined), and the
+  label), closed-issue laundering detection — **moved by ADR 0006 § D1
+  to the nightly close-audit workflow**, whose liveness and standing
+  contested-close bucket the gate consumes as criteria 6 and 9 instead
+  of running its own closed-issue query at gate time — and the
   artifact checks (coverage, nightly evals, the freeze marker) as
   mechanical file/CI checks. Fail-closed on triage converts "triage the 188
   unlabeled issues" from a side condition into a structural property — the
   gate *cannot* pass while any tech-debt issue is untriaged, so nothing hides
   in the pile.
 - New obligation: the triage pass over the 188 unlabeled (147 with zero
-  signal) issues is now release-blocking work with a tracked home (#510 +
-  a ROADMAP M4 item), and the M5 burndown item is a standing commitment —
+  signal) issues is now release-blocking work with a tracked home (#510;
+  M4 keeps exactly its two terminal boxes — spec criterion 7 hard-codes
+  that count, so the tracked home is the issue, not a third box, #1321),
+  and the M5 burndown item ("P2/P3 tech-debt burndown (non-security)",
+  now a named `docs/ROADMAP.md` M5 bullet) is a standing commitment —
   deferred P2/P3 debt is tracked scope, not amnesty.
 - The M4 Release Gate script inherits hard requirements: fully-paginated
   counting (blocked on #419/#420), exact-form case-sensitive label matching,

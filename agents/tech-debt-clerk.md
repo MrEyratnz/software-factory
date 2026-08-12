@@ -19,21 +19,22 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
    either if missing).
 4. For each missing finding, open a GitHub issue labeled `tech-debt` whose body
    carries the required fields — **location** (exactly one repo-relative
-   `file:line`, matching the Release Gate's anchored full-string grammar
-   in `docs/specs/epic-1/spec.md` — never multiple paths, ranges, or
+   `file:line`, matching the close-audit's anchored full-string location
+   grammar (ADR 0006 § D4's legitimacy bindings; requirements source:
+   PR #444's finding ledger per § D3) — never multiple paths, ranges, or
    prose suffixes; a non-conforming location makes the finding's close
-   block until #649 normalization, so conform at filing — the spec
-   governs on drift), **what it is and
+   classify as contested until the auditor's bootstrap normalization, so
+   conform at filing), **what it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
    trailer line `fingerprint: <8-hex>` so the audit stays idempotent, and a
    trailer line `source-pr: <number>` naming the PR whose review produced
-   the finding — the Release Gate's different-PR anti-self-certification
-   clause evaluates against this field, and a finding without it
-   fail-closes that exemption (spec § "Release Gate for v1.0.0").
+   the finding — the close-audit's different-PR anti-self-certification
+   binding (ADR 0006 § D4) evaluates against this field, and a finding
+   without it fail-closes that check.
    **If the finding's verdict is CONFIRMED at high severity, also apply
    `gate:confirmed-high`** — the Release Gate's anti-laundering floor
-   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0"). That label is
+   (spec § "Release Gate for v1.0.0", criterion 5). That label is
    removed only when the finding's fix merges; re-triaging the issue's
    `P0`–`P3` label never touches it.
 

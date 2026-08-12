@@ -29,12 +29,11 @@ one roadmap item and drive it red → green → refactor.
    and in this squash-only repo, verify at merge that the citation
    survives into the **squash commit message** (branch-only commit
    messages do not reach the default branch and do not count, #966) —
-   the Release Gate's close-laundering exemption
-   (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0") accepts only
-   immutable evidence (a post-merge-editable PR body would let a no-op
-   close be laundered later). Forgot? Land a follow-up commit on the
-   default branch naming both the issue and the fingerprint — the
-   remediation path the spec defines.
+   the nightly close-audit's legitimacy bindings (ADR 0006 § D4) accept
+   only immutable evidence (a post-merge-editable PR body would let a
+   no-op close be laundered later). Forgot? Land a follow-up commit on
+   the default branch naming both the issue and the fingerprint — the
+   #894 remediation path the auditor honors.
 
 ## Fences (enforced, by design)
 

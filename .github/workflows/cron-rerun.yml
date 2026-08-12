@@ -1,0 +1,146 @@
+name: cron-rerun
+
+# The limit-window babysitter, automated (#1140). Operational record
+# 2026-07-29..08-08: ~15 session-limit windows each killed in-flight
+# station jobs, and every recovery was a human-side sleep script firing
+# `gh run rerun --failed` after the reset. This cron does exactly that —
+# hourly, deterministically, with zero model tokens.
+#
+# Review-hardened design (#1233-#1237, #1276-#1282):
+# - Every decision predicate lives in
+#   .github/scripts/cron-rerun-decide.sh, and the contract tests execute
+#   THAT script against fixture logs and (attempt, updatedAt) tuples —
+#   behavioral proof, not token greps (#1276/#1277).
+# - The limit signature anchors to the session's own structured output
+#   (see the decide script's header), verified against real limit-killed
+#   runs 31195410937/31129191775; free-form limit phrases never match
+#   (#1233/#1234). Residual, accepted: a run whose own output plants an
+#   exact anchor line wastes bounded, paced reruns — it cannot green
+#   anything, since a rerun of a real failure just fails again.
+# - Cadence: the first rerun is immediate (a session limit resets within
+#   hours, #1281); later attempts are paced one per BACKOFF_HOURS with
+#   the cap sized so coverage spans a FULL 7-day weekly limit (#1279),
+#   and the scan window is sized past the cap horizon (#1235).
+# - claude-code-review.yml is deliberately NOT in the loop: it has no
+#   checkpoint/resume, so a rerun re-pays the whole review (#1236).
+# - factory-run.yml is deliberately NOT in the loop: cron-prod already
+#   owns factory-run recovery via checkpoint re-dispatch; rerunning the
+#   old run as well would double-resume stale state (#1237).
+# - Reruns RESUME parked sessions via the #725/#731 checkpoint machinery,
+#   so recovery costs near-zero marginal tokens.
+
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cron-rerun
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  rerun:
+    if: vars.FACTORY_HALT != 'true'
+    runs-on: ubuntu-latest
+    # Rerunning another workflow's run needs a credential whose
+    # actions:write actually bites and whose activity is attributable.
+    environment: orchestrator
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: mint the orchestrator app token
+        id: app
+        if: vars.APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: resolve the rerun identity
+        id: ident
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
+          FALLBACK: ${{ github.token }}
+        # Prefers the orchestrator App token, then FACTORY_PAT, then the
+        # workflow token. UNLIKE cron-prod this does not hard-fail
+        # without the App (#1287): a rerun attempted with a weaker token
+        # 403s loudly on the rerun call itself, which is safer than a
+        # babysitter that silently never runs.
+        run: |
+          token="${APP_TOKEN:-${FACTORY_PAT:-$FALLBACK}}"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$token"
+
+      - name: rerun limit-killed station runs
+        env:
+          GH_TOKEN: ${{ steps.ident.outputs.token }}
+          REPO: ${{ github.repository }}
+          # 30 paced attempts x 6h backoff spans ~180h — past a full
+          # 7-day weekly limit (#1279). The 8-day scan window below is
+          # sized past that cap horizon.
+          MAX_ATTEMPTS: "30"
+          BACKOFF_HOURS: "6"
+        run: |
+          set -uo pipefail
+          decide=".github/scripts/cron-rerun-decide.sh"
+          since="$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          rerun_count=0
+          list_errors=0
+
+          for wf in on-pr.yml nightly-eval.yml on-issue.yml; do
+            if ! runs="$(gh run list --repo "$REPO" --workflow="$wf" \
+              --status failure --created ">$since" --limit 100 \
+              --json databaseId,attempt,updatedAt \
+              --jq '.[] | "\(.databaseId) \(.attempt) \(.updatedAt)"')"; then
+              # A listing failure must be LOUD: a dead babysitter that
+              # exits green is the one failure this factory cannot see.
+              echo "::warning::gh run list failed for $wf — this cron may be blind this cycle"
+              list_errors=$((list_errors + 1))
+              continue
+            fi
+            [ -z "$runs" ] && continue
+
+            while read -r run_id run_attempt updated_at; do
+              [ -z "$run_id" ] && continue
+              verdict="$(bash "$decide" decide "$run_attempt" "$updated_at" "$MAX_ATTEMPTS" "$BACKOFF_HOURS" "$now")"
+              if [ "$verdict" = "park" ]; then
+                echo "::warning::run $run_id ($wf) reached attempt $run_attempt >= $MAX_ATTEMPTS — parked for a human" \
+                  | tee -a "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+              [ "$verdict" = "young" ] && continue
+              # Buffer the log to a file before classifying: pipefail +
+              # grep -q on a streaming fetch can SIGPIPE a large
+              # multi-job log and drop a real kill (#1283), and a fetch
+              # failure must be loud, not an implicit "not a limit"
+              # (#1284).
+              logf="$RUNNER_TEMP/run-$run_id.log"
+              if ! gh run view "$run_id" --repo "$REPO" --log-failed > "$logf" 2>/dev/null; then
+                echo "::warning::could not fetch the failed-job log for run $run_id — cannot classify it this cycle"
+                continue
+              fi
+              if bash "$decide" signature "$logf"; then
+                echo "run $run_id ($wf, attempt $run_attempt): limit signature — rerunning failed jobs" \
+                  | tee -a "$GITHUB_STEP_SUMMARY"
+                gh run rerun "$run_id" --repo "$REPO" --failed \
+                  && rerun_count=$((rerun_count + 1)) \
+                  || echo "::warning::rerun of $run_id failed (may already be re-running)"
+              fi
+            done <<< "$runs"
+          done
+
+          {
+            echo "rerun_count=$rerun_count"
+            echo "list_errors=$list_errors"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$list_errors" -gt 0 ]; then
+            echo "::error::$list_errors workflow listing(s) failed — treating a possibly-blind babysitter cycle as red"
+            exit 1
+          fi
