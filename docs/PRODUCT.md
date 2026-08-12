@@ -84,9 +84,10 @@ self-blocks the `debt-reconcile` Stop hook on every `/review`**). A PR whose
 entire purpose is to make M4's Release Gate (per `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0", scoped by ADR 0005 / mechanized by ADR 0006) achievable is,
 through its own unconverged review loop, making the gate's raw count
 ~2.6x worse in under a week — the opposite of its intent — while never
-reaching a mergeable state. This is exactly the shape ADR-0009's judge-panel
-process exists for (contested, endlessly re-litigated, not converging on
-ordinary review) — and per `GOVERNANCE.md`, the board convenes every 4th
+reaching a mergeable state. This is exactly the shape the judge-panel
+process in `GOVERNANCE.md` exists for (contested, endlessly
+re-litigated, not converging on ordinary review, #1389) — and per
+`GOVERNANCE.md`, the board convenes every 4th
 sprint, and **sprint 4 (next) is the 4th sprint**. Both the review finding
 (#980) and the mechanism match: **route PR #444 / ADR 0005 to `/judge-panel`
 as sprint 4's board session**, and freeze further adversarial-review rounds

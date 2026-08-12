@@ -39,7 +39,10 @@ receipt/commit contract enforces them forever.
 
 - [ ] Every command/agent/skill/hook config passes layer-1 checks in the gate
 - [ ] Every hook script has fixture-driven unit tests incl. both stderr classes
-- [ ] Coverage gate ≥95% lines on `hooks/scripts/**` fails the suite when unmet
+- [ ] Coverage gate ≥95% lines fails the suite when unmet, over exactly
+      the scope Release-Gate criterion 7 names below (`hooks/scripts/**`,
+      `hooks/lib/common.sh`, `connector/src/release-gate/**` — one scope,
+      defined there, #1384)
 - [ ] Trigger + outcome evals exist for every skill and command, with
       thresholds that fail `nightly-eval.yml`
 - [ ] `.factory/config.json` gates run all deterministic layers; nightly runs
@@ -85,9 +88,22 @@ prerequisites) — no "not evaluable" meta-states.
    rationale as criterion 3 — the auditor's re-application is repair
    hygiene, not the safety mechanism, #1190).
 6. Auditor liveness: a successful `close-audit` run within 24 hours of
-   the gate run, with recorded audit windows covering [2026-07-29, the
-   end of that run's window] gapless; the tail to gate time is bounded
-   by the freshness rule.
+   **wall-clock `now` at the verdict of record** — never the snapshot
+   clock: criterion 6 is **evaluated live at every gate run and
+   excluded from the acked/masked digest exactly as criterion 8 is**
+   (masked to `"pending-ack"` in the acked canonical form), because a
+   frozen liveness result would self-satisfy forever (a snapshot from
+   the auditor's last living night still passing weeks later) and a
+   wall-clock check bound into the signed bytes would expire the
+   signature ~24h after signing — both horns of #1377. Recorded audit
+   windows must cover [2026-07-29, the end of that run's window]
+   gapless, where each steady-state window's START equals the
+   previous **successful** run's END (an attempted-but-failed run
+   advances nothing, #1379); a gap — from a mid-run failure, a
+   workflow rotation, anything — is repaired by an explicit
+   **backfill re-sweep** (a run whose window is the gap itself;
+   closed-issue history is queryable indefinitely, so any gap is
+   curable), never by amnesty.
 7. Mechanical artifact checks: coverage ≥95% lines on
    `hooks/scripts/**`, `hooks/lib/common.sh`, and
    `connector/src/release-gate/**`, measured at the exact SHA `/ship`
@@ -103,8 +119,13 @@ prerequisites) — no "not evaluable" meta-states.
    #1213); every v1.0.0
    roadmap item merged-green except M4's own two terminal boxes.
 8. Trust-anchor custody intact and one verified human acknowledgment
-   per release, both checkable (#1301): (a) every digest in
-   `factory-ops/release/trust-pin.json` equals the SHA-256 of the
+   per release, both checkable (#1301): (a) the pin's digest key set
+   **exactly equals** the set of files existing under the pinned
+   globs at the gate SHA — coverage is bidirectional (#1378): a file
+   on disk with no pin entry is FAIL just as a mismatched digest is,
+   otherwise an empty or partial `digests` map passes custody while
+   pinning nothing and an omitted file stays permanently
+   agent-editable — every listed digest equals the SHA-256 of the
    corresponding pinned file at the gate SHA, the live
    `## Human maintainers` section hashes to the pin's `rosterHash`,
    and every commit **touching the custody-lane files**
@@ -130,9 +151,10 @@ prerequisites) — no "not evaluable" meta-states.
    <version>/gate.ack` exists on the release branch, in a commit
    satisfying the same signature rules, whose single line equals the
    SHA-256 of that snapshot's **acked canonical form** (snapshot
-   bytes with the criterion-8 entry masked to `"pending-ack"` — a
-   report cannot attest its own acknowledgment). Absent or mismatched
-   is FAIL. Autonomous activity between snapshot and `/ship` cannot
+   bytes with the criterion-8 **and criterion-6** entries masked to
+   `"pending-ack"` — a report cannot attest its own acknowledgment,
+   and liveness is evaluated live at the verdict of record, #1377).
+   Absent or mismatched is FAIL. Autonomous activity between snapshot and `/ship` cannot
    flip the digest (the snapshot is frozen, #1317); what happens
    after the snapshot is witnessed by the nightly auditor and the
    next release's ledger, and the snapshot itself must satisfy

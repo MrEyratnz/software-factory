@@ -281,14 +281,20 @@ unwitnessed: the nightly auditor classifies it continuously and it
 heads the next release's ledger; the snapshot itself must satisfy
 criterion 6's freshness bound at gate time.
 
-**The acked canonical form (#1290):** the digest the human signs is
-computed over the snapshot's canonical bytes **with the criterion-8
-entry masked to the fixed sentinel `"pending-ack"`** — criterion 8
-*is* the acknowledgment, so a hash over a report that already shows
-criterion 8 satisfied is self-referential and no PASS would ever be
-reachable. The mask is the only transformation; the snapshot's other
-bytes are frozen at commit time (#1317), so the acked form is stable
-from snapshot through signing by construction.
+**The acked canonical form (#1290, #1377):** the digest the human
+signs is computed over the snapshot's canonical bytes **with the
+criterion-8 and criterion-6 entries masked to the fixed sentinel
+`"pending-ack"`** — criterion 8 *is* the acknowledgment, so a hash
+over a report that already shows it satisfied is self-referential
+and no PASS would ever be reachable; and criterion 6 (auditor
+liveness) is **evaluated live against wall-clock `now` at the
+verdict of record**, because a liveness result frozen into the
+signed bytes would either self-satisfy forever or expire the
+signature ~24h after signing (#1377 — the spec's criterion 6 states
+the live-evaluation rule normatively). The two masks are the only
+transformations; the snapshot's other bytes are frozen at commit
+time (#1317), so the acked form is stable from snapshot through
+signing by construction.
 
 The gate FAILS unless `factory-ops/release/<version>/gate.ack` exists on
 the release branch containing exactly that acked-canonical-form SHA-256
