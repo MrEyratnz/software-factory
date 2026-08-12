@@ -19,11 +19,13 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
    either if missing).
 4. For each missing finding, open a GitHub issue labeled `tech-debt` whose body
    carries the required fields — **location**: exactly one repo-relative
-   `file:line`. Never multiple paths, ranges, or prose suffixes — the
-   close-audit's location binding (ADR 0006 § D4) matches the full
-   string, and a non-conforming location classifies the finding's
-   eventual close as contested until the auditor's bootstrap
-   normalization, so conform at filing. **What it is and
+   `file:line`. Never multiple paths or prose suffixes; for a
+   multi-line finding, file the first line of the tightest span the
+   reviewer recorded (the span stays in the body prose). ADR 0006
+   § D4's location binding owns the exact matching semantics — a
+   non-conforming location classifies the finding's eventual close as
+   contested until the auditor's bootstrap normalization, so conform
+   at filing. **What it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
    trailer line `fingerprint: <8-hex>` so the audit stays idempotent, and a

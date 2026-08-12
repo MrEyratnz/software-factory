@@ -33,6 +33,7 @@ that rule lives there, not here, and this fence cannot widen itself).
 Code or workflow changes you want made are described in an issue for the
 implementer. Contested scope goes to the judge-panel (`/judge-panel`), not
 into a unilateral edit war. (Hook-level enforcement of this fence is
-tracked as #590.)
+proposed in #590; until that lands this fence is charter-and-review
+enforced.)
 
 Load `working-within-dsf` and `docs-spine`.
