@@ -194,11 +194,19 @@ zero-count evidence file); (b) the fixture trees — `tests/fixtures/release-gat
 hash); and (d) the disposal-allowlist and **disposition** files (D7):
 contested-close dispositions live at
 `factory-ops/release/dispositions/<issue>.json`
-(`{ issue, disposition: fixed|not-a-defect|superseded|duplicate,
+(`{ issue, event: contested-close|down-rank, disposition:
+fixed|not-a-defect|superseded|duplicate|reclassified,
 rationale, gateReportHash }`), covered by the pin and readable by
-criterion 9 — this is the concretely-defined lane through which a
-human clears a standing contested close that has no defect to fix
-(#1181).
+criteria 2 and 9. The **`event` discriminator is load-bearing
+(#1391)**: a disposition clears ONLY the event kind it names — a
+record filed to clear a contested close (criterion 9) does not also
+bless a priority down-rank of the same issue (criterion 2), and vice
+versa; without the discriminator one signature would clear both,
+reproducing the day-before-release relabel bypass. `reclassified` is
+the honest disposition for a still-open issue whose priority a human
+affirms was genuinely mis-ranked. This is the concretely-defined
+lane through which a human clears a standing contested close that
+has no defect to fix (#1181) or blesses a legitimate down-rank.
 
 **Where the pin lives:** `factory-ops/release/trust-pin.json` —
 `{ pinnedAtCommit, digests: {path → sha256}, rosterHash }` — on the
@@ -269,17 +277,20 @@ commit touching pinned paths since `pinnedAtCommit`).
 
 **The frozen snapshot (#1317):** the emitted report is committed as
 `factory-ops/release/<version>/gate-report.json` — a frozen,
-content-addressed artifact. **The human signs the snapshot and the
-verdict of record verifies against the snapshot's bytes, never a
-re-emitted report.** Without this, the digest livelocks: the report
-carries inherently live data (the close ledger, auditor-liveness
-evidence, the custody commit list), so any autonomous close or
-nightly run between signature and `/ship` would flip a re-emitted
-hash and FAIL a legitimately-acked release — PASS would be reachable
-only by quiescing the factory. Activity after the snapshot is not
-unwitnessed: the nightly auditor classifies it continuously and it
-heads the next release's ledger; the snapshot itself must satisfy
-criterion 6's freshness bound at gate time.
+content-addressed artifact. **The human signs the snapshot, and the
+ack check (criterion 8(b)) verifies against the snapshot's bytes,
+never a re-emitted report.** Without this, the digest livelocks: the
+report carries inherently live data (the close ledger,
+auditor-liveness evidence, the custody commit list), so any
+autonomous close or nightly run between signature and `/ship` would
+flip a re-emitted hash and FAIL a legitimately-acked release — PASS
+would be reachable only by quiescing the factory. The snapshot binds
+the ack only; **the criteria themselves are evaluated live at the
+verdict of record** (spec criterion 8(b), #1392), so a bug or
+security issue arising in the snapshot→`/ship` window fails the live
+verdict rather than slipping through frozen bytes. Activity after
+the snapshot is additionally witnessed by the nightly auditor and
+heads the next release's ledger.
 
 **The acked canonical form (#1290, #1377):** the digest the human
 signs is computed over the snapshot's canonical bytes **with the
@@ -414,8 +425,12 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
   (branch protection permitting roster humans to push; the gate rejects
   any pin-chain commit touching unsanctioned paths). The auditor is now
   release-critical infrastructure with a liveness SLO.
-- **Coverage floor widens** to `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules", #1144; the release verdict of record runs only via the pinned dispatcher per D3/D5, never `cli.mjs`) and the two
-  new scripts (`release-gate.sh`, `close-audit.sh`) — recorded here per
+- **Coverage floor widens** to `connector/src/release-gate/**` (a peer verdict module under `connector/src/`, admitted into ARCHITECTURE's layer table alongside `factory-core.mjs` — Rule 1 broadens to "verdicts come only from `connector/src` verdict modules", #1144; the release verdict of record runs only via the pinned dispatcher per D3/D5, never `cli.mjs`) and the
+  three new scripts (`release-gate.sh`, `close-audit.sh`, and
+  `release-gate-collect.sh` — the network-touching collector D5 pins
+  as the seam all three panel ballots named; leaving the
+  evidence-fabrication seam below the coverage floor would be exactly
+  backwards, #1394) — recorded here per
   the ADR 0005 precedent; qa owns the threshold.
 - **Accepted residual risks, stated:** a laundered close can be
   false-green for up to one nightly cycle before repair (bounded, and

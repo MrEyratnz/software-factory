@@ -71,10 +71,12 @@ prerequisites) — no "not evaluable" meta-states.
    NOT the epoch anchor, which advances on every re-pin and would
    silently un-count any down-rank older than the newest pin, #1363)
    **counts as still `P0`/`P1` for this criterion** unless a
-   pin-covered human disposition record (criterion 9's lane) covers
-   the down-rank — a relabel the day before release must not create a
-   pass no fix earned; the report-only down-rank row is display, not
-   the brake (#1152).
+   pin-covered human disposition record **whose `event` field names
+   the down-rank** (`event: down-rank` — a disposition filed for a
+   contested close of the same issue clears criterion 9 only, never
+   this criterion, #1391) covers it — a relabel the day before
+   release must not create a pass no fix earned; the report-only
+   down-rank row is display, not the brake (#1152).
 3. Zero open issues that have **ever carried** `security` (timeline
    membership computed at gate time — a label stripped an hour before
    the gate must not create a pass window the nightly auditor has not
@@ -146,19 +148,24 @@ prerequisites) — no "not evaluable" meta-states.
    paths would FAIL uncurably on the first ordinary gate-code PR, the
    brickability #1123 forbids; (b) `factory-ops/release/<version>/
    gate-report.json` exists as the **frozen report snapshot** —
-   committed canonical bytes; the verdict of record reads the
-   snapshot, never a re-emitted report — and `factory-ops/release/
+   committed canonical bytes; the ack verification of this clause
+   reads the snapshot, never a re-emitted report — and `factory-ops/release/
    <version>/gate.ack` exists on the release branch, in a commit
    satisfying the same signature rules, whose single line equals the
    SHA-256 of that snapshot's **acked canonical form** (snapshot
    bytes with the criterion-8 **and criterion-6** entries masked to
    `"pending-ack"` — a report cannot attest its own acknowledgment,
    and liveness is evaluated live at the verdict of record, #1377).
-   Absent or mismatched is FAIL. Autonomous activity between snapshot and `/ship` cannot
-   flip the digest (the snapshot is frozen, #1317); what happens
-   after the snapshot is witnessed by the nightly auditor and the
-   next release's ledger, and the snapshot itself must satisfy
-   criterion 6's freshness bound at gate time.
+   Absent or mismatched is FAIL. **The snapshot binds the ack; it
+   does not substitute for the predicate (#1392):** every
+   current-state criterion (1–7, 9) is evaluated **live at the
+   verdict of record** — a `bug` or `security` issue opened, or a
+   close contested, in the snapshot→`/ship` window still FAILs the
+   live verdict; the snapshot is the human-witnessed evidence record
+   this clause verifies byte-for-byte, so live divergence never
+   flips the ack digest and the #1317 livelock does not return.
+   Autonomous activity between snapshot and `/ship` therefore cannot
+   invalidate the signature — it can only, correctly, fail the gate.
    Rationale and custody mechanism: ADR 0006 §§ D5–D6.
 9. Zero standing contested closes, checkable (#1301): the parked
    bucket of the latest successful close-audit run (criterion 6's run)

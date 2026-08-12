@@ -36,10 +36,10 @@ docs/adr/        numbered decisions (the default adrDir); tests/ hermetic hook c
 
 | Layer | Owns | May depend on |
 |---|---|---|
-|  `connector/src/factory-core.mjs` (+ per-domain peer verdict modules such as `connector/src/release-gate/` — ADR 0006) | every rule *verdict* (roadmap, commit lint, gates, release plan, tech-debt audit) as pure functions — no I/O, clock, or randomness | nothing |
+|  `connector/src/factory-core.mjs` (+ per-domain peer verdict modules such as `connector/src/release-gate/` — an ADR 0006 M4 **obligation, not yet built on this SHA** (#1395); see "The v1.0.0 release gate" below) | every rule *verdict* (roadmap, commit lint, gates, release plan, tech-debt audit) as pure functions — no I/O, clock, or randomness; where a criterion needs wall-clock `now` (release-gate criterion 6), the **impure entry script injects `now` as evidence into the pure module** — the module itself stays clockless (#1393) | nothing |
 | `connector/src/server.mjs` (MCP) / `cli.mjs` | read-only tool exposure over stdio; the shell bridge hooks and CI call | factory-core, node stdlib |
 | `hooks/lib` | event-JSON plumbing (`common.sh`), quote-aware parsers, OTEL emit | node stdlib, `cli.mjs` |
-| `hooks/scripts` | allow/deny decisions at tool-use time (exit 0 / exit 2) | `hooks/lib`, `cli.mjs`, git, POSIX sh; the release-gate entry scripts additionally run `node` directly on the pinned `connector/src/release-gate/dispatch.mjs` (the pinned lane, ADR 0006 § D5 — never via `cli.mjs`, #1366) |
+| `hooks/scripts` | allow/deny decisions at tool-use time (exit 0 / exit 2) | `hooks/lib`, `cli.mjs`, git, POSIX sh; the release-gate entry scripts (an M4 obligation, not yet built, #1395) additionally run `node` directly on the pinned `connector/src/release-gate/dispatch.mjs` (the pinned lane, ADR 0006 § D5 — never via `cli.mjs`, #1366) |
 | `commands/`, `agents/`, `skills/` | the workflow prose: stations, roles, methodology | connector tools, hook-visible state |
 | `templates/`, `schemas/` | what gets stamped into target repos; the config contract | nothing at runtime |
 | `.github/workflows` | the authoritative re-enforcement boundary + the factory ops orchestrator | the same test commands, pinned CLI |
