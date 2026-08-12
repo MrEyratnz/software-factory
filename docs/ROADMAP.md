@@ -26,10 +26,10 @@ Milestone gate for v1.0.0: the Release Gate in `docs/specs/epic-1/spec.md`.
 
 ## M2 — Epic 1: the plugin test suite (milestone v1.0.0)
 
-- [ ] Static validation layer in the commit gate: manifest + frontmatter schema
+- [x] Static validation layer in the commit gate: manifest + frontmatter schema
   checks for every command/agent/skill/hook config, `${CLAUDE_PLUGIN_ROOT}`
   path portability, referenced-files-exist, JSON validity (extends
-  `tests/scaffold.contract.test.sh`)
+  `tests/scaffold.contract.test.sh`) (#375)
 - [ ] Hook unit tests: stdin JSON fixtures per event type, exit-code and
   stderr-class (`[hard-boundary]` vs `[heuristic]`) assertions, matcher edge
   cases, forgery-guard cases, multi-repo `-C`/`cd` binding
