@@ -40,9 +40,8 @@ receipt/commit contract enforces them forever.
 - [ ] Every command/agent/skill/hook config passes layer-1 checks in the gate
 - [ ] Every hook script has fixture-driven unit tests incl. both stderr classes
 - [ ] Coverage gate ≥95% lines fails the suite when unmet, over exactly
-      the scope Release-Gate criterion 7 names below (`hooks/scripts/**`,
-      `hooks/lib/common.sh`, `connector/src/release-gate/**` — one scope,
-      defined there, #1384)
+      the scope Release-Gate criterion 7 names below — one scope, one
+      copy, defined there only (#1384, #1408)
 - [ ] Trigger + outcome evals exist for every skill and command, with
       thresholds that fail `nightly-eval.yml`
 - [ ] `.factory/config.json` gates run all deterministic layers; nightly runs
@@ -85,6 +84,15 @@ prerequisites) — no "not evaluable" meta-states.
 4. Zero open `tech-debt` issues lacking a valid `P0`–`P3` label —
    fail-closed on untriaged; legacy `priority:*`/`high`/`medium`/`low`
    labels do not count (#510 clears this).
+   **Membership rule for criteria 2 and 4 (#1417):** an open issue
+   that has **ever carried** `tech-debt` since the 2026-07-29
+   baseline counts as a `tech-debt` issue for both criteria
+   regardless of current labels — stripping the label from an open
+   P0/P1 is a strictly stronger form of the down-rank criterion 2
+   brakes, and gets the same brake — unless a pin-covered human
+   disposition record with `event: label-strip` covers the removal.
+   The auditor's floor-strip watch includes `tech-debt` unlabel
+   events on open issues (ADR 0006 § D4).
 5. Zero open issues that have **ever carried** `gate:confirmed-high`
    (clerk-applied floor; timeline membership at gate time, same
    rationale as criterion 3 — the auditor's re-application is repair
@@ -173,8 +181,12 @@ prerequisites) — no "not evaluable" meta-states.
    re-closed with a qualifying fix (the auditor reclassifies it), or
    by a human disposition record at
    `factory-ops/release/dispositions/<issue>.json` covered by the
-   trust pin. FAIL names every standing entry. Rationale: ADR 0006
-   § D4.
+   trust pin **whose `event` equals `contested-close`** (#1416 — the
+   same discriminator rule as criterion 2, in this direction: a
+   `down-rank` or `label-strip` disposition for the same issue clears
+   its own criterion only and never exits the parked bucket; one
+   signature never clears two event kinds). FAIL names every standing
+   entry. Rationale: ADR 0006 § D4.
 
 Then `/ship` on the release branch — never from red, release-proof
 minted on the built artifact.

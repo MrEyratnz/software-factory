@@ -477,8 +477,10 @@ when it's picked up rather than re-ranking each one every sprint. Left
 unmilestoned for now. (Correction under the adopted gate, #1223: the
 retired literal reading would have swept these before ship; under the
 adopted scope — defined solely by spec § "Release Gate for v1.0.0",
-not restated here (#1302) — non-security P2/P3 findings in this batch
-are not gate-blocking and route to the M5 burndown.)
+not restated here (#1302) — non-security P2/P3 **`tech-debt`** in
+this batch is not gate-blocking and routes to the M5 burndown. That
+routing never applies to a `bug`-labeled issue: criterion 1 blocks
+on any open `bug` at any priority, #1412.)
 
 ### P3 — doc/spec cross-reference drift on an unmerged PR (15 issues)
 

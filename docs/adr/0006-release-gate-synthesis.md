@@ -129,9 +129,10 @@ a human re-pins it (D5).
 
 A nightly `close-audit` workflow scans every close **and every
 floor-label removal event on open issues** (`gate:confirmed-high`,
-`security`, `bug` unlabel events — a strip on a still-open issue is no
-close, and the criterion-5 safety story depends on catching it,
-#1195) since its last run
+`security`, `bug`, **and `tech-debt`** unlabel events — a strip on a
+still-open issue is no close, the criterion-5 safety story depends on
+catching it (#1195), and a `tech-debt` strip on an open P0/P1 would
+otherwise evade criteria 2 and 4 entirely, #1417) since its last run
 (the bootstrap run sweeps the FULL issue history from repo creation once — a gate-relevant issue laundered before 2026-07-29 must not be permanently invisible, #1191; steady-state runs scan since their predecessor) of issues that carry **or ever
 carried** `bug`/`tech-debt`/`security`/`gate:confirmed-high` — the
 ever-carried timeline algebra, interval-computed P0/P1 presence
@@ -194,10 +195,10 @@ zero-count evidence file); (b) the fixture trees — `tests/fixtures/release-gat
 hash); and (d) the disposal-allowlist and **disposition** files (D7):
 contested-close dispositions live at
 `factory-ops/release/dispositions/<issue>.json`
-(`{ issue, event: contested-close|down-rank, disposition:
+(`{ issue, event: contested-close|down-rank|label-strip, disposition:
 fixed|not-a-defect|superseded|duplicate|reclassified,
 rationale, gateReportHash }`), covered by the pin and readable by
-criteria 2 and 9. The **`event` discriminator is load-bearing
+criteria 2, 4, and 9. The **`event` discriminator is load-bearing
 (#1391)**: a disposition clears ONLY the event kind it names — a
 record filed to clear a contested close (criterion 9) does not also
 bless a priority down-rank of the same issue (criterion 2), and vice
@@ -400,7 +401,7 @@ Every panel-CONFIRMED fatal flaw, and how this synthesis closes it:
 | 5 | security-first | implementability | Roster chain-of-custody is unsatisfiable: in a squash-only repo every MAINTAINERS.md commit is signed by GitHub's web-flow key, never a roster human; no remediation path — the gate bricks | D5: custody binds to what a human can actually produce — a directly-pushed, locally-signed commit to the pin file, GitHub-verified as the signer's own; the roster is protected via its pinned hash, and the MAINTAINERS.md history walk is dropped |
 | 6 | security-first | product-operability | Internal contradiction deadlocks the first release: bindings "can never be signed into exemption" vs. the ~465 findings "witnessed in one signed ack"; plus per-close human witnessing converts the factory to human cadence permanently | D7's explicit, human-signed, ADR-referenced disposal lane gives the superseded-prose backlog a legal one-time path (no override of bindings — a distinct authorization class); D6 keeps the human cost at exactly one signature per release |
 | 7 | dx-first | correctness-security | The cheapest laundering path (link any merged PR via "Fixes #X") is invisible to every predicate, every heuristic, and the report the human signs | D4: `closeLegitimacy` applies the fingerprint/location/hunk bindings as classification — a merged-but-unbound close is `contested`, reopened once, and surfaced; D6: the report carries **every** close since baseline with its classification, so the human backstop actually sees the row |
-| 8 | dx-first | implementability | Auditor liveness never verified: "≥1 successful run" is a one-time historical check, so the gate greens with the auditor dead since deployment and a stale last-good summary | D1 criterion 6: a fresh successful auditor run within 24 hours of the gate run AND gapless window coverage since 2026-07-29 is a standing, blocking gate criterion evaluated at every run |
+| 8 | dx-first | implementability | Auditor liveness never verified: "≥1 successful run" is a one-time historical check, so the gate greens with the auditor dead since deployment and a stale last-good summary | D1 criterion 6: a fresh successful auditor run within the spec's freshness window AND gapless coverage since the spec's fixed baseline is a standing, blocking gate criterion evaluated live at every run (window and baseline literals live in the spec only, #1407) |
 | 9 | dx-first | product-operability | "Legitimately closed" is undefined, forcing fail-open (no anti-laundering) or fail-closed (nightly mass false reopens + a contested-blob rubber stamp); the migration's own mass-close gets reopened on night one | D3+D4: close-legitimacy is a pure, fixture-tested reference predicate (the executable-contract discipline applied where the adversarial semantics actually live); D7's disposal allowlist makes the ADR-authorized mass-disposition `legitimate` by construction, so the design cannot reopen itself |
 
 ## Consequences
