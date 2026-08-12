@@ -32,16 +32,21 @@ and it must be fixed, not deferred. Freeze state is recorded here when it
 flips, with the date and the gate evidence.
 
 **Freeze state: OFF** (gate not yet within one sprint of holding — M2 and M3
-are both 0% done by roadmap checkbox, and as of sprint-4 planning **754 open
-`tech-debt` + 12 open `bug`** issues stood between here and the then-literal M4 gate (superseded:
-the adopted gate is defined solely by spec § "Release Gate for
-v1.0.0" — label-scoped criteria, not raw counts; no enumeration here,
-#1302) — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
-review; ground-truth counts re-pulled this pass via the GitHub search API,
-paginated past the 30-item default that undercounts elsewhere in this repo's
-own tooling, see #419/#420 below). The gate is materially **farther** away
-than at sprint-2, not closer — see the sprint-4 headline finding. No new
-`idea`/`research` issues required freeze-routing this pass.
+are both 0% done by roadmap checkbox as of sprint-4 planning; M3's
+board-session item shipped substance via ADR 0006/PR #1107 during sprint 4
+but its checkbox is unflipped, see the sprint-5 snapshot. As of
+**sprint-5 planning (2026-08-12), 1188 open `tech-debt` + 12 open `bug`**
+issues stand as backlog-health signal under the adopted gate (defined
+solely by spec § "Release Gate for v1.0.0" — label-scoped criteria, not a
+raw zero-count predicate; no enumeration here, #1302) — up from 221/6 at
+sprint-2 snapshot, 289 at sprint-2 review, and 754 at sprint-4 planning;
+ground-truth counts re-pulled via the GitHub search API each pass,
+paginated past the 30-item default that undercounts elsewhere in this
+repo's own tooling, see #419/#420 below). The backlog is materially
+**farther** from clean than at any prior snapshot, not closer — see the
+sprint-4 review (`factory-ops/sprints/4/review.md`) and the sprint-5
+snapshot below. No new `idea`/`research` issues required freeze-routing
+this pass.
 
 ## Sprint 4 backlog snapshot (2026-08-05)
 
@@ -260,6 +265,93 @@ is exactly what this ranking depends on being trustworthy — the decision to
 route it to judge-panel and pause its review cycle is the architect's/
 conductor's to execute, not mine to do unilaterally beyond recording the
 recommendation and evidence here.
+
+## Sprint 5 backlog snapshot (2026-08-12)
+
+**Note on authorship:** written by the planner during sprint-4
+review/retro + sprint-5 planning, in the absence of a live product-owner
+session this wake. Ranking below follows this doc's own value-ranking
+rules (security first, gate-relevant work next, `bug`>`tech-debt`,
+cost-second) but is a **unilateral planner call** — flag for the
+product-owner to revisit at the next session that has one.
+
+1203 open issues / 7 open PRs. Ground-truth (GitHub search API): **1188**
+`tech-debt`, **12** `bug` — unchanged `bug` count, `tech-debt` up
+754 → 1188 (**+57%**) since sprint-4 planning, entirely review-loop output
+(302 `tech-debt` issues filed since 2026-08-06). Full detail in
+`factory-ops/sprints/4/review.md` / `retro.md`.
+
+### Headline: the board session shipped a real decision; the bleed it targeted did not stop
+
+`GOVERNANCE.md`'s mandatory 4th-sprint board convening happened on
+schedule: **PR #1107 merged 2026-08-12T03:28:52Z**, **ADR 0006**
+("Release Gate synthesis") resolves all nine panel-CONFIRMED flaws from
+sprint 4's judge-panel over PR #444/ADR 0005, with a named decision owner
+per clause. PR #444 correctly reduced to a docs-only conformance diff per
+D8. But **31 minutes after merge**, a full adversarial review round ran
+against that conformance PR anyway and filed 10 more `tech-debt` issues —
+the freeze the board wrote into the ADR has no mechanical enforcement
+(filed this session: **#1443**, P0). Separately, sprint 4's declared
+top-priority fix for the underlying manufacture engine (#471/#688, PR
+#1054) is still unmerged after 4 rounds / 5+ days of real-but-unconverged
+review churn (filed this session: **#1444**, P1, generalizing #978's
+staleness trigger to non-converging churn). Net effect: the mechanism
+sprint 4 built specifically to stop tech-debt manufacture did not land,
+and the metric it targets is 57% worse than when the sprint started.
+
+### Verified this pass: M3's board-session checkbox is unflipped
+
+`docs/ROADMAP.md` M3's "Board session #1 held via judge-panel with a
+synthesized ADR" item has shipped substance (ADR 0006/PR #1107) but the
+checkbox itself is unchecked — same class of gap as sprint 3/4's #159
+(M2 static-validation item), which itself is still only in flight (PR
+#1415, open). Both are architect-owned checkbox flips
+(`guard-roadmap`-gated on a merged-green proof; not the planner's or
+product-owner's to hand-flip) — flagged here, not decided.
+
+### P0 — must not wait
+
+| # | Why P0 |
+|---|---|
+| #1443 | Board freeze has no enforcement — actively bleeding tech-debt onto a PR the board explicitly froze, same night it froze it. |
+| #442, #419, #420 | Sprint-3/4 committed core, P0-labeled, still open — now entering a **third** sprint untouched. #419/#420 undercount the very metric this snapshot depends on. |
+| #471, #688 | Root cause of the manufacture engine; PR #1054 stuck 4 rounds. Needs a bounded decision this sprint, not a 5th open-ended round. |
+| #132 | Sprint-4's plan ordered this reassigned off stale PR #318 (per #978); never executed — PR #318 unchanged since 2026-07-25 (18 days). |
+
+### P1 — sprint 5 core (ranked)
+
+1. **#442, #419, #420** — sequence FIRST this sprint (per #1445's finding:
+   these lost all capacity to one large item in both sprints 3 and 4).
+2. **#471/#688 (PR #1054)** — one capped review round; escalate/re-scope if
+   still unconverged (see sprint-5 plan for the exact trigger).
+3. **#132** — execute the reassignment for real: fresh branch off `main`,
+   not a continuation of PR #318.
+4. **#1443** — freeze-enforcement mechanism; high leverage, take if capacity
+   remains after the floor above.
+5. **#159** — land PR #1415, then close #159 itself in a fast follow (the
+   PR flips the roadmap box but does not close the issue).
+
+### P2 — bucketed, unchanged disposition
+
+Carried unchanged from sprint 4: loop-health cluster (#231/#206), #229,
+bootstrap/egress-proxy hardening bundle (#163–#249 range), the
+zero-priority-signal `tech-debt` pool (still not worth re-triaging until
+the manufacture engine — #471/#688 — actually lands), #177.
+
+### Milestone-scope decisions this pass
+
+- No milestone moves. `v1.0.0` set stands; ADR 0006's adoption (recorded
+  above in "Freeze state") already reflects the board's settled gate
+  definition.
+- Freeze stays **OFF**, restated above with current evidence.
+- #138 unchanged: `v1.0.0`, P1, routed to `/judge-panel`, not a sprint-5
+  board sprint (next mandatory convening: sprint 8).
+
+### Not touched this pass
+
+PRs #444, #318, #311, #250, #92, #1054, #1415 are
+implementer/release-captain/architect/security-steward territory — flagged
+above only where their state changes this ranking, not decided here.
 
 ## Sprint 2 backlog snapshot (2026-07-28)
 
