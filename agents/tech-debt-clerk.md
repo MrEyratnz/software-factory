@@ -22,10 +22,10 @@ hook-enforced: `guard-scope` denies any Write/Edit/MultiEdit outside
    `file:line`. Never multiple paths or prose suffixes; for a
    multi-line finding, file the first line of the tightest span the
    reviewer recorded (the span stays in the body prose). ADR 0006
-   § D4's location binding owns the exact matching semantics (the
-   auditor lands on the M4 track) — a non-conforming location will
-   classify the finding's eventual close as contested until the
-   auditor's bootstrap normalization, so conform at filing. **What it is and
+   § D4's location binding owns the exact matching semantics (auditor
+   not yet built) — a non-conforming location will classify the
+   finding's eventual close as contested until the auditor's bootstrap
+   normalization, so conform at filing. **What it is and
    why it matters** (a concrete failure or cost), **provenance** (pre-existing
    vs. introduced by the change under review), and a **suggested fix** — plus a
    trailer line `fingerprint: <8-hex>` so the audit stays idempotent, and a

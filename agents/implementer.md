@@ -26,17 +26,11 @@ one roadmap item and drive it red → green → refactor.
 6. **Cite the fingerprint when fixing tracked debt.** If the issue your
    PR closes carries a `fingerprint:` trailer (every clerk-filed review
    finding does), cite that fingerprint in a **branch commit message**.
-   That is the whole duty: the repo's squash policy
-   (`squash_merge_commit_message: COMMIT_MESSAGES`) carries every
-   branch commit message into the default-branch squash commit, which
-   is the immutable evidence the close-audit's fingerprint binding
-   reads (ADR 0006 § D4; auditor lands on the M4 track) — a
-   post-merge-editable PR body would let a no-op close be laundered
-   later (#941). There is no merge-time verification step: auto-merge
-   composes the squash server-side from that policy (#1479/#1480).
-   Forgot? Land a follow-up commit on the default branch naming both
-   the issue and the fingerprint — the #894 remediation path the
-   auditor honors.
+   That is the whole duty. Why, and how it reaches the default branch:
+   ADR 0006 § D4 — the close-audit's fingerprint binding (auditor not
+   yet built; the squash-policy mechanics and their pin are tracked in
+   #1483). Forgot? A follow-up default-branch commit naming both the
+   issue and the fingerprint is the #894 remediation path.
 
 ## Fences (enforced, by design)
 

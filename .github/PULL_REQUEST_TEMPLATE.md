@@ -6,15 +6,14 @@
 
 ## Checklist
 
-- [ ] Failing test written first; full suite (`bash tests/run-suite.sh`) green
-- [ ] Conventional Commit title; suite green at every commit
+- [ ] Conventional Commit title; full suite (`bash tests/run-suite.sh`) green
+- [ ] Code changes: failing test written first (docs/chore-only PR: N/A)
 - [ ] If this PR closes an issue carrying a `fingerprint:` trailer, that
-      fingerprint is cited in a **branch commit message** (not only the
-      editable PR body). The repo's squash policy
-      (`squash_merge_commit_message: COMMIT_MESSAGES`) carries every
-      branch commit message into the default-branch squash commit — the
-      immutable evidence the close-audit's fingerprint binding reads
-      (ADR 0006 § D4; auditor lands on the M4 track). Forgotten → a
-      follow-up default-branch commit naming issue + fingerprint
-      remediates.
+      fingerprint is cited in a **branch commit message**
+      <!-- Why a branch commit message: the repo's squash policy carries it
+           into the default-branch squash commit, where it becomes the
+           immutable evidence the close-audit's fingerprint binding reads —
+           mechanism owned by ADR 0006 § D4 (auditor not yet built; the
+           squash-policy pin is tracked in #1483). Forgot? A follow-up
+           default-branch commit naming issue + fingerprint remediates. -->
 - [ ] Review findings not fixed here are filed as `tech-debt` issues
