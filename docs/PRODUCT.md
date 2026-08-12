@@ -33,8 +33,10 @@ flips, with the date and the gate evidence.
 
 **Freeze state: OFF** (gate not yet within one sprint of holding — M2 and M3
 are both 0% done by roadmap checkbox, and as of sprint-4 planning **754 open
-`tech-debt` + 12 open `bug`** issues stand between here and M4's "zero open
-bug/tech-debt" gate — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
+`tech-debt` + 12 open `bug`** issues stood between here and the then-literal M4 gate (superseded:
+the adopted gate is defined solely by spec § "Release Gate for
+v1.0.0" — label-scoped criteria, not raw counts; no enumeration here,
+#1302) — up from 221/6 at sprint-2 snapshot and 289 at sprint-2
 review; ground-truth counts re-pulled this pass via the GitHub search API,
 paginated past the 30-item default that undercounts elsewhere in this repo's
 own tooling, see #419/#420 below). The gate is materially **farther** away
@@ -79,12 +81,13 @@ unfixed (**#471**, **#688** — `tech-debt-clerk` fingerprints diverge from
 `techdebt_audit`'s fingerprints, so every `/review` re-files instead of
 recognizing prior findings, and per #688's own title this **also
 self-blocks the `debt-reconcile` Stop hook on every `/review`**). A PR whose
-entire purpose is to make M4's "zero open bug/tech-debt" gate achievable is,
+entire purpose is to make M4's Release Gate (per `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0", scoped by ADR 0005 / mechanized by ADR 0006) achievable is,
 through its own unconverged review loop, making the gate's raw count
 ~2.6x worse in under a week — the opposite of its intent — while never
-reaching a mergeable state. This is exactly the shape ADR-0009's judge-panel
-process exists for (contested, endlessly re-litigated, not converging on
-ordinary review) — and per `GOVERNANCE.md`, the board convenes every 4th
+reaching a mergeable state. This is exactly the shape the judge-panel
+process in `GOVERNANCE.md` exists for (contested, endlessly
+re-litigated, not converging on ordinary review, #1389) — and per
+`GOVERNANCE.md`, the board convenes every 4th
 sprint, and **sprint 4 (next) is the 4th sprint**. Both the review finding
 (#980) and the mechanism match: **route PR #444 / ADR 0005 to `/judge-panel`
 as sprint 4's board session**, and freeze further adversarial-review rounds
@@ -234,11 +237,17 @@ convening on #138 revives the underlying question.
 - No milestone moves. `v1.0.0` set stands.
 - Freeze stays **OFF**, restated above with current evidence — the gate is
   farther away than at any prior snapshot, not closer.
-- **ADR 0005's M4 gate-scope redefinition is not adopted here.** It is
-  contested (see headline finding) and not the product owner's to accept
-  unilaterally while its own PR carries unresolved, self-referential
-  findings about its own claims (#940, #911, #963). M4 stays defined by
-  `docs/ROADMAP.md`'s literal text until judge-panel resolves it.
+- **ADR 0005's M4 gate-scope redefinition is now ADOPTED** — the
+  judge-panel this snapshot routed the contest to has since convened
+  (sprint-4 board session) and settled it as **ADR 0006**; the single
+  normative gate definition is `docs/specs/epic-1/spec.md` § "Release
+  Gate for v1.0.0" (scope per ADR 0005, mechanism per ADR 0006). The
+  reservation recorded here at planning time is resolved by that board
+  decision — and note the lane: the reservation's OWN text conditioned
+  adoption on "until judge-panel resolves it," so this conform executes
+  the product owner's recorded condition rather than crossing into the
+  scope lane (#1212); the edit was made by the ADR 0006 landing PR so
+  no document contradicts the gate at merge (#1192).
 - Left #138 with its standing disposition: `v1.0.0`, P1, routed to
   `/judge-panel` — unchanged.
 
@@ -320,7 +329,7 @@ P1 labels.
    here) — `debt-reconcile`'s Stop hook fetches tech-debt issues with no
    `--limit`, defaulting to `gh`'s newest-30, against 221 currently open. The
    Stop-gate reconciliation this repo's whole tech-debt convention depends on
-   — and by extension M4's "zero open bug/tech-debt" gate — cannot see ~86%
+   — and by extension M4's Release Gate (per `docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0", scoped by ADR 0005 / mechanized by ADR 0006) — cannot see ~86%
    of what it's supposed to enforce against at current backlog size. This is
    a gate-integrity bug, not routine tech-debt.
 8. **#231** (P1, labeled this pass) — cron-prod dispatch-condition inversion
@@ -465,8 +474,13 @@ gaps). None block the loop today. **Milestone-scope decision:** these map to
 ROADMAP M3's "Security hardening pass" bullet as one batch, not 30
 individually-sequenced sprint-1 items — bundle them into that M3 work item
 when it's picked up rather than re-ranking each one every sprint. Left
-unmilestoned for now; M4's Release Gate ("zero open bug/tech-debt") already
-guarantees they get swept before ship.
+unmilestoned for now. (Correction under the adopted gate, #1223: the
+retired literal reading would have swept these before ship; under the
+adopted scope — defined solely by spec § "Release Gate for v1.0.0",
+not restated here (#1302) — non-security P2/P3 **`tech-debt`** in
+this batch is not gate-blocking and routes to the M5 burndown. That
+routing never applies to a `bug`-labeled issue: criterion 1 blocks
+on any open `bug` at any priority, #1412.)
 
 ### P3 — doc/spec cross-reference drift on an unmerged PR (15 issues)
 
