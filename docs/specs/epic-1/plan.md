@@ -22,11 +22,12 @@ Conventional Commit, PR, review, merge — the box flips on merged-green.
 3. **Coverage gate** (implementer; qa owns the threshold)
    Line coverage over exactly the scope Release-Gate criterion 7 names
    (`docs/specs/epic-1/spec.md` § "Release Gate for v1.0.0" — one scope,
-   defined there only; the spec governs on drift) via `bashcov`-style
-   instrumentation
-   or kcov (decision: cheapest tool that runs in CI — researcher confirms
-   current options first). Threshold ≥95% enforced as a failing test in
-   `tests/run-suite.sh`.
+   defined there only; the spec governs on drift): `bashcov`-style
+   instrumentation or kcov for the shell paths (decision: cheapest tool
+   that runs in CI — researcher confirms current options first), and
+   node's built-in V8 coverage (`node --test` + c8) for the JS verdict
+   paths the scope includes (#1477). Threshold ≥95% enforced as a
+   failing test in `tests/run-suite.sh`.
 
 4. **Eval harness** (implementer builds; qa owns thresholds + flake triage)
    `factory-ops/qa/evals/` — per skill/command: trigger prompts
