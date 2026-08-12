@@ -23,6 +23,14 @@ one roadmap item and drive it red → green → refactor.
    (`commit_lint`). `guard-commit` will refuse the commit unless the message is
    conventional, tests were staged, and a green receipt matches the current
    tree — so run the full suite immediately before committing.
+6. **Cite the fingerprint when fixing tracked debt.** If the issue your
+   PR closes carries a `fingerprint:` trailer (every clerk-filed review
+   finding does), cite that fingerprint in a **branch commit message**.
+   That is the whole duty. Why, and how it reaches the default branch:
+   ADR 0006 § D4 — the close-audit's fingerprint binding (auditor not
+   yet built; the squash-policy mechanics and their pin are tracked in
+   #1483). Forgot? A follow-up default-branch commit naming both the
+   issue and the fingerprint is the #894 remediation path.
 
 ## Fences (enforced, by design)
 
