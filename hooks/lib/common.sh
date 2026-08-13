@@ -289,6 +289,19 @@ command_target_dir() {
   cd="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).cd||"")}catch(e){}})')"
   if [ -n "$gitC" ]; then printf '%s' "$gitC"; return; fi
   if [ -n "$cd" ]; then printf '%s' "$cd"; return; fi
+  # No explicit cd/git -C in the command: it ran wherever the Bash tool's own
+  # invocation cwd was. PROJECT_DIR is NOT reliable here (issue #442): in a
+  # worktree-isolated session, CLAUDE_PROJECT_DIR is an env var fixed for the
+  # whole session and can still point at the outer main checkout even though
+  # this particular command actually ran inside a worktree. The event's own
+  # "cwd" (_project_from_input, from common.sh's PROJECT_DIR resolution above)
+  # is per-invocation and reports the Bash tool's REAL cwd, so prefer it over
+  # the session-wide PROJECT_DIR when it names an existing directory. Falls
+  # back to PROJECT_DIR when the event carried no usable cwd (unchanged
+  # behavior for every existing caller, where cwd == CLAUDE_PROJECT_DIR).
+  if [ -n "$_project_from_input" ] && [ -d "$_project_from_input" ]; then
+    printf '%s' "$_project_from_input"; return
+  fi
   printf '%s' "$PROJECT_DIR"
 }
 

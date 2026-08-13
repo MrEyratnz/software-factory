@@ -1613,6 +1613,48 @@ case "$MSG" in
   *) PASS=$((PASS+1)) ;;
 esac
 
+echo "# issue #442: worktree-isolated session — target-root resolution must not fall"
+echo "#              back to the stale session PROJECT_DIR when the event's own cwd"
+echo "#              (the Bash tool's real invocation dir) is a worktree"
+# A session running inside a `git worktree add`-created directory: the harness
+# keeps CLAUDE_PROJECT_DIR pointed at the OUTER main checkout for the whole
+# session (stale for this purpose), but the Bash tool's own invocation cwd —
+# carried on the event as "cwd" — correctly reports the worktree. The suite/
+# commit commands below carry NO `cd`/`git -C` prefix (the Bash tool already
+# ran them with cwd=WT), so record-green/guard-commit must fall back to the
+# event's own cwd, not the session PROJECT_DIR, or target_root/tree_hash/
+# receipt_file all bind to the wrong (main-checkout) tree.
+R="$(mkrepo)"; export CLAUDE_PROJECT_DIR="$R"
+WT="$(mktemp -d "$TMPROOT/wt442.XXXXXX")"; rmdir "$WT"
+( cd "$R" && git worktree add -q "$WT" -b wt442-branch >/dev/null 2>&1 )
+mkdir -p "$WT/src"; echo x > "$WT/src/a.ts"; echo t > "$WT/src/a.test.ts"; ( cd "$WT" && git add -A )
+WKEY="$(printf '%s' "$WT" | cksum | cut -d' ' -f1)"
+
+# mint from inside the worktree (no cd/git -C in the command itself).
+SCRIPT="$S/record-green.sh"
+EVENT="$(evt "$WT" Bash '{"command":"npm test"}' ',"tool_response":{"exitCode":0}')"
+printf '%s' "$EVENT" | HOOK_INPUT="" bash "$SCRIPT" >/dev/null 2>&1
+
+# the receipt must land under a WORKTREE-keyed path (its repo-root differs from
+# R's), not R's canonical gate-receipt.json.
+assert_file exists "$R/.factory/state/gate-receipt-$WKEY.json" "#442: record-green mints a worktree-keyed receipt, not the main checkout's canonical one"
+
+# ...and its tree hash must be the WORKTREE's tree, not the main checkout's.
+WTH="$(repo_tree_hash "$WT")"
+GOT_TREE="$(REC="$R/.factory/state/gate-receipt-$WKEY.json" node -e 'const fs=require("fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.env.REC,"utf8")).tree||"")}catch(e){}' 2>/dev/null)"
+if [ -n "$WTH" ] && [ "$GOT_TREE" = "$WTH" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL - #442: minted receipt's tree hash is the worktree's tree, not the main checkout's (got '$GOT_TREE' want '$WTH')"; fi
+
+# simulate the main checkout being busy — another live agent editing R
+# concurrently. This must NOT invalidate the worktree's already-green receipt:
+# the gate must bind to the worktree's own tree, which this noise never touches.
+echo "noise from a concurrent agent in the main checkout" > "$R/concurrent-noise.txt"
+
+SCRIPT="$S/guard-commit.sh"
+EVENT="$(evt "$WT" Bash '{"command":"git commit -m \"feat: a\""}')"
+assert_exit 0 "#442: commit inside the worktree allowed — binds to the worktree's own tree, unaffected by the main checkout's concurrent changes"
+
+rm -f "$R/concurrent-noise.txt"
+
 echo
 echo "hooks contract: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
