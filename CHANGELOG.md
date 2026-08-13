@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.8](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.7...dark-software-factory-v0.1.8) (2026-08-13)
+
+
+### Features
+
+* **factory:** cron-rerun — automated limit-window recovery (closes the last babysitter gap) ([#1220](https://github.com/MrEyratnz/software-factory/issues/1220)) ([058c411](https://github.com/MrEyratnz/software-factory/commit/058c411585cffa73e8c5c3f29bb2e83b18ea34c1))
+* **factory:** failed sessions resume on rerun instead of re-paying from zero ([#731](https://github.com/MrEyratnz/software-factory/issues/731)) ([8dae11a](https://github.com/MrEyratnz/software-factory/commit/8dae11ab262b12dae10195487ad3ed1a27e15a05))
+* **factory:** stand up the autonomous lights-out SDLC scaffolding ([#91](https://github.com/MrEyratnz/software-factory/issues/91)) ([58eb401](https://github.com/MrEyratnz/software-factory/commit/58eb401a8ac28c633110dd9cf0f5e0356975ed02))
+* **observability:** run OTEL + self-hosted Langfuse on the icculus runner host ([#329](https://github.com/MrEyratnz/software-factory/issues/329)) ([a9cd802](https://github.com/MrEyratnz/software-factory/commit/a9cd802f0ea4ebb4b19ecdc76000e55c8b277cfe))
+
+
+### Bug Fixes
+
+* **bootstrap:** stop the egress proxy from fatalling and taking the runner down ([#162](https://github.com/MrEyratnz/software-factory/issues/162)) ([c5256a4](https://github.com/MrEyratnz/software-factory/commit/c5256a47742976ac0b509d149dfe3719306cf93e))
+* **cron:** raise the resume dispatch with an App token so the factory wakes ([#205](https://github.com/MrEyratnz/software-factory/issues/205)) ([81df0d6](https://github.com/MrEyratnz/software-factory/commit/81df0d6994652d74532c2eeb1e8165fc89fceb66))
+* **docs:** flip M1 roadmap checkboxes to match merged-green reality ([#204](https://github.com/MrEyratnz/software-factory/issues/204)) ([fbc1867](https://github.com/MrEyratnz/software-factory/commit/fbc1867b60b785d5cbe1d44228d5f3a99256ff2f)), closes [#175](https://github.com/MrEyratnz/software-factory/issues/175)
+* **factory-run:** fail the CI run when a session lands no real deliverable ([#421](https://github.com/MrEyratnz/software-factory/issues/421)) ([bc31383](https://github.com/MrEyratnz/software-factory/commit/bc31383b5d7acae2b41fefbf83389103b2deec86))
+* **factory-run:** make building the conductor's mandate, not orientation ([#228](https://github.com/MrEyratnz/software-factory/issues/228)) ([#303](https://github.com/MrEyratnz/software-factory/issues/303)) ([fe9c131](https://github.com/MrEyratnz/software-factory/commit/fe9c1315a82579febd098127aac00f05c0409eda))
+* **factory:** give each station the permissions its work needs ([#99](https://github.com/MrEyratnz/software-factory/issues/99)) ([225264f](https://github.com/MrEyratnz/software-factory/commit/225264fc727a920d654c0b1f5c4e869730faead1))
+* **factory:** make the factory able to run — session auth, loud failures, and receipts for slow suites ([#96](https://github.com/MrEyratnz/software-factory/issues/96)) ([a3cc68c](https://github.com/MrEyratnz/software-factory/commit/a3cc68c312743d30fae84ac35245137524476ca3))
+* **factory:** stage the resume helper outside the workspace the session mutates ([#878](https://github.com/MrEyratnz/software-factory/issues/878)) ([c824678](https://github.com/MrEyratnz/software-factory/commit/c82467869a69c2794befb9e46bcc949ad1ad8c65))
+* **hooks:** resolve PROJECT_DIR to the worktree root, not the main checkout ([#442](https://github.com/MrEyratnz/software-factory/issues/442)) ([#1512](https://github.com/MrEyratnz/software-factory/issues/1512)) ([b1a19d2](https://github.com/MrEyratnz/software-factory/commit/b1a19d28175e039b0ac8290ea280e9a707511512))
+* **observability:** state the redaction guarantee and stop proving a stack on a rejection ([#359](https://github.com/MrEyratnz/software-factory/issues/359)) ([7fbe2bd](https://github.com/MrEyratnz/software-factory/commit/7fbe2bdc3fce5a7e0a9263546fff9b781314ca34))
+
 ## [0.1.7](https://github.com/MrEyratnz/software-factory/compare/dark-software-factory-v0.1.6...dark-software-factory-v0.1.7) (2026-07-11)
 
 
