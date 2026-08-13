@@ -172,6 +172,38 @@ function fnv1a(str) {
 
 const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * True if `loc` (an already-`norm`-ed "file:line") appears in `hay` as a
+ * whole location token, not as a substring of a longer one — "server.ts:4"
+ * must NOT match inside "server.ts:42". Guards both edges: the char after
+ * the match can't extend the line number, and the char before can't be part
+ * of a longer path segment feeding into it — which means path/filename
+ * characters ('/', '.', '-') must NOT count as a valid boundary, or a
+ * location that is only a path/filename SUFFIX of a longer one false-matches
+ * (issue #1183): "utils.ts:10" would otherwise match inside
+ * "test-utils.ts:10", and "index.ts:5" inside "src/pages/index.ts:5".
+ */
+const hasLocationToken = (hay, loc) => {
+  if (!loc) return false;
+  const re = new RegExp(`(?:^|[^a-z0-9_./-])${escapeRegExp(loc)}(?!\\d)`);
+  return re.test(hay);
+};
+
+/**
+ * True if `phrase` appears in `hay` anchored on whole-word/token boundaries,
+ * not as a raw substring — "leak" must NOT match inside "leaking" (issue
+ * #1256). Same boundary technique as `hasLocationToken`, but for prose text
+ * rather than a "file:line" token, so path characters ('/', '.', '-') are
+ * ordinary word characters here, not boundary exclusions.
+ */
+const hasWordBoundaryMatch = (hay, phrase) => {
+  if (!phrase) return false;
+  const re = new RegExp(`(?:^|[^a-z0-9_])${escapeRegExp(phrase)}(?![a-z0-9_])`);
+  return re.test(hay);
+};
+
 /**
  * A finding's identity is its location + the invariant substance of the
  * problem (impact), NOT its wording of a title (which a re-review may reword).
@@ -248,18 +280,100 @@ export function extractFingerprint(issue) {
 }
 
 /**
+ * True if the candidate issue's text plausibly describes the SAME problem as
+ * `finding` — not merely the same location. Co-location is not proof of
+ * identity: a 3-lens panel routinely finds more than one, unrelated problem
+ * on the same line, and a prior session may have correctly filed a different
+ * finding at that exact file:line (issue #1184). Compares the finding's
+ * normalized impact (or title, as a fallback) against the issue's normalized
+ * text — either an exact substring match (the common case: a re-review or a
+ * hand-typo'd fingerprint keeps the same impact wording) or, for a looser
+ * paraphrase, a majority of the impact's distinguishing (>3 char) words
+ * appearing in the issue text.
+ *
+ * Both checks are anchored on whole-word/token boundaries via
+ * `hasWordBoundaryMatch`, not raw substring — a raw `String.includes` lets a
+ * short word coincidentally match inside a longer, unrelated word ("leak" is
+ * a substring of "leaking") and lets a high shared-word ratio slip through
+ * even when the one unmatched word is exactly what makes the two problems
+ * different ("...on startup path" vs "...on shutdown path" is 4-of-5 shared
+ * words). Issue #1256/#1263: both false positives corrupted a correctly-filed
+ * issue's fingerprint trailer instead of filing the real, different finding.
+ * The fuzzy ratio path has an additional guard: it only fires with at least
+ * 3 distinctive (>3 char) words to go on — a match on 1-2 short words is not
+ * enough signal — and requires MORE than 0.8 of them to match, since 0.8
+ * (4-of-5) is the exact ratio a genuinely different problem can produce when
+ * only the one word that actually distinguishes it fails to match.
+ */
+function sameProblem(finding, hay) {
+  const impact = norm(finding && finding.impact) || norm(finding && finding.title);
+  if (!impact) return false;
+  if (hasWordBoundaryMatch(hay, impact)) return true;
+  const words = impact.split(' ').filter((w) => w.length > 3);
+  if (words.length < 3) return false;
+  const matched = words.filter((w) => hasWordBoundaryMatch(hay, w));
+  return matched.length / words.length > 0.8;
+}
+
+/**
+ * Look for an already-open issue that is plainly ABOUT this finding (its
+ * title/body names the finding's own location AND describes the same
+ * problem) but whose fingerprint trailer does not equal the fingerprint
+ * canonically computed here. That is the signature of a filer that
+ * hand-derived or paraphrased the fingerprint instead of copying
+ * `techdebt_lint`'s `normalized.fingerprint` verbatim (the confirmed root
+ * cause of #471/#688) — NOT a genuinely unfiled finding. Surfacing it
+ * distinctly lets a caller fail loud with the exact expected value ("issue
+ * #443 says deadbeef, should be 1a2b3c4d") instead of silently reporting
+ * "still missing" and inviting a duplicate filing.
+ * Location alone is not enough to diagnose "same finding, wrong
+ * fingerprint" — it only proves co-location, not identity (issue #1184).
+ * Two guards corroborate on substance before flagging a mismatch:
+ * `siblingFps` — every canonical fingerprint among THIS session's findings —
+ * recognizes when the co-located issue is already correctly filed for one of
+ * those *other* findings; `sameProblem` additionally requires the candidate
+ * issue's text to plausibly describe the same problem (not just share a
+ * location), which also covers a genuinely different finding filed at the
+ * same file:line by a PRIOR session (not in `list`, so `siblingFps` alone
+ * can't catch it).
+ * @param {Set<string>} siblingFps
+ * @returns {{title:string|null, fingerprint:string|null}|null}
+ */
+function findStaleIssue(finding, issues, canonicalFp, siblingFps) {
+  const loc = norm(finding && finding.location);
+  if (!loc) return null;
+  const hit = issues.find((iss) => {
+    const hay = norm(`${iss?.title ?? ''}\n${iss?.body ?? ''}`);
+    if (!hasLocationToken(hay, loc)) return false;
+    const staleFp = extractFingerprint(iss);
+    if (!staleFp || staleFp === canonicalFp) return false;
+    if (siblingFps.has(staleFp)) return false; // correctly filed for a different finding
+    if (!sameProblem(finding, hay)) return false; // co-located but a different problem
+    return true;
+  });
+  if (!hit) return null;
+  return { title: hit.title ?? null, fingerprint: extractFingerprint(hit) };
+}
+
+/**
  * @param {Array<object>} findings  this session's review findings
  * @param {Array<{title?:string, body?:string, fingerprint?:string}>} openIssues
- * @returns {{filed:string[], missing:Array<{fingerprint:string, finding:object}>,
+ * @returns {{filed:string[],
+ *            missing:Array<{fingerprint:string, finding:object,
+ *                           staleIssue:{title:string|null, fingerprint:string|null}|null}>,
+ *            mismatched:Array<{fingerprint:string, finding:object,
+ *                              staleIssue:{title:string|null, fingerprint:string|null}}>,
  *            all:Array<{fingerprint:string, filed:boolean}>, ok:boolean}}
  */
 export function techdebtAudit(findings, openIssues) {
   const list = Array.isArray(findings) ? findings : [];
   const issues = Array.isArray(openIssues) ? openIssues : [];
   const filedSet = new Set(issues.map(extractFingerprint).filter(Boolean));
+  const siblingFps = new Set(list.map(fingerprintFinding));
 
   const all = [];
   const missing = [];
+  const mismatched = [];
   const seen = new Set();
   for (const finding of list) {
     const fp = fingerprintFinding(finding);
@@ -267,12 +381,18 @@ export function techdebtAudit(findings, openIssues) {
     if (!seen.has(fp)) {
       all.push({ fingerprint: fp, filed: isFiled });
       seen.add(fp);
-      if (!isFiled) missing.push({ fingerprint: fp, finding });
+      if (!isFiled) {
+        const staleIssue = findStaleIssue(finding, issues, fp, siblingFps);
+        const entry = { fingerprint: fp, finding, staleIssue };
+        missing.push(entry);
+        if (staleIssue) mismatched.push(entry);
+      }
     }
   }
   return {
     filed: [...filedSet],
     missing,
+    mismatched,
     all,
     ok: missing.length === 0,
   };

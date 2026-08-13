@@ -7,6 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Hermetic against an ambient FACTORY_OTEL_ENDPOINT leak (e.g. via a runner's
+# $GITHUB_ENV): otel is opt-in, off-by-default, metrics-only, and must never
+# change a gate/test outcome — but a stray ambient value defeats tests that
+# assert the off/absent-override behavior (observability.contract.test.sh,
+# hooks.contract.test.sh) and can make otel_emit attempt a real network call
+# to an unreachable collector. The suite's own correctness must not depend on
+# what happens to be exported into the invoking shell.
+unset FACTORY_OTEL_ENDPOINT 2>/dev/null || true
+
 CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.218}"
 
 stage() { printf '\n== suite: %s\n' "$1"; }
