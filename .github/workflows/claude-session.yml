@@ -53,6 +53,24 @@ on:
         description: optional --allowedTools rule list (least-privilege stations)
         type: string
         default: ""
+    secrets:
+      # Declared explicitly so callers must pass a named `secrets:` map instead
+      # of the bare inherit-everything form — that form hands a caller's ENTIRE
+      # secrets context (including the full-scope FACTORY_PAT) to whatever job
+      # it calls, regardless of that job's GITHUB_TOKEN permission ceiling. The
+      # two inbound stations (triage, review) read attacker-controlled text and
+      # withhold FACTORY_PAT for exactly this reason (#120/#132). APP_PRIVATE_KEY
+      # is deliberately NOT declared here: it resolves via the job's own
+      # `environment: ${{ inputs.environment }}` (a GitHub Environment secret),
+      # which is independent of secrets:inherit/passthrough and must stay that
+      # way — that is what makes "a triage session cannot read the release key"
+      # true.
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      FACTORY_PAT:
+        required: false
 
 # NO permissions block here — deliberately, and it must stay that way.
 #
